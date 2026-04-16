@@ -1,209 +1,343 @@
-from pathlib import Path
 import json
 import os
+import threading
+from datetime import time
+from pathlib import Path
+from typing import Union, Sequence, Optional
+import time
 
+import dask.array as da
 import nd2
-
-from nd2_analyzer.analysis.segmentation.segmentation_cache import SegmentationCache
-from nd2_analyzer.analysis.segmentation.segmentation_service import SegmentationService
-from nd2_analyzer.analysis.segmentation.segmentation_models import SegmentationModels
-
+import numpy as np
 from pubsub import pub
 
+from nd2_analyzer.analysis.segmentation.segmentation_cache import SegmentationCache
+from nd2_analyzer.analysis.segmentation.segmentation_models import SegmentationModels
+from nd2_analyzer.analysis.segmentation.segmentation_service import SegmentationService
+from nd2_analyzer.utils.registration import register_images, ShiftedImage_2D_numba
+
 """
-Can hold either an ND2 file or a series of images
+Singleton, implements data access for the time lapse experiments
 """
 
 
 class ImageData:
-    def __init__(self, data, path, is_nd2=True):
+    _instance: Optional["ImageData"] = None
+    _lock = threading.Lock()
+
+    def __init__(self, data, path, is_image=True, channel_n=0):
         self.data = data
-        self.nd2_filename = path
+        self.image_filename = path
         self.processed_images = []
-        self.is_nd2 = is_nd2
+        self.is_image = is_image
+        self.registration_offsets: Optional[np.ndarray] = (
+            None  # If we are doing registration
+        )
+        self.crop_coordinates = None
+        self.channel_n = channel_n
 
         # Initialize segmentation components
         self.segmentation_cache = SegmentationCache(data)
         self.segmentation_service = SegmentationService(
             cache=self.segmentation_cache,
             models=SegmentationModels(),
-            data_getter=self._get_raw_image
+            data_getter=self.get,
         )
 
-        pub.subscribe(self._access, "raw_image_request")
+        pub.subscribe(self.on_crop_selected, "crop_selected")
+        pub.subscribe(self.on_crop_reset, "crop_reset")
+
+    @classmethod
+    def get_instance(cls) -> Optional["ImageData"]:
+        """Get the current singleton instance"""
+        with cls._lock:
+            return cls._instance
+
+    @classmethod
+    def create_instance(cls, data, path, is_image=True, channel_n=0) -> "ImageData":
+        """Create/replace the singleton instance"""
+        with cls._lock:
+            # Clean up old instance if it exists
+            if cls._instance is not None:
+                cls._instance._cleanup()
+
+            # Create new instance
+            instance = cls(data, path, is_image, channel_n)
+            cls._instance = instance
+
+        pub.sendMessage("image_data_loaded", image_data=cls._instance)
+        return cls._instance
+
+    def on_crop_selected(self, coords: list):
+        self.crop_coordinates = coords
         pub.sendMessage("image_data_loaded", image_data=self)
 
-    def _get_raw_image(self, t, p, c):
-        """Helper method to retrieve raw images"""
-        import numpy as np
+    def on_crop_reset(self):
+        self.crop_coordinates = None
+        pub.sendMessage("image_data_loaded", image_data=self)
 
-        # Check bounds and return blank image if out of range
+    def _cleanup(self):
+        pass
+
+    def get_channel_n(self):
+        return self.channel_n
+
+    def get(self, t, p, c):
+        """Helper method to retrieve raw images"""
+
         if len(self.data.shape) == 5:  # - has channel
-            if (t >= self.data.shape[0] or p >= self.data.shape[1] or 
-                c >= self.data.shape[2] or t < 0 or p < 0 or c < 0):
-                # Return blank image with same spatial dimensions
-                return np.zeros((self.data.shape[3], self.data.shape[4]), dtype=self.data.dtype)
             raw_image = self.data[t, p, c]
         elif len(self.data.shape) == 4:  # - no channel
-            if (t >= self.data.shape[0] or p >= self.data.shape[1] or 
-                t < 0 or p < 0):
-                # Return blank image with same spatial dimensions
-                return np.zeros((self.data.shape[2], self.data.shape[3]), dtype=self.data.dtype)
             raw_image = self.data[t, p]
         else:
             print(f"Unusual data format: {len(self.data.shape)} dimensions")
             if len(self.data.shape) >= 3:
-                if t >= self.data.shape[0] or t < 0:
-                    return np.zeros((self.data.shape[1], self.data.shape[2]), dtype=self.data.dtype)
                 raw_image = self.data[t, p]
             else:
-                if t >= self.data.shape[0] or t < 0:
-                    return np.zeros(self.data.shape[1:], dtype=self.data.dtype)
                 raw_image = self.data[t]
 
         # Compute if it's a dask array
-        if hasattr(raw_image, 'compute'):
+        if hasattr(raw_image, "compute"):
             raw_image = raw_image.compute()
+
+        # Crop/Scale if we have it
+        if self.crop_coordinates is not None:
+            x, y, width, height = self.crop_coordinates
+            raw_image = raw_image[y : y + height, x : x + width]
+
+        # Apply registration if we have it
+        if self.registration_offsets is not None:
+            _x, _y = self.registration_offsets[t]
+
+            raw_image = ShiftedImage_2D_numba(raw_image, _x, _y)
 
         return raw_image
 
-    def _access(self, time, position, channel):
-
-        image = self._get_raw_image(time, position, channel)
-        pub.sendMessage("image_ready",
-                        image=image,
-                        time=time,
-                        position=position,
-                        channel=channel,
-                        mode='normal')
-
-    @classmethod
-    def load_nd2(cls, file_path: str):
-        with nd2.ND2File(file_path) as nd2_file:
-            image_data = ImageData(data=nd2.imread(
-                file_path, dask=True), path=file_path, is_nd2=True)
-
-        return image_data
-    
-    @classmethod
-    def load_tiff(cls, file_paths, tiff_type, tiff_types_dict=None):
-        """Load TIFF files based on type
-        
-        Args:
-            file_paths: List of TIFF file paths or single path
-            tiff_type: 'single_sequence', 'multiframe', or 'series'
-            tiff_types_dict: Dictionary mapping file paths to types (for mixed loading)
+    def do_registration_p(self, p: int, c: int = 0):
         """
-        import tifffile
-        import numpy as np
-        
+        Runs the image registration at a specific position. Afterward, all images will receive the transformation
+        """
+        # NOTE: probably heavy because of compute
+        image_series = self.data[
+            :, p, c
+        ].compute()  # Selects position and channel, PHC by default.
+        image_series = ((image_series / 65535) * 255).astype(
+            np.uint8
+        )  # Converting here cause it expects uint8
+
+        # TODO: remove, but just validating the time here
+
+        s = time.time()
+        res = register_images(image_series)
+        e = time.time()
+        print("Image registration took {:.2f} seconds".format(e - s))
+
+        # Store offsets here
+        self.registration_offsets = res.offsets
+
+    @classmethod
+    def load_nd2(cls, file_paths: Union[str, Sequence[str]], import_mode: str | None = None):
+        """
+        Load one or more ND2 or TIFF files, verify that channel count, image height and width match,
+        crop the P-dimension (second axis) to the smallest found, concatenate along time axis,
+        and print the final shape.
+        """
+
         if isinstance(file_paths, str):
             file_paths = [file_paths]
-            
-        if tiff_type == "multiframe":
-            return cls._load_multiframe_tiff(file_paths[0])
-        elif tiff_type == "single_sequence":
-            return cls._load_single_sequence_tiff(file_paths)
-        elif tiff_type == "series":
-            return cls._load_series_tiff(file_paths)
-        else:
-            raise ValueError(f"Unknown TIFF type: {tiff_type}")
-    
-    @classmethod
-    def _load_multiframe_tiff(cls, file_path):
-        """Load multi-frame TIFF file"""
-        import tifffile
-        import numpy as np
-        
-        with tifffile.TiffFile(file_path) as tif:
-            # Load all pages as a stack
-            data = tif.asarray()
-            
-            # Ensure we have at least 3 dimensions (T, Y, X)
-            if data.ndim == 2:
-                data = data[np.newaxis, ...]  # Add time dimension
-            elif data.ndim == 3:
-                # Could be (T, Y, X) or (Y, X, C) - assume (T, Y, X)
-                pass
-            elif data.ndim == 4:
-                # Could be (T, Y, X, C) - this is what we want
-                pass
-            
-            # Reshape to match ND2 format: (T, P, C, Y, X) or (T, P, Y, X)
-            if data.ndim == 3:  # (T, Y, X)
-                data = data[:, np.newaxis, ...]  # Add position dimension -> (T, P, Y, X)
-            elif data.ndim == 4:  # (T, Y, X, C)
-                data = data[:, np.newaxis, :, :, :]  # Add position dimension -> (T, P, Y, X, C)
-                # Reorder to (T, P, C, Y, X)
-                data = np.transpose(data, (0, 1, 4, 2, 3))
-            
-        return cls(data=data, path=file_path, is_nd2=False)
-    
-    @classmethod
-    def _load_single_sequence_tiff(cls, file_paths):
-        """Load sequence of single TIFF files"""
-        import tifffile
-        import numpy as np
-        
-        # Sort files naturally (image_001.tif, image_002.tif, etc.)
-        file_paths.sort()
-        
-        # Load first image to get dimensions
-        first_img = tifffile.imread(file_paths[0])
-        
-        # Create array to hold all images
-        if first_img.ndim == 2:  # Grayscale
-            data = np.zeros((len(file_paths), 1, first_img.shape[0], first_img.shape[1]), dtype=first_img.dtype)
-            for i, fp in enumerate(file_paths):
-                data[i, 0] = tifffile.imread(fp)
-        elif first_img.ndim == 3:  # Color or multi-channel
-            data = np.zeros((len(file_paths), 1, first_img.shape[2], first_img.shape[0], first_img.shape[1]), dtype=first_img.dtype)
-            for i, fp in enumerate(file_paths):
-                img = tifffile.imread(fp)
-                data[i, 0] = np.transpose(img, (2, 0, 1))  # (Y, X, C) -> (C, Y, X)
-        
-        return cls(data=data, path=file_paths[0], is_nd2=False)
-    
-    @classmethod 
-    def _load_series_tiff(cls, file_paths):
-        """Load TIFF series with pos_XXX_t_XXX_ch_X.tif naming"""
-        import tifffile
-        import numpy as np
-        import re
-        
-        # Parse filenames to extract dimensions
-        pattern = r'pos_(\d+)_t_(\d+)_ch_(\d+)'
-        file_info = []
-        
-        for fp in file_paths:
-            match = re.search(pattern, fp)
-            if match:
-                pos, time, ch = map(int, match.groups())
-                file_info.append((fp, time, pos, ch))
-        
-        if not file_info:
-            raise ValueError("No files match the expected series naming pattern: pos_XXX_t_XXX_ch_X.tif")
-        
-        # Get dimensions
-        max_t = max(info[1] for info in file_info) + 1
-        max_p = max(info[2] for info in file_info) + 1  
-        max_c = max(info[3] for info in file_info) + 1
-        
-        # Load first image to get spatial dimensions
-        first_img = tifffile.imread(file_info[0][0])
-        h, w = first_img.shape[:2]
-        
-        # Create data array (T, P, C, Y, X)
-        data = np.zeros((max_t, max_p, max_c, h, w), dtype=first_img.dtype)
-        
-        # Fill the array
-        for fp, t, p, c in file_info:
-            img = tifffile.imread(fp)
-            data[t, p, c] = img
-        
-        return cls(data=data, path=file_paths[0], is_nd2=False)
 
-    def save(self, filename: str):
+        arrays = []
+        p_dims = []
+        channels = height = width = None
+
+        for path in file_paths:
+            if path.endswith(".nd2"):
+                arr = nd2.imread(path, dask=True)  # Lazy load dask
+            else:
+                import tifffile
+                store = tifffile.imread(path, aszarr=True)
+                arr = da.from_zarr(store) # Lazy load dask
+
+            shape = arr.shape
+
+            # Handle different file formats
+            if path.endswith(".nd2"):
+                with nd2.ND2File(path) as f:
+                    axes = "".join(f.sizes)
+                    arr, axes = cls.normalize_axes(arr, axes)
+            elif path.endswith((".tif", ".tiff", ".ome.tif", ".ome.tiff", ".ome.tf2", ".ome.tf8", ".ome.btf")):
+                import tifffile
+                with tifffile.TiffFile(path) as tif:
+                    series = tif.series[0]
+                    axes = series.axes
+                    arr, axes = cls.normalize_axes(arr, axes)
+            else:
+                raise ValueError(
+                    f"File {path} has shape {shape}; expected (T, P, Y, X) or (T, P, C, Y, X)"
+                )
+
+            T, P, C, Y, X = arr.shape
+
+            if channels is None:
+                # Set C, Y, X on the first file
+                channels, height, width = C, Y, X
+            else:
+                # Check if files are "castable"
+                if C != channels:
+                    raise ValueError(f"{path}: channels {C} != {channels}")
+                if Y != height:
+                    raise ValueError(f"{path}: height {Y} != {height}")
+                if X != width:
+                    raise ValueError(f"{path}: width {X} != {width}")
+
+            p_dims.append(P)
+            arrays.append(arr)
+
+        if import_mode in ["Directory", "batch_tiff", "stacked_tiff"]:
+            full_data = arrays[0]
+        else:
+            if len(arrays) > 1:
+                min_p = min(p_dims)
+                cropped = [arr[:, :min_p, :, :, :] for arr in arrays]
+                full_data = da.concatenate(cropped, axis=0)
+                print(f"Cropped P to {min_p}. Final array shape: {full_data.shape}")
+            else:
+                full_data = arrays[0]
+        print(f"Loaded {len(file_paths)} file(s). ")
+
+        inst = cls.create_instance(data=full_data, path=file_paths, is_image=True)
+        inst.channel_n = channels
+
+        return inst
+
+    @classmethod
+    def load_tiff_directory(cls, file_map, mode, progress_callback=None):
+        import tifffile
+        import numpy as np
+        import dask.array as da
+
+        # Ensure a valid path exists for shape detection
+        first_path = None
+        for v in file_map.values():
+            if v is not None:
+                first_path = v
+                break
+        if first_path is None:
+            raise ValueError("No valid TIFF paths found in file_map")
+
+        # Sorted unique axes
+        positions = sorted({k[0] for k in file_map})
+        channels = sorted({k[2] for k in file_map})
+
+        if mode == "batch_tiff":
+            max_t = max(k[1] for k in file_map if k[1] is not None)
+            times = list(range(max_t + 1))
+        else:
+            # Get the number of frames from the first file
+            first_path = next(v for v in file_map.values() if v is not None)
+            with tifffile.TiffFile(first_path) as tif:
+                times = list(range(len(tif.pages)))
+
+        T, P, C = len(times), len(positions), len(channels)
+
+        def _to_2d(frame):
+            """Ensure a frame is 2D (Y, X). Handles RGB, RGBA, and multi-page."""
+            if frame.ndim == 2:
+                return frame
+            if frame.ndim == 3 and frame.shape[2] in (3, 4):
+                return frame[:, :, 0].copy()
+            if frame.ndim == 3:
+                return frame[0]
+            if frame.ndim == 4 and frame.shape[-1] in (3, 4):
+                return frame[0, :, :, 0].copy()
+            return frame.reshape(frame.shape[-2], frame.shape[-1])
+
+        # Determine frame size and the widest dtype across all files
+        sample = _to_2d(tifffile.imread(first_path))
+        Y, X = sample.shape
+        widest_dtype = sample.dtype
+        for path in file_map.values():
+            if path is not None and path != first_path:
+                probe = _to_2d(tifffile.imread(path))
+                if probe.dtype.itemsize > widest_dtype.itemsize:
+                    widest_dtype = probe.dtype
+                break  # checking one more file is enough
+
+        print(f"TIFF directory: detected frame size {Y}x{X}, dtype={widest_dtype}")
+
+        total = len(positions) * len(channels) * len(times)
+        current = 0
+
+        import uuid
+        filename = f"temp_{uuid.uuid4().hex}.dat"
+        data = np.memmap(
+            filename,
+            dtype=widest_dtype,
+            mode="w+",
+            shape=(T, P, C, Y, X)
+        )
+
+        # Loop over positions and channels to load data
+        for pi, p in enumerate(positions):
+            for ci, c in enumerate(channels):
+                if mode == "batch_tiff":
+                    for ti, t in enumerate(times):
+                        path = file_map.get((p, t, c))
+                        if path is None:
+                            print(f"Warning: missing frame p={p}, t={t}, c={c} — filled with zeros")
+                        else:
+                            frame = _to_2d(tifffile.imread(path))
+                            print(f"Loaded p={p}, t={t}, c={c} → min={frame.min()}, max={frame.max()}, stored at data[{ti},{pi},{ci}]")
+                            data[ti, pi, ci] = frame
+                        current += 1
+                        if progress_callback:
+                            progress = int((current / total) * 100)
+                            progress_callback(progress)
+
+                else:  # stacked_tiff
+                    path = file_map.get((p, None, c))
+                    if path is None:
+                        print(f"Warning: missing stack p={p}, c={c} — filled with zeros")
+                        current += T
+                        if progress_callback:
+                            progress_callback(min(int((current / total) * 100), 100))
+                        continue
+
+                    with tifffile.TiffFile(path) as tif:
+                        for ti in range(T):
+                            frame = _to_2d(tif.pages[ti].asarray())
+                            data[ti, pi, ci] = frame
+                            current += 1
+                            if progress_callback:
+                                progress = int((current / total) * 100)
+                                progress_callback(progress)
+
+        # Convert to a dask array for lazy loading
+        dask_arr = da.from_array(data, chunks=(1, 1, 1, Y, X))
+        inst = cls.create_instance(data=dask_arr, path=list(file_map.values()), is_image=True, channel_n=C)
+        inst._memmap_file = filename
+        inst._tiff_file_map = {f"{k[0]},{k[1]},{k[2]}": v for k, v in file_map.items()}
+        inst._tiff_mode = mode
+
+        return inst
+
+    @staticmethod
+    def normalize_axes(arr, axes):
+        """Adjusts axes to 5D shape"""
+        axes = axes.upper()
+        # Ensure required axes exist
+        if "T" not in axes:
+            arr = np.expand_dims(arr, axis=0)
+            axes = "T" + axes
+        if "P" not in axes:
+            arr = np.expand_dims(arr, axis=1)
+            axes = axes.replace("T", "TP")
+        if "C" not in axes:
+            arr = np.expand_dims(arr, axis=2)
+            axes = axes.replace("TP", "TPC")
+        return arr, axes
+
+    def save_to_disk(self, filename: str):
         """Saves state to file
         Doesn't save nd2 since it is already stored in a file
         """
@@ -216,41 +350,69 @@ class ImageData:
             self.segmentation_cache.save(str(cache_path))
 
         # Save other container data
-        container_data = {
-            'nd2_filename': self.nd2_filename,
-            'is_nd2': self.is_nd2
-        }
+        container_data = {"image_filename": self.image_filename, "is_image": self.is_image}
+
+        # Include TIFF directory info if present
+        if hasattr(self, "_tiff_file_map") and self._tiff_file_map:
+            container_data["tiff_file_map"] = self._tiff_file_map
+            container_data["tiff_mode"] = self._tiff_mode
 
         # Save container metadata
-        with open(base_dir / "image_data.json", 'w') as f:
+        with open(base_dir / "image_data.json", "w") as f:
             json.dump(container_data, f)
 
     @classmethod
-    def load(cls, filename):
+    def load_from_disk(cls, filename):
         """Load imagedata from path"""
         base_dir = Path(filename)
 
         # Load imagedata metadata
         meta_path = base_dir / "image_data.json"
         if meta_path.exists():
-            with open(meta_path, 'r') as f:
+            with open(meta_path, "r") as f:
                 meta_json = json.load(f)
-                nd2_filename = meta_json.get('nd2_filename')
-                is_nd2 = meta_json.get('is_nd2', True)
+                image_filename = meta_json.get("image_filename")
+                is_image = meta_json.get("is_image", True)
 
-                # Use load_nd2 to create the instance properly
-                if nd2_filename and os.path.exists(nd2_filename):
-                    image_data = cls.load_nd2(nd2_filename)
+                files_ok = (
+                    isinstance(image_filename, str) and os.path.exists(image_filename)
+                ) or (
+                    isinstance(image_filename, list)
+                    and all(os.path.exists(_fname) for _fname in image_filename)
+                )
+
+                if files_ok:
+                    # Check if this was a TIFF directory import
+                    tiff_file_map_raw = meta_json.get("tiff_file_map")
+                    tiff_mode = meta_json.get("tiff_mode")
+
+                    if tiff_file_map_raw and tiff_mode:
+                        # Reconstruct file_map with tuple keys
+                        file_map = {}
+                        for key_str, path in tiff_file_map_raw.items():
+                            parts = key_str.split(",")
+                            p = int(parts[0])
+                            t = int(parts[1]) if parts[1] != "None" else None
+                            c = int(parts[2])
+                            file_map[(p, t, c)] = path
+                        image_data = cls.load_tiff_directory(file_map, tiff_mode)
+                    else:
+                        image_data = cls.load_nd2(image_filename)
 
                     # Load segmentation cache if file exists
                     cache_path = base_dir / "segmentation_cache.h5"
                     if cache_path.exists():
                         image_data.segmentation_cache = SegmentationCache.load(
-                            str(cache_path), image_data.data)
+                            str(cache_path), image_data.data
+                        )
+                        image_data.segmentation_service = SegmentationService(
+                            cache=image_data.segmentation_cache,
+                            models=SegmentationModels(),
+                            data_getter=image_data.get,
+                        )
 
                     return image_data
                 else:
-                    raise FileNotFoundError(
-                        f"ND2 file not found: {nd2_filename}")
+                    raise FileNotFoundError(f"Image file not found: {image_filename}")
         else:
             raise FileNotFoundError(f"Metadata file not found in {filename}")

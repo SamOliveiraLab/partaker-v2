@@ -2,8 +2,6 @@ import cv2
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-from PySide6.QtWidgets import QMessageBox, QProgressDialog
-from PySide6.QtCore import Qt
 
 
 def extract_individual_cells(image, segmented_image):
@@ -24,11 +22,14 @@ def extract_individual_cells(image, segmented_image):
         - Bounding box (x, y, w, h)
     """
     # Ensure the images are the same size
-    assert image.shape == segmented_image.shape, "Image and segmented image must have the same dimensions."
+    assert image.shape == segmented_image.shape, (
+        "Image and segmented image must have the same dimensions."
+    )
 
     # Find connected components in the segmented mask
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
-        segmented_image, connectivity=8)
+        segmented_image, connectivity=8
+    )
 
     # Extract individual cells
     extracted_cells = []
@@ -41,7 +42,7 @@ def extract_individual_cells(image, segmented_image):
             continue
 
         # Crop the corresponding region from the original image
-        cropped_cell = image[y:y + h, x:x + w]
+        cropped_cell = image[y : y + h, x : x + w]
         extracted_cells.append((cropped_cell, (x, y, w, h)))
 
     return extracted_cells
@@ -68,26 +69,21 @@ def classify_morphology(metrics, parameters=None):
 
     # Default parameters
     default_params = {
-
         "artifact_max_area": 245.510,
         "artifact_max_perimeter": 65.901,
-
         "divided_max_area": 685.844,
         "divided_max_perimeter": 269.150,
         "divided_max_aspect_ratio": 3.531,
-
         "healthy_min_circularity": 0.516,
         "healthy_max_circularity": 0.727,
         "healthy_min_aspect_ratio": 1.463,
         "healthy_max_aspect_ratio": 3.292,
         "healthy_min_solidity": 0.880,
-
         "elongated_min_area": 2398.996,
         "elongated_min_aspect_ratio": 5.278,
         "elongated_max_circularity": 0.245,
-
         "deformed_max_circularity": 0.589,
-        "deformed_max_solidity": 0.706
+        "deformed_max_solidity": 0.706,
     }
 
     # Use provided parameters if available, otherwise use defaults
@@ -96,31 +92,45 @@ def classify_morphology(metrics, parameters=None):
     # Classify cells based on thresholds
 
     # Artifacts - extremely small objects (likely segmentation errors)
-    if (area < params["artifact_max_area"] or
-            perimeter < params["artifact_max_perimeter"]):
+    if (
+        area < params["artifact_max_area"]
+        or perimeter < params["artifact_max_perimeter"]
+    ):
         return "Artifact"
 
     # Divided Cells (formerly Small) - recently divided cells
-    if (area < params["divided_max_area"] and
-        perimeter < params["divided_max_perimeter"] and
-            aspect_ratio < params["divided_max_aspect_ratio"]):
+    if (
+        area < params["divided_max_area"]
+        and perimeter < params["divided_max_perimeter"]
+        and aspect_ratio < params["divided_max_aspect_ratio"]
+    ):
         return "Divided"
 
     # Healthy Cells (formerly Normal) - balanced morphology
-    elif (params["healthy_min_circularity"] <= circularity <= params["healthy_max_circularity"] and
-          params["healthy_min_aspect_ratio"] <= aspect_ratio <= params["healthy_max_aspect_ratio"] and
-          solidity >= params["healthy_min_solidity"]):
+    elif (
+        params["healthy_min_circularity"]
+        <= circularity
+        <= params["healthy_max_circularity"]
+        and params["healthy_min_aspect_ratio"]
+        <= aspect_ratio
+        <= params["healthy_max_aspect_ratio"]
+        and solidity >= params["healthy_min_solidity"]
+    ):
         return "Healthy"
 
     # Elongated Cells - large area, high aspect ratio
-    elif (area >= params["elongated_min_area"] and
-          aspect_ratio >= params["elongated_min_aspect_ratio"] and
-          circularity <= params["elongated_max_circularity"]):
+    elif (
+        area >= params["elongated_min_area"]
+        and aspect_ratio >= params["elongated_min_aspect_ratio"]
+        and circularity <= params["elongated_max_circularity"]
+    ):
         return "Elongated"
 
     # Deformed Cells - low circularity and solidity
-    elif (circularity <= params["deformed_max_circularity"] and
-          solidity <= params["deformed_max_solidity"]):
+    elif (
+        circularity <= params["deformed_max_circularity"]
+        and solidity <= params["deformed_max_solidity"]
+    ):
         return "Deformed"
 
     # Default case
@@ -139,8 +149,8 @@ def extract_cells_and_metrics(image, segmented_image):
     Returns:
     - cell_mapping: dict, a dictionary with cell IDs as keys and a dictionary of metrics and bounding boxes as values.
     """
-    from skimage.measure import regionprops, label
     from skimage.color import rgb2gray
+    from skimage.measure import label, regionprops
     from skimage.transform import resize
 
     # Debugging: print input shapes
@@ -155,19 +165,32 @@ def extract_cells_and_metrics(image, segmented_image):
     # Check and handle shape mismatches between the intensity image and the
     # segmented image
     if image.shape != segmented_image.shape:
-        print(
-            f"Resizing intensity image from {image.shape} to {segmented_image.shape}")
+        print(f"Resizing intensity image from {image.shape} to {segmented_image.shape}")
         image = resize(
-            image,
-            segmented_image.shape,
-            preserve_range=True,
-            anti_aliasing=True)
+            image, segmented_image.shape, preserve_range=True, anti_aliasing=True
+        )
 
-    # Label connected regions in the segmented image
-    labeled_image = label(segmented_image)
+    # Check if segmentation is already labeled (OmniPose/Cellpose) or binary (UNET)
+    max_value = segmented_image.max()
+    unique_values = len(np.unique(segmented_image))
+
+    print(f"Segmented image max value: {max_value}")
+    print(f"Segmented image unique values: {unique_values}")
+
+    # If already labeled (max > 255 or many unique values), use as-is
+    # If binary (0 and 255), call label() to number regions
+    if max_value > 255 or unique_values > 100:
+        print("✓ Already labeled segmentation detected - preserving cell IDs!")
+        labeled_image = segmented_image
+        use_original_labels = True
+    else:
+        print("✓ Binary segmentation detected - calling label() to number cells")
+        labeled_image = label(segmented_image)
+        use_original_labels = False
 
     # Debugging: print labeled image shape
     print(f"Labeled image shape: {labeled_image.shape}")
+    print(f"Number of labeled regions: {labeled_image.max()}")
 
     # Extract properties for each labeled region
     cell_mapping = {}
@@ -194,8 +217,13 @@ def extract_cells_and_metrics(image, segmented_image):
         # Classify the cell's morphology
         metrics["morphology_class"] = classify_morphology(metrics)
 
-        # Add cell information to the mapping
-        cell_id = len(cell_mapping) + 1
+        # Use the original label as cell_id if already labeled
+        # Otherwise, assign sequential IDs
+        if use_original_labels:
+            cell_id = region.label  # Use OmniPose/Cellpose's original cell ID
+        else:
+            cell_id = len(cell_mapping) + 1  # Sequential numbering for binary masks
+
         cell_mapping[cell_id] = {
             "bbox": (x1, y1, x2, y2),
             "metrics": metrics,
@@ -217,8 +245,15 @@ def annotate_image(image, cell_mapping):
     for cell_id, data in cell_mapping.items():
         x1, y1, x2, y2 = data["bbox"]
         cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        cv2.putText(annotated, str(cell_id), (x1, y1 - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+        cv2.putText(
+            annotated,
+            str(cell_id),
+            (x1, y1 - 10),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 255, 0),
+            1,
+        )
     return annotated
 
 
@@ -248,10 +283,10 @@ def annotate_binary_mask(segmented_image, cell_mapping):
     # Define color mapping for morphology classes
     morphology_colors = {
         "Artifact": (128, 128, 128),  # Gray
-        "Divided": (255, 0, 0),       # Blue
-        "Healthy": (0, 255, 0),       # Green
-        "Elongated": (0, 255, 255),   # Yellow
-        "Deformed": (255, 0, 255),    # Magenta
+        "Divided": (255, 0, 0),  # Blue
+        "Healthy": (0, 255, 0),  # Green
+        "Elongated": (0, 255, 255),  # Yellow
+        "Deformed": (255, 0, 255),  # Magenta
     }
 
     for cell_id, data in cell_mapping.items():
@@ -260,7 +295,8 @@ def annotate_binary_mask(segmented_image, cell_mapping):
         # Get the morphology class and corresponding color
         morphology_class = data["metrics"].get("morphology_class", "Healthy")
         color = morphology_colors.get(
-            morphology_class, (255, 255, 255))  # Default to white
+            morphology_class, (255, 255, 255)
+        )  # Default to white
 
         # Draw bounding box with morphology-specific color
         cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
@@ -292,7 +328,8 @@ def extract_cell_morphologies(binary_image: np.array) -> pd.DataFrame:
     pd.DataFrame: DataFrame containing morphology properties for each cell.
     """
     contours, _ = cv2.findContours(
-        binary_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        binary_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
 
     morphologies = []
 
@@ -351,12 +388,12 @@ def extract_cell_morphologies(binary_image: np.array) -> pd.DataFrame:
                 "solidity",
                 "equivalent_diameter",
                 "orientation",
-                "morphology_class"])
+                "morphology_class",
+            ]
+        )
 
 
-def extract_cell_morphologies_time(
-        segmented_imgs: np.array,
-        **kwargs) -> pd.DataFrame:
+def extract_cell_morphologies_time(segmented_imgs: np.array, **kwargs) -> pd.DataFrame:
     """
     Extracts cell morphologies from a series of segmented images.
 

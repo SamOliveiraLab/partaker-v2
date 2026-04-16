@@ -1,11 +1,10 @@
+# Segmentation imports
+from typing import Tuple, Dict  # Python types
+
 import tensorflow as tf
-# import tensorflow.keras as keras
 
 # import keras.api._v2.keras as keras
 from keras import backend as K
-from tensorflow.python.ops import array_ops, math_ops
-from keras.optimizers import Adam
-from keras.models import Model
 from keras.layers import (
     Input,
     Conv2D,
@@ -14,6 +13,12 @@ from keras.layers import (
     UpSampling2D,
     Concatenate,
 )
+from keras.models import Model
+from keras.optimizers import Adam
+from tensorflow.python.ops import array_ops, math_ops
+
+
+# import tensorflow.keras as keras
 # from tensorflow.keras import backend as K
 # from tensorflow.python.ops import array_ops, math_ops
 # from tensorflow.keras.optimizers import Adam  # Adam optimizer instead of SGD...
@@ -27,19 +32,14 @@ from keras.layers import (
 #     UpSampling2D,
 #     Concatenate,
 # )
-
 # Model loading. TODO: move to another file
-
 # target_size_seg = (512, 512)
-
 # model = unet_segmentation(input_size = target_size_seg + (1,))
 # # model.load_weights('./checkpoints/delta_2_29_01_24_5eps')
 # # model.load_weights('./checkpoints/delta_2_19_02_24_200eps')
 # model.load_weights('./checkpoints/delta_2_20_02_24_600eps')
 # # model.summary()
 
-# Segmentation imports
-from typing import Union, List, Tuple, Callable, Dict  # Python types
 
 #### Entropy and Loss functions ####
 
@@ -96,12 +96,8 @@ def pixelwise_weighted_binary_crossentropy_seg(
     loss = K.mean(math_ops.multiply(weight, entropy), axis=-1)
 
     loss = tf.scalar_mul(
-        10 ** 6,
-        tf.scalar_mul(
-            1 /
-            tf.math.sqrt(
-                tf.math.reduce_sum(weight)),
-            loss))
+        10**6, tf.scalar_mul(1 / tf.math.sqrt(tf.math.reduce_sum(weight)), loss)
+    )
 
     return loss
 
@@ -142,29 +138,17 @@ def contracting_block(
     dropout: float = 0,
     name: str = "Contracting",
 ) -> tf.Tensor:
-
     # Pooling layer: (sample 'images' down by factor 2)
-    pool = MaxPooling2D(pool_size=(2, 2), name=name +
-                        "_MaxPooling2D")(input_layer)
+    pool = MaxPooling2D(pool_size=(2, 2), name=name + "_MaxPooling2D")(input_layer)
 
     # First Convolution layer
-    conv1 = Conv2D(
-        filters,
-        3,
-        **conv2d_parameters,
-        name=name +
-        "_Conv2D_1")(pool)
+    conv1 = Conv2D(filters, 3, **conv2d_parameters, name=name + "_Conv2D_1")(pool)
 
     # Second Convolution layer
-    conv2 = Conv2D(
-        filters,
-        3,
-        **conv2d_parameters,
-        name=name +
-        "_Conv2D_2")(conv1)
+    conv2 = Conv2D(filters, 3, **conv2d_parameters, name=name + "_Conv2D_2")(conv1)
 
     # If a dropout is necessary, otherwise just return
-    if (dropout == 0):
+    if dropout == 0:
         return conv2
     else:
         drop = Dropout(dropout, name=name + "_Dropout")(conv2)
@@ -200,6 +184,7 @@ conv3 : tf.Tensor
 
 """
 
+
 # Expanding Block for the U-Net
 
 
@@ -211,36 +196,19 @@ def expanding_block(
     dropout: float = 0,
     name: str = "Expanding",
 ) -> tf.Tensor:
-
     # Up-Sampling
     up = UpSampling2D(size=(2, 2), name=name + "_UpSampling2D")(input_layer)
-    conv1 = Conv2D(
-        filters,
-        2,
-        **conv2d_parameters,
-        name=name +
-        "_Conv2D_1")(up)
+    conv1 = Conv2D(filters, 2, **conv2d_parameters, name=name + "_Conv2D_1")(up)
 
     # Merge with skip connection layer
-    merge = Concatenate(axis=3, name=name +
-                        "_Concatenate")([skip_layer, conv1])
+    merge = Concatenate(axis=3, name=name + "_Concatenate")([skip_layer, conv1])
 
     # Convolution Layers
-    conv2 = Conv2D(
-        filters,
-        3,
-        **conv2d_parameters,
-        name=name +
-        "_Conv2D_2")(merge)
-    conv3 = Conv2D(
-        filters,
-        3,
-        **conv2d_parameters,
-        name=name +
-        "_Conv2D_3")(conv2)
+    conv2 = Conv2D(filters, 3, **conv2d_parameters, name=name + "_Conv2D_2")(merge)
+    conv3 = Conv2D(filters, 3, **conv2d_parameters, name=name + "_Conv2D_3")(conv2)
 
     # If there needs dropout, otherwise, lets return
-    if (dropout == 0):
+    if dropout == 0:
         return conv3
     else:
         drop = Dropout(dropout, name=name + "_Dropout")(conv3)
@@ -319,9 +287,8 @@ def unet(
     final_activation="sigmoid",
     output_classes=1,
     dropout: float = 0,
-    levels: int = 5
+    levels: int = 5,
 ) -> Model:
-
     # Default parameters for convolution
     conv2d_params = {
         "activation": "relu",
@@ -368,14 +335,13 @@ def unet(
         )
 
     # Next we have the final output layer
-    output = Conv2D(
-        output_classes,
-        1,
-        activation=final_activation,
-        name="true_output")(expanding_output)
+    output = Conv2D(output_classes, 1, activation=final_activation, name="true_output")(
+        expanding_output
+    )
     model = Model(inputs=inputs, outputs=output)
 
     return model
+
 
 # Unets Physical Model for Segmentation, think of it as a wrapper function...
 
@@ -385,7 +351,6 @@ def unet_segmentation(
     input_size: Tuple[int, int, int] = (256, 32, 1),
     levels: int = 5,
 ) -> Model:  # Force a Model Class to come
-
     # Run the following inputs into the unet algorithm defined above...
     model = unet(
         input_size=input_size,
@@ -399,7 +364,7 @@ def unet_segmentation(
     model.compile(
         optimizer=Adam(learning_rate=1e-4),
         loss=pixelwise_weighted_binary_crossentropy_seg,
-        metrics=[unstack_acc]
+        metrics=[unstack_acc],
     )
 
     # If we have any pre-trained weights...

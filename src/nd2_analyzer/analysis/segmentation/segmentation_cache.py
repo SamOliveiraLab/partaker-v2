@@ -1,27 +1,29 @@
-from itertools import product
 import json
 import os
-import pickle
+from itertools import product
 
+import cv2
 import h5py
 import numpy as np
 
 from .segmentation_models import SegmentationModels
+
 # from .losses import pixelwise_weighted_binary_crossentropy_seg
 
 
 class SegmentationCache:
-    def __init__(self, nd2_data):
-        self.nd2_data = nd2_data
+    def __init__(self, image_data):
+        self.image_data = image_data
         self.mmap_arrays_idx = {}
         self.model_name = None
 
     def with_model(self, model_name):
-        print(f"DEBUG: SegmentationCache.with_model() received: {model_name}")
         self.model_name = model_name
         if model_name not in self.mmap_arrays_idx:
             self.mmap_arrays_idx[model_name] = (
-                np.zeros(self.shape, dtype=np.uint8), set())
+                np.zeros(self.shape, dtype=np.uint16),
+                set(),
+            )
         return self
 
     def save(self, file_path):
@@ -29,54 +31,55 @@ class SegmentationCache:
         # Create directory if it doesn't exist
         os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
 
-        with h5py.File(file_path, 'w') as f:
+        with h5py.File(file_path, "w") as f:
             # Store basic attributes
-            f.attrs['model_name'] = self.model_name if self.model_name else ''
+            f.attrs["model_name"] = self.model_name if self.model_name else ""
 
             # Create a group for mmap arrays
-            mmap_group = f.create_group('mmap_arrays')
+            mmap_group = f.create_group("mmap_arrays")
 
             # Store each model's data
             for model_name, (array, index_set) in self.mmap_arrays_idx.items():
                 model_group = mmap_group.create_group(model_name)
                 # Store the array
-                model_group.create_dataset(
-                    'array', data=array, compression='gzip')
+                model_group.create_dataset("array", data=array, compression="gzip")
                 # Store the set as a JSON string
                 index_list = [list(idx) for idx in index_set]
-                model_group.attrs['index_set'] = json.dumps(index_list)
+                model_group.attrs["index_set"] = json.dumps(index_list)
 
-            # Store nd2_data reference or metadata
-            # Note: We don't store the actual nd2_data, just metadata about it
-            if self.nd2_data is not None:
-                nd2_group = f.create_group('nd2_metadata')
+            # Store image_data reference or metadata
+            # Note: We don't store the actual image_data, just metadata about it
+            if self.image_data is not None:
+                image_group = f.create_group("image_metadata")
                 # Store file path if available
-                if hasattr(self.nd2_data, 'filename'):
-                    nd2_group.attrs['filename'] = str(self.nd2_data.filename)
+                if hasattr(self.image_data, "filename"):
+                    image_group.attrs["filename"] = str(self.image_data.filename)
                 # Store shape if available
-                if hasattr(self.nd2_data, 'shape'):
-                    nd2_shape = self.nd2_data.shape
-                    nd2_group.attrs['shape'] = json.dumps(nd2_shape)
+                if hasattr(self.image_data, "shape"):
+                    image_shape = self.image_data.shape
+                    image_group.attrs["shape"] = json.dumps(image_shape)
 
     @classmethod
-    def load(cls, file_path, nd2_data=None):
+    def load(cls, file_path, image_data=None):
         """Load cache state from an HDF5 file"""
-        cache = cls(nd2_data)
+        cache = cls(image_data)
 
-        with h5py.File(file_path, 'r') as f:
+        with h5py.File(file_path, "r") as f:
             # Load basic attributes
-            cache.model_name = f.attrs.get('model_name', '')
+            cache.model_name = f.attrs.get("model_name", "")
 
-            if 'mmap_arrays' in f:  # reload each segmentation cache with the associated cache index
-                mmap_group = f['mmap_arrays']
+            if (
+                "mmap_arrays" in f
+            ):  # reload each segmentation cache with the associated cache index
+                mmap_group = f["mmap_arrays"]
                 for model_name in mmap_group:
                     model_group = mmap_group[model_name]
-                    array = model_group['array'][:]
+                    array = model_group["array"][:]
 
                     # Reconstruct the indices set
                     index_set = set()
-                    if 'index_set' in model_group.attrs:
-                        index_list_str = model_group.attrs['index_set']
+                    if "index_set" in model_group.attrs:
+                        index_list_str = model_group.attrs["index_set"]
                         try:
                             # Load the indices from JSON string
                             index_list = json.loads(index_list_str)
@@ -87,14 +90,15 @@ class SegmentationCache:
                                 if isinstance(idx, list):
                                     index_set.add(tuple(int(i) for i in idx))
                                 else:
-                                    print(
-                                        f"WARNING: Unexpected index format: {idx}")
+                                    print(f"WARNING: Unexpected index format: {idx}")
 
                             print(
-                                f"Successfully loaded {len(index_set)} indices for model {model_name}")
+                                f"Successfully loaded {len(index_set)} indices for model {model_name}"
+                            )
                         except Exception as e:
                             print(
-                                f"Error parsing indices for model {model_name}: {str(e)}")
+                                f"Error parsing indices for model {model_name}: {str(e)}"
+                            )
                             # Continue with empty set
 
                     # Store the array and indices
@@ -109,10 +113,12 @@ class SegmentationCache:
         Parameters:
             binary_mask (np.ndarray): Binary mask where True/1 indicates regions to keep
         """
-        if binary_mask.shape != self.shape[-2:
-                                           ]:  # Check if mask matches image dimensions
+        if (
+            binary_mask.shape != self.shape[-2:]
+        ):  # Check if mask matches image dimensions
             raise ValueError(
-                f"Binary mask shape {binary_mask.shape} does not match image dimensions {self.shape[-2:]}")
+                f"Binary mask shape {binary_mask.shape} does not match image dimensions {self.shape[-2:]}"
+            )
         self.binary_mask = binary_mask
         return self
 
@@ -133,12 +139,14 @@ class SegmentationCache:
         # Convert binary segmentation to labeled regions if needed
         if not is_labeled:
             from skimage.measure import label
+
             labeled_frame = label(segmented_frame)
         else:
             labeled_frame = segmented_frame
 
         # Find regions that overlap with the mask boundary
         from scipy.ndimage import binary_dilation
+
         mask_boundary = binary_dilation(self.binary_mask) & ~self.binary_mask
 
         # Get labels of regions touching the boundary
@@ -152,9 +160,11 @@ class SegmentationCache:
         for label_id in np.unique(labeled_frame):
             if label_id > 0:  # Skip background
                 if label_id not in boundary_labels and np.any(
-                        (labeled_frame == label_id) & self.binary_mask):
-                    result[labeled_frame == label_id] = 255 if np.max(
-                        segmented_frame) <= 255 else label_id
+                    (labeled_frame == label_id) & self.binary_mask
+                ):
+                    result[labeled_frame == label_id] = (
+                        255 if np.max(segmented_frame) <= 255 else label_id
+                    )
 
         return result
 
@@ -169,8 +179,8 @@ class SegmentationCache:
         Returns:
             np.ndarray: Cleaned segmentation with artifacts removed
         """
-        from skimage.measure import label, regionprops
         from scipy import stats
+        from skimage.measure import label, regionprops
 
         # Convert binary segmentation to labeled regions if needed
         if np.max(segmented_frame) <= 1:
@@ -208,7 +218,8 @@ class SegmentationCache:
     def __getitem__(self, key):
         if self.model_name is None:
             raise ValueError(
-                "Model name must be set using with_model() before accessing data.")
+                "Model name must be set using with_model() before accessing data."
+            )
 
         # Get the memory-mapped array and indices for current model
         mmap_array, indices = self.mmap_arrays_idx[self.model_name]
@@ -248,7 +259,7 @@ class SegmentationCache:
         while len(normalized) < self.ndim:
             normalized.append(slice(None))
 
-        return tuple(normalized[:self.ndim])
+        return tuple(normalized[: self.ndim])
 
     def _get_requested_shape(self, key):
         """Calculate the shape of the requested array portion"""
@@ -282,14 +293,29 @@ class SegmentationCache:
         idx = tuple(i % s for i, s in zip(idx, self.shape))
 
         try:
-            frame = self.nd2_data[idx].compute()
-            segmented_frame = SegmentationModels().segment_images(
-                [frame], mode=self.model_name)[0]
+            frame = self.image_data[idx].compute()
+            if frame.dtype == bool:
+                frame = frame.astype(np.uint8) * 255
+            elif frame.dtype != np.uint8 and frame.dtype != np.uint16:
+                frame = cv2.normalize(frame, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
 
-            if hasattr(self, 'binary_mask') and self.binary_mask is not None:
+            # TODO: migrate to segmentation service
+            # Normalize frame first
+            if self.model_name in [SegmentationModels().UNET]:
+                frame = cv2.normalize(frame, None, 0, 65535, cv2.NORM_MINMAX).astype(
+                    np.uint16
+                )
+
+            segmented_frame = SegmentationModels().segment_images(
+                [frame], mode=self.model_name
+            )[0]
+
+            if hasattr(self, "binary_mask") and self.binary_mask is not None:
                 segmented_frame = self.apply_binary_mask(segmented_frame)
 
-            segmented_frame = self.remove_artifacts(segmented_frame)
+            if self.model_name in [SegmentationModels().UNET]:
+                segmented_frame = self.remove_artifacts(segmented_frame)
+
             mmap_array[idx] = segmented_frame
             indices.add(idx)
         except Exception as e:
@@ -297,11 +323,11 @@ class SegmentationCache:
 
     @property
     def shape(self):
-        return self.nd2_data.shape
+        return self.image_data.shape
 
     @property
     def ndim(self):
-        return self.nd2_data.ndim - 2  # Since the last 2 will be image X and Y
+        return self.image_data.ndim - 2  # Since the last 2 will be image X and Y
 
     @property
     def dtype(self):

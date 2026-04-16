@@ -1,15 +1,4 @@
-import sys
-from PySide6.QtWidgets import (
-    QApplication,
-    QMainWindow,
-    QMenuBar,
-    QMenu,
-    QFileDialog,
-    QDialog,
-    QVBoxLayout,
-    QLabel,
-    QPushButton)
-from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton
 
 
 class AboutDialog(QDialog):
@@ -20,7 +9,8 @@ class AboutDialog(QDialog):
 
         layout = QVBoxLayout()
         about_label = QLabel(
-            'Partaker microfluidic image analyzer.\nVersion 1.0\nCreated by Henrique Núñez and Bukola Akindipe')
+            "Partaker microfluidic image analyzer.\nVersion 1.0\nCreated by Henrique Núñez and Bukola Akindipe"
+        )
         layout.addWidget(about_label)
 
         close_button = QPushButton("Close")

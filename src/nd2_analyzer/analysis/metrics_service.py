@@ -1,475 +1,501 @@
-import polars as pl
-import numpy as np
-from skimage.measure import regionprops
-from pubsub import pub
-from typing import Optional, Dict
 import logging
-from nd2_analyzer.analysis.morphology.morphology import classify_morphology
 import os
-import pickle
+from collections import defaultdict
+from typing import Optional
 
-# Set up logging
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger('MetricsService')
+import numpy as np
+import polars as pl
+from pubsub import pub
+from skimage.measure import regionprops, label
+
+from nd2_analyzer.analysis.morphology.morphology import classify_morphology
+from nd2_analyzer.data.frame import TLFrame
+from nd2_analyzer.data.image_data import ImageData
+from nd2_analyzer.utils import timing_decorator
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("MetricsService")
 
 
 class MetricsService:
-    """
-    Service that tracks cell metrics across time and position.
-    Listens to image_ready messages from SegmentationService and calculates metrics.
-
-    This class is implemented as a singleton to ensure only one instance exists
-    throughout the application.
-    """
-    # Class variable to store the singleton instance
     _instance = None
 
     def __new__(cls):
-        # If no instance exists, create one
         if cls._instance is None:
-            logger.info("Creating MetricsService singleton instance")
+            logger.info("Creating OptimizedMetricsService singleton instance")
             cls._instance = super(MetricsService, cls).__new__(cls)
-            # Initialize instance attributes
             cls._instance._initialized = False
         return cls._instance
 
     def __init__(self):
-        # Only initialize once
-        if not getattr(self, '_initialized', False):
-            logger.info("Initializing MetricsService")
-            # Initialize an empty polars DataFrame
-            self.df = pl.DataFrame()
-            self._data = []  # Temporary storage for rows before creating DataFrame
-            self._segmentation_cache = {}
-            # Subscribe only to image_ready messages
-            pub.subscribe(self.on_image_ready, "image_ready")
+        if not getattr(self, "_initialized", False):
+            logger.info("Initializing OptimizedMetricsService")
 
-            # Mark as initialized
+            # Use Polars DataFrame as primary storage
+            self.df = pl.DataFrame()
+
+            # Fast lookup cache for pending fluorescence updates
+            self._pending_metrics = defaultdict(
+                dict
+            )  # {(t,p): {cell_id: metrics_dict}}
+
+            # Segmentation cache for fluorescence processing
+            self._segmentation_cache = {}  # {(t,p): labeled_image}
+
+            # Batch processing configuration
+            self._batch_size = 1000
+            self._pending_count = 0
+
+            pub.subscribe(self.compute_metrics_at_frame, "image_ready")
             self._initialized = True
 
-    def on_image_ready(self, image, time, position, channel, mode):
+    @timing_decorator("compute_metrics_at_frame")
+    def compute_metrics_at_frame(
+            self, image: np.ndarray, time, position, channel, mode
+    ):
+        if mode != "segmented":
+            return
+
+        # labeled_frame = segmentation_cache[time, position, 0] # TODO: ensure segmentationservice always returns labeled
+        labeled_frame = image
+
+        chan_n = ImageData.get_instance().channel_n
+        mcherry_frame = yfp_frame = None
+        if chan_n == 3:
+            mcherry_frame = ImageData.get_instance().get(time, position, 1)
+            yfp_frame = ImageData.get_instance().get(time, position, 2)
+        elif chan_n == 2:
+            mcherry_frame = ImageData.get_instance().get(time, position, 1)
+
+        phase_frame = ImageData.get_instance().get(time, position, 0)
+
+        curr_analysis_frame = TLFrame(
+            index=(time, position),
+            labeled_phc=labeled_frame,
+            mcherry=mcherry_frame,
+            yfp=yfp_frame,
+            phase=phase_frame,
+        )
+
+        batch_metrics = MetricsService.calculate_cell_metrics(curr_analysis_frame)
+        self.update_frame_metrics(batch_metrics)
+
+    @timing_decorator("replace_frame_metrics")
+    def update_frame_metrics(self, batch_data: list):
         """
-        Process segmented images to extract cell metrics.
+        Updates metrics for a given frame (time/position).
+
+        Deletes this time/position from the dataset if they exist, and overwrites them.
 
         Args:
-            image: The image data (numpy array)
-            time: Time point of the image
-            position: Position of the image
-            channel: Channel of the image
-            mode: Display mode of the image
+            batch_data: Complete list of metrics from calculate_cell_metrics()
         """
-        # Handle raw images for fluorescence analysis
-        if mode == "normal" and channel != 0:
-            self._process_fluorescence_image(image, time, position, channel)
+        if not batch_data:
             return
 
-        # Only process segmentation-related modes
-        if mode not in ["segmented", "labeled"]:
+        if self.df.is_empty():
+            self.df = pl.DataFrame(batch_data)
             return
 
-        # Convert image to numpy array if needed
-        if not isinstance(image, np.ndarray):
-            image = np.array(image)
+        # Extract the frame coordinates from the first row
+        # (all rows in batch_data have the same time/position)
+        first_row = batch_data[0]
+        time_point = first_row["time"]
+        position = first_row["position"]
 
-        # For segmented images, we need to label the connected components
-        if mode == "segmented":
-            from scipy.ndimage import label
-            labeled_image, num_features = label(image > 0)
-        else:  # mode == "labeled"
-            # For labeled images, use the labels directly
-            labeled_image = image
-            num_features = np.max(
-                labeled_image) if labeled_image.size > 0 else 0
+        # Delete existing rows for this time/position
+        self.df = self.df.filter(
+            ~((pl.col("time") == time_point) & (pl.col("position") == position))
+        )
 
-        if num_features == 0:
-            logger.info(
-                f"No cells found in image at T={time}, P={position}, C={channel}")
-            return
+        # Create DataFrame from new data and concatenate
+        new_df = pl.DataFrame(batch_data)
+        self.df = pl.concat([self.df, new_df], how="vertical")
 
-        logger.info(
-            f"Analyzing {num_features} cells in image at T={time}, P={position}, C={channel}")
+    """
+    Computes the metrics for each labeled cell from the segmentation
+        # Uses regionprops to get geometrical features
 
-        # Store the labeled image for later fluorescence analysis
-        cache_key = (time, position)
-        self._segmentation_cache[cache_key] = labeled_image
+        # For fluorescence analysis:
+        # Takes each segmented cell
+        # 1. calculate physical metrics
+        # 2. identify which fluorescence channel it is from
+        # 3. write the actual fluorescence value
+    """
 
-        # Calculate metrics for the segmented cells
-        self._calculate_metrics(labeled_image, time, position, channel)
+    def calculate_cell_metrics(_frame: TLFrame):
+        cells = regionprops(_frame.labeled_phc)
+        batch_data = []
 
-        # Request raw images for fluorescence analysis
-        # TODO: make it aware of the fluorescence channels
-        for _chan in range(1, 3):
-            pub.sendMessage("raw_image_request",
-                            time=time,
-                            position=position,
-                            channel=_chan)
+        use_phase_intensity = (
+            _frame.phase is not None
+            and _frame.mcherry is None
+            and _frame.yfp is None
+        )
 
-    def _process_fluorescence_image(self, image, time, position, channel):
-        """
-        Process raw fluorescence images using stored segmentation labels.
+        # Check for the fluorescence in any channel, if not, -1 and 0 fluorescence
+        # mcherry can be None, same for yfp
+        back_fluo_mcherry = (
+            _frame.mcherry[_frame.labeled_phc == 0].mean()
+            if _frame.mcherry is not None
+            else -1
+        )
+        back_fluo_yfp = (
+            _frame.yfp[_frame.labeled_phc == 0].mean() if _frame.yfp is not None else -1
+        )
+        max_back_fluo = max(back_fluo_mcherry, back_fluo_yfp)
+        has_fluorescence = True
+        if use_phase_intensity:
+            has_fluorescence = False
+        elif max_back_fluo < 0.01:
+            fluorescence_channel = -1
+            fluorescence_level = 0.0
+            has_fluorescence = False
 
-        Args:
-            image: The raw fluorescence image
-            time: Time point
-            position: Position
-            channel: Channel
-        """
-        cache_key = (time, position)
-        # TODO: compute fluorescence values per channel!
+        for cell in cells:
+            cell_id = cell.label
 
-        # Check if we have segmentation labels for this image
-        if cache_key not in self._segmentation_cache:
-            logger.warning(
-                f"No segmentation labels found for T={time}, P={position}, C={channel}")
-            return
+            # Calculate derived metrics
+            circularity = (
+                (4 * np.pi * cell.area) / (cell.perimeter ** 2)
+                if cell.perimeter > 0
+                else 0
+            )
+            aspect_ratio = (
+                cell.major_axis_length / cell.minor_axis_length
+                if cell.minor_axis_length > 0
+                else 1.0
+            )
+            y1, x1, y2, x2 = cell.bbox
 
-        # Get the labeled image from cache
-        labeled_image = self._segmentation_cache[cache_key]
-
-        # Find metrics for this time/position/channel in our data
-        matching_metrics = [
-            (i, m) for i, m in enumerate(self._data)
-            # and m["channel"] == channel
-            if m["time"] == time and m["position"] == position
-        ]
-
-        if not matching_metrics:
-            logger.warning(
-                f"No metrics found for T={time}, P={position}, C={channel}")
-            return
-
-        # Convert image to numpy array if needed
-        if not isinstance(image, np.ndarray):
-            image = np.array(image)
-
-        # Calculate background intensity (areas with no cells)
-        background_mask = labeled_image == 0
-        background_intensity = np.mean(
-            image[background_mask]) if np.any(background_mask) else 0
-
-        # Fluorescence measurement key
-        fluo_metric_key = f"fluo_{channel}"
-
-        # Update fluorescence metrics for each cell
-        for idx, metrics in matching_metrics:
-            cell_id = metrics["cell_id"]
-            cell_mask = labeled_image == cell_id
-
-            if np.any(cell_mask):
-                cell_pixels = image[cell_mask]
-                metrics[fluo_metric_key] = np.mean(cell_pixels)
-                # metrics["max_intensity"] = np.max(cell_pixels)
-                # metrics["min_intensity"] = np.min(cell_pixels)
-                # metrics["std_intensity"] = np.std(cell_pixels)
-                # metrics["integrated_intensity"] = np.sum(cell_pixels)
-                # metrics["background_intensity"] = background_intensity
-                # metrics["normalized_intensity"] = metrics["mean_intensity"] / background_intensity if background_intensity > 0 else None
-
-                # Log the fluorescence metrics
-                self._log_fluorescence_metrics(metrics)
-
-                # Update the metrics in our data
-                self._data[idx] = metrics
-
-        # Update the DataFrame
-        self._update_dataframe()
-
-    def _calculate_metrics(self, labeled_image, time, position, channel):
-        """
-        Calculate basic shape metrics for all cells in a labeled image.
-
-        Args:
-            labeled_image: Image with labeled regions
-            time: Time point
-            position: Position
-            channel: Channel
-        """
-        # Use regionprops to calculate metrics for each labeled region
-        props = regionprops(labeled_image)
-
-        # For each cell, compute metrics and add to data
-        for prop in props:
-            cell_id = prop.label
-
-            circularity = (4 * np.pi * prop.area) / \
-                (prop.perimeter**2) if prop.perimeter > 0 else 0
-            solidity = prop.solidity
-            equivalent_diameter = prop.equivalent_diameter
-            aspect_ratio = prop.major_axis_length / \
-                prop.minor_axis_length if prop.minor_axis_length > 0 else 1.0
-
-            # Add orientation explicitly
-            orientation = prop.orientation
-
-            metrics_for_classification = {
-                "area": prop.area,
-                "perimeter": prop.perimeter,
+            metrics_dict = {
+                "area": cell.area,
+                "perimeter": cell.perimeter,
                 "aspect_ratio": aspect_ratio,
                 "circularity": circularity,
-                "solidity": solidity,
-                "equivalent_diameter": equivalent_diameter,
-                "orientation": orientation
+                "solidity": cell.solidity,
+                "equivalent_diameter": cell.equivalent_diameter,
+                "orientation": cell.orientation,
             }
 
-            # Get morphology classification
-            morphology_class = classify_morphology(metrics_for_classification)
+            # TODO: confirm that we need all these metrics
 
-            # Extract bounding box coordinates from regionprops
-            # bbox format in regionprops is (min_row, min_col, max_row, max_col), which maps to (y1, x1, y2, x2)
-            y1, x1, y2, x2 = prop.bbox  # (min_row, min_col, max_row, max_col)
+            # TODO: confirm this function is working
+            morphology_class = classify_morphology(metrics_dict)
 
-            # Calculate basic shape metrics
-            metrics = {
-                "data_type": "cell",
-                "position": position,
-                "time": time,
+            # TODO: very important here, we need the computed rpu to know where each of them came from
+            # Let's first compute the RPU
+            # Based on the background fluorescence, tell which population this cell is from
+            if use_phase_intensity:
+                mask = _frame.labeled_phc == cell_id
+                pix = _frame.phase[mask]
+                fluorescence_channel = 0
+                fluorescence_level = float(np.mean(pix)) if pix.size else 0.0
+            elif has_fluorescence:
+                # If only mcherry has fluo
+                if back_fluo_mcherry != -1 and back_fluo_yfp == -1:
+                    mcherry_fluo = _frame.mcherry[_frame.labeled_phc == cell_id].mean()
+                    fluorescence_channel = 1
+                    fluorescence_level = mcherry_fluo
+
+                # If both have fluorescence, compare them
+                elif back_fluo_mcherry != -1 and back_fluo_yfp != -1:
+                    # Select the region corresponding to the cell in the frames
+                    mcherry_fluo = _frame.mcherry[_frame.labeled_phc == cell_id].mean()
+                    yfp_fluo = _frame.yfp[_frame.labeled_phc == cell_id].mean()
+                    if back_fluo_mcherry != -1 and back_fluo_yfp != -1:
+                        if (mcherry_fluo / back_fluo_mcherry) > (
+                                yfp_fluo / back_fluo_yfp
+                        ):
+                            fluorescence_channel = 1
+                            fluorescence_level = mcherry_fluo
+                        else:
+                            fluorescence_channel = 2
+                            fluorescence_level = yfp_fluo
+                else:
+                    fluorescence_channel = -1
+                    fluorescence_level = 0.0
+            else:
+                fluorescence_channel = -1
+                fluorescence_level = 0.0
+
+            row_data = {
+                "time": _frame.index[0],
+                "position": _frame.index[1],
                 "cell_id": cell_id,
-                "channel": channel,
-                "area": prop.area,
-                "perimeter": prop.perimeter,
-                "eccentricity": prop.eccentricity,
-                "major_axis_length": prop.major_axis_length,
-                "minor_axis_length": prop.minor_axis_length,
-                "centroid_y": prop.centroid[0],
-                "centroid_x": prop.centroid[1],
+                "area": cell.area,
+                "perimeter": cell.perimeter,
+                "eccentricity": cell.eccentricity,
+                "major_axis_length": cell.major_axis_length,
+                "minor_axis_length": cell.minor_axis_length,
+                "centroid_y": cell.centroid[0],
+                "centroid_x": cell.centroid[1],
                 "aspect_ratio": aspect_ratio,
                 "circularity": circularity,
-                "solidity": solidity,
-                "equivalent_diameter": equivalent_diameter,
-                "orientation": orientation,
+                "solidity": cell.solidity,
+                "equivalent_diameter": cell.equivalent_diameter,
+                "orientation": cell.orientation,
                 "morphology_class": morphology_class,
-                # Add bounding box coordinates
                 "y1": y1,
                 "x1": x1,
                 "y2": y2,
                 "x2": x2,
-                # Initialize fluorescence metrics to None - will be filled later
-                "mean_intensity": None,
-                "max_intensity": None,
-                "min_intensity": None,
-                "std_intensity": None,
-                "integrated_intensity": None,
-                "background_intensity": None,
-                "normalized_intensity": None
+                "fluorescence_channel": fluorescence_channel,
+                "fluo_level": fluorescence_level,
             }
 
-            # Log the shape metrics
-            self._log_shape_metrics(metrics)
+            batch_data.append(row_data)
 
-            # Add to data collection
-            self._data.append(metrics)
+        return batch_data
 
-    def _log_shape_metrics(self, metrics):
+    # Checks if selected frame has metrics data
+    def has_data_for(self, position: int, time: int, channel=None) -> bool:
+        # Check if metrics exist for a frame
+        if self.df.is_empty():
+            return False
+        # Return metrics results for a given frame
+        result = self.df.filter(
+            (pl.col("time") == time) &
+            (pl.col("position") == position)
+        )
+
+        return result.height > 0
+
+    @timing_decorator("query_optimized")
+    def query_optimized(
+            self,
+            time: Optional[int] = None,
+            position: Optional[int] = None,
+            cell_id: Optional[int] = None,
+            exclude_focus_loss: bool = True,
+    ) -> pl.DataFrame:
         """
-        Log shape metrics for a cell.
+        Queries metrics for a given time/position/cell_id.
 
-        Args:
-            metrics: Dictionary of cell metrics
+        Parameters:
+        -----------
+        time : int, optional
+            Time point to filter
+        position : int, optional
+            Position to filter
+        cell_id : int, optional
+            Cell ID to filter
+        exclude_focus_loss : bool, default True
+            If True, excludes frames marked as focus loss in experiment settings
+
+        Returns:
+        --------
+        pl.DataFrame
+            Filtered metrics data
         """
+        if self.df.is_empty():
+            return pl.DataFrame()
 
-    def _log_fluorescence_metrics(self, metrics):
-        """
-        Log fluorescence metrics for a cell.
+        # Build filter conditions efficiently
+        conditions = []
+        if time is not None:
+            conditions.append(pl.col("time") == time)
+        if position is not None:
+            conditions.append(pl.col("position") == position)
+        if cell_id is not None:
+            conditions.append(pl.col("cell_id") == cell_id)
 
-        Args:
-            metrics: Dictionary of cell metrics
-        """
-        # logger.info(
-        #     f"Fluorescence metrics - T:{metrics['time']} P:{metrics['position']} Cell:{metrics['cell_id']}")
-        for _chan in range(1, 3):  # 1 and 2
-            try:
-                fluo_metric_key = f"fluo_{_chan}"
-                # logger.info(
-                #     f"  Average fluorescence for channel {_chan}: {metrics[fluo_metric_key]:.2f}")
-            except:
-                # logger.info(f"  Channel {fluo_metric_key} not present!")
-                continue
-        # logger.info(f"  Mean Intensity: {metrics['mean_intensity']:.2f}")
-        # logger.info(f"  Max Intensity: {metrics['max_intensity']:.2f}")
-        # logger.info(f"  Integrated Intensity: {metrics['integrated_intensity']:.2f}")
-        # logger.info(f"  Background Intensity: {metrics['background_intensity']:.2f}")
-        # logger.info(f"  Normalized Intensity: {metrics['normalized_intensity']:.2f}" if metrics['normalized_intensity'] else "  Normalized Intensity: None")
+        # Add focus loss filtering
+        if exclude_focus_loss:
+            from nd2_analyzer.data.appstate import ApplicationState
+            appstate = ApplicationState.get_instance()
 
-    def _update_dataframe(self):
-        """Update the Polars DataFrame with collected data"""
-        if not self._data:
+            if appstate and appstate.experiment and appstate.experiment.focus_loss_intervals:
+                # Get time values from dataframe
+                time_col = self.df.select("time").to_series()
+                time_interval_hours = appstate.experiment.time_interval_hours
+
+                # Build condition to exclude focus loss frames
+                focus_loss_mask = pl.lit(False)  # Start with all False
+                for start_h, end_h in appstate.experiment.focus_loss_intervals:
+                    # Check if time is in this focus loss interval
+                    time_hours = time_col * time_interval_hours
+                    in_interval = (time_hours >= start_h) & (time_hours < end_h)
+                    focus_loss_mask = focus_loss_mask | in_interval
+
+                # Exclude frames that are in focus loss
+                conditions.append(~focus_loss_mask)
+
+        if conditions:
+            # Combine conditions with logical AND
+            combined_condition = conditions[0]
+            for condition in conditions[1:]:
+                combined_condition = combined_condition & condition
+            return self.df.filter(combined_condition)
+
+        return self.df
+
+    @timing_decorator("batch_update_fluorescence")
+    def _batch_update_fluorescence(self, updates, fluo_column):
+        """Update fluorescence values using Polars joins."""
+        if not updates:
             return
 
-        # Create or update DataFrame
-        self.df = pl.DataFrame(self._data)
+        update_df = pl.DataFrame(updates)
 
-        # Log summary of the updated DataFrame
-        # logger.info(f"Updated DataFrame with {len(self._data)} rows")
-        # logger.info(
-        #     f"DataFrame now has {self.df.height} rows and {self.df.width} columns")
+        self.df = (
+            self.df.join(
+                update_df,
+                on=["time", "position", "cell_id"],
+                how="left",
+                suffix="_update",
+            )
+            .with_columns(
+                [
+                    pl.when(pl.col(f"{fluo_column}_update").is_not_null())
+                    .then(pl.col(f"{fluo_column}_update"))
+                    .otherwise(pl.col(fluo_column))
+                    .alias(fluo_column)
+                ]
+            )
+            .drop(f"{fluo_column}_update")
+        )
 
-    def query(self, position: Optional[int] = None,
-              time: Optional[int] = None,
-              cell_id: Optional[int] = None,
-              channel: Optional[int] = None) -> pl.DataFrame:
-        """
-        Query the metrics DataFrame with optional filters.
+    def get_cell_timeseries(self, position: int, cell_id: int) -> pl.DataFrame:
+        """Get time series data for a specific cell efficiently."""
+        return self.df.filter(
+            (pl.col("position") == position) & (pl.col("cell_id") == cell_id)
+        ).sort("time")
 
-        Args:
-            position: Filter by position
-            time: Filter by time
-            cell_id: Filter by cell ID
-            channel: Filter by channel
+    def get_position_summary(self, position: int) -> pl.DataFrame:
+        """Get summary statistics for a position."""
+        return (
+            self.df.filter(pl.col("position") == position)
+            .group_by("time")
+            .agg(
+                [
+                    pl.count("cell_id").alias("cell_count"),
+                    pl.mean("area").alias("mean_area"),
+                    pl.mean("fluo_level").alias("mean_fluo_level"),
+                ]
+            )
+            .sort("time")
+        )
 
-        Returns:
-            Filtered Polars DataFrame
-        """
-        if self.df.is_empty():
-            return pl.DataFrame()
+    def save_optimized(self, folder_path: str):
+        """Save data in efficient Parquet format."""
+        if not self.df.is_empty():
+            parquet_path = os.path.join(folder_path, "metrics_data.parquet")
+            self.df.write_parquet(parquet_path)
+            logger.info(f"Saved {self.df.height} rows to {parquet_path}")
 
-        df = self.df
+    def load_optimized(self, folder_path: str):
+        """Load data from Parquet format."""
+        parquet_path = os.path.join(folder_path, "metrics_data.parquet")
+        if os.path.exists(parquet_path):
+            self.df = pl.read_parquet(parquet_path)
+            logger.info(f"Loaded {self.df.height} rows from {parquet_path}")
 
-        # Debug: Log the columns in the dataframe
-        logger.info(f"Querying dataframe with columns: {df.columns}")
-
-        # Apply filters
-        if position is not None:
-            df = df.filter(pl.col("position") == position)
-        if time is not None:
-            df = df.filter(pl.col("time") == time)
-        if cell_id is not None:
-            df = df.filter(pl.col("cell_id") == cell_id)
-        if channel is not None:
-            df = df.filter(pl.col("channel") == channel)
-
-        return df
-
-    def clear(self):
-        """Clear all collected data"""
-        self._data = []
-        self.df = pl.DataFrame()
-        logger.info("Cleared all metrics data")
-
-    def save_to_file(self, folder_path):
-        """Save metrics data to a file"""
-        try:
-            if not self.df.is_empty():
-                # Create the path
-                metrics_path = os.path.join(folder_path, "metrics_data.csv")
-                # Write to CSV
-                self.df.write_csv(metrics_path)
-                logger.info(f"Metrics data saved to {metrics_path}")
-                return True
-            else:
-                logger.info("No metrics data to save")
-                return False
-        except Exception as e:
-            logger.error(f"Error saving metrics data: {e}")
-            return False
-
-    def load_from_file(self, folder_path):
-        """Load metrics data from a file"""
-        try:
-            metrics_path = os.path.join(folder_path, "metrics_data.csv")
-            if os.path.exists(metrics_path):
-                # Read from CSV
-                import polars as pl
-                self.df = pl.read_csv(metrics_path)
-                logger.info(f"Loaded metrics data with {self.df.height} rows")
-                return True
-            else:
-                logger.warning(f"No metrics data found at {metrics_path}")
-                return False
-        except Exception as e:
-            logger.error(f"Error loading metrics data: {e}")
-            return False
-
-    def has_data_for(self, position=None, time=None, channel=None):
-        """Check if metrics data exists for the given parameters"""
-        if self.df.is_empty():
-            return False
-
-        # Start with all rows
-        filtered = self.df
-
-        # Apply filters if provided
-        if position is not None:
-            filtered = filtered.filter(pl.col("position") == position)
-        if time is not None:
-            filtered = filtered.filter(pl.col("time") == time)
-        if channel is not None:
-            filtered = filtered.filter(pl.col("channel") == channel)
-
-        # Return True if we have any matching data
-        return filtered.height > 0
-    
-    
-    def add_colony_metrics(self, colony_metrics):
-        """
-        Add colony-level metrics to the data collection.
-        
-        Args:
-            colony_metrics: Dictionary containing colony metrics
-        """
-        # Add colony data to our collection
-        self._data.append(colony_metrics)
-        logger.info(f"Added colony metrics - T:{colony_metrics['time']} P:{colony_metrics['position']} Colony:{colony_metrics['colony_id']}")
-
-    def get_colony_data(self, position=None, time=None, colony_id=None):
-        """
-        Query colony data specifically.
-        
-        Args:
-            position: Filter by position
-            time: Filter by time  
-            colony_id: Filter by colony ID
-        
-        Returns:
-            Filtered DataFrame containing only colony data
-        """
-        if self.df.is_empty():
-            return pl.DataFrame()
-        
-        # Filter for colony data (has colony_id column)
-        colony_df = self.df.filter(pl.col("data_type") == "colony")
-        
-        # Apply additional filters
-        if position is not None:
-            colony_df = colony_df.filter(pl.col("position") == position)
-        if time is not None:
-            colony_df = colony_df.filter(pl.col("time") == time)
-        if colony_id is not None:
-            colony_df = colony_df.filter(pl.col("colony_id") == colony_id)
-        
-        return colony_df
-
-    def get_cell_data(self, position=None, time=None, cell_id=None, channel=None):
-        """
-        Query cell data specifically.
-        
-        Args:
-            position: Filter by position
-            time: Filter by time
-            cell_id: Filter by cell ID
-            channel: Filter by channel
-        
-        Returns:
-            Filtered DataFrame containing only cell data
-        """
-        if self.df.is_empty():
-            return pl.DataFrame()
-        
-        # Start with all data
-        filtered_df = self.df
-        
-        # Filter for cell data if we have a data_type column
-        if "data_type" in self.df.columns:
-            filtered_df = filtered_df.filter(pl.col("data_type") == "cell")
-        
-        # Apply additional filters
-        if position is not None:
-            filtered_df = filtered_df.filter(pl.col("position") == position)
-        if time is not None:
-            filtered_df = filtered_df.filter(pl.col("time") == time)
-        if cell_id is not None:
-            filtered_df = filtered_df.filter(pl.col("cell_id") == cell_id)
-        if channel is not None:
-            filtered_df = filtered_df.filter(pl.col("channel") == channel)
-        
-        return filtered_df
+    #
+    # @timing_decorator("calculate_metrics_optimized")
+    # def _calculate_metrics_optimized(self, time_lapse_frame : TLFrame):
+    #     """Calculate metrics and store in optimized structure."""
+    #     props = regionprops(labeled_image)
+    #
+    #     # Prepare batch data for efficient DataFrame operations
+    #     batch_data = []
+    #
+    #     for cell in props:
+    #         cell_id = cell.label
+    #
+    #         # Calculate derived metrics
+    #         circularity = (4 * np.pi * cell.area) / (cell.perimeter**2) if cell.perimeter > 0 else 0
+    #         aspect_ratio = cell.major_axis_length / cell.minor_axis_length if cell.minor_axis_length > 0 else 1.0
+    #         y1, x1, y2, x2 = cell.bbox
+    #
+    #         metrics_dict = {
+    #             "area": cell.area,
+    #             "perimeter": cell.perimeter,
+    #             "aspect_ratio": aspect_ratio,
+    #             "circularity": circularity,
+    #             "solidity": cell.solidity,
+    #             "equivalent_diameter": cell.equivalent_diameter,
+    #             "orientation": cell.orientation
+    #         }
+    #
+    #         morphology_class = classify_morphology(metrics_dict)
+    #
+    #         # Create row data
+    #         row_data = {
+    #             "time": time,
+    #             "position": position,
+    #             "cell_id": cell_id,
+    #             "channel": channel,
+    #             "area": cell.area,
+    #             "perimeter": cell.perimeter,
+    #             "eccentricity": cell.eccentricity,
+    #             "major_axis_length": cell.major_axis_length,
+    #             "minor_axis_length": cell.minor_axis_length,
+    #             "centroid_y": cell.centroid[0],
+    #             "centroid_x": cell.centroid[1],
+    #             "aspect_ratio": aspect_ratio,
+    #             "circularity": circularity,
+    #             "solidity": cell.solidity,
+    #             "equivalent_diameter": cell.equivalent_diameter,
+    #             "orientation": cell.orientation,
+    #             "morphology_class": morphology_class,
+    #             "y1": y1, "x1": x1, "y2": y2, "x2": x2,
+    #             "fluo_mcherry": None,
+    #             "fluo_yfp": None
+    #         }
+    #
+    #         batch_data.append(row_data)
+    #
+    #         # Store in pending cache for fast fluorescence updates
+    #         self._pending_metrics[(time, position)][cell_id] = row_data
+    #
+    #     # Batch insert into DataFrame
+    #     if batch_data:
+    #         new_df = pl.DataFrame(batch_data)
+    #         self.df = pl.concat([self.df, new_df], how="vertical") if not self.df.is_empty() else new_df
+    #         self._pending_count += len(batch_data)
+    #
+    # @timing_decorator("process_fluorescence")
+    # def _process_fluorescence_optimized(self, image, time, position, channel):
+    #     """Optimized fluorescence processing using fast lookups."""
+    #     cache_key = (time, position)
+    #
+    #     if cache_key not in self._segmentation_cache:
+    #         logger.warning(f"No segmentation for T={time}, P={position}, C={channel}")
+    #         return
+    #
+    #     if cache_key not in self._pending_metrics:
+    #         logger.warning(f"No pending metrics for T={time}, P={position}, C={channel}")
+    #         return
+    #
+    #     labeled_image = self._segmentation_cache[cache_key]
+    #     pending_cells = self._pending_metrics[cache_key]
+    #
+    #     if not isinstance(image, np.ndarray):
+    #         image = np.array(image)
+    #
+    #     # Calculate background
+    #     background_mask = labeled_image == 0
+    #     background_intensity = np.mean(image[background_mask]) if np.any(background_mask) else 0
+    #
+    #     fluo_column = "fluo_mcherry" if channel == 1 else "fluo_yfp"
+    #
+    #     # Update fluorescence values efficiently
+    #     updates = []
+    #     for cell_id, metrics in pending_cells.items():
+    #         cell_mask = labeled_image == cell_id
+    #         if np.any(cell_mask):
+    #             cell_fluorescence = np.mean(image[cell_mask])
+    #             fluorescence_value = cell_fluorescence if cell_fluorescence > background_intensity else 0
+    #
+    #             # Store update for batch processing
+    #             updates.append({
+    #                 "time": time,
+    #                 "position": position,
+    #                 "cell_id": cell_id,
+    #                 fluo_column: fluorescence_value
+    #             })
+    #
+    #     # Batch update DataFrame using efficient Polars operations
+    #     if updates:
+    #         self._batch_update_fluorescence(updates, fluo_column)

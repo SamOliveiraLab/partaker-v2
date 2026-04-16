@@ -1,18 +1,15 @@
-
-import numpy as np
 import os
+
 import cv2
 import matplotlib.pyplot as plt
+import numpy as np
 from skimage.color import label2rgb
 from skimage.measure import label
-from scipy import stats
-from matplotlib.colors import Normalize
-from matplotlib.cm import ScalarMappable
-from matplotlib.patches import Patch, Rectangle
 
 
 def track_cells(segmented_images):
     import btrack
+
     """
     Tracks segmented cells over time using BayesianTracker (btrack).
 
@@ -31,13 +28,18 @@ def track_cells(segmented_images):
         "major_axis_length",
         "minor_axis_length",
         "orientation",
-        "solidity"]
+        "solidity",
+    ]
 
     # Validate input
-    if segmented_images is None or not isinstance(
-            segmented_images, np.ndarray) or segmented_images.ndim != 3:
+    if (
+        segmented_images is None
+        or not isinstance(segmented_images, np.ndarray)
+        or segmented_images.ndim != 3
+    ):
         raise ValueError(
-            "Segmented images must be a 3D NumPy array (time, height, width).")
+            "Segmented images must be a 3D NumPy array (time, height, width)."
+        )
 
     if np.isnan(segmented_images).any() or np.isinf(segmented_images).any():
         raise ValueError("Segmented images contain NaN or Inf values.")
@@ -46,6 +48,7 @@ def track_cells(segmented_images):
     if set(np.unique(segmented_images)).issubset({0, 255}):
         print("Converting binary masks to labeled images...")
         from skimage.measure import label
+
         labeled_images = np.zeros_like(segmented_images)
         for i in range(segmented_images.shape[0]):
             labeled_images[i] = label(segmented_images[i] > 0)
@@ -70,16 +73,15 @@ def track_cells(segmented_images):
 
     if not objects:
         raise ValueError(
-            "No objects detected in the segmentation. Ensure your segmentation produces labeled regions.")
+            "No objects detected in the segmentation. Ensure your segmentation produces labeled regions."
+        )
 
     # Define config file path
     config_path = os.path.join(
-        os.path.dirname(__file__),
-        'config',
-        'btrack_config.json')
+        os.path.dirname(__file__), "config", "btrack_config.json"
+    )
     if not os.path.exists(config_path):
-        raise FileNotFoundError(
-            f"Configuration file not found at: {config_path}")
+        raise FileNotFoundError(f"Configuration file not found at: {config_path}")
 
     # Initialize and run the tracker
     try:
@@ -102,8 +104,11 @@ def track_cells(segmented_images):
             # Track with step_size for progress updates
             tracker.track(step_size=100)
 
-            # Optimize tracks (resolves track hypotheses)
-            print("Optimizing tracks...")
+            # Optimize tracks (resolves track hypotheses and detects divisions)
+            # NOTE: This step can take time with large cell counts (10+ min with 700+ cells)
+            # But it's REQUIRED for lineage detection!
+            print("Running optimization to detect divisions...")
+            print("(This may take several minutes for large datasets)")
             tracker.optimize()
 
             # Get the tracks and graph data for visualization
@@ -114,8 +119,7 @@ def track_cells(segmented_images):
 
             # Print statistics about the tracks
             track_lengths = [len(track.x) for track in tracks]
-            avg_length = sum(track_lengths) / \
-                len(track_lengths) if track_lengths else 0
+            avg_length = sum(track_lengths) / len(track_lengths) if track_lengths else 0
             max_length = max(track_lengths) if track_lengths else 0
 
             print(f"Total tracks: {len(tracks)}")
@@ -124,8 +128,7 @@ def track_cells(segmented_images):
 
             # Count tracks by length
             short_tracks = sum(1 for length in track_lengths if length < 5)
-            medium_tracks = sum(
-                1 for length in track_lengths if 5 <= length < 15)
+            medium_tracks = sum(1 for length in track_lengths if 5 <= length < 15)
             long_tracks = sum(1 for length in track_lengths if length >= 15)
 
             print(f"Short tracks (<5 frames): {short_tracks}")
@@ -135,7 +138,7 @@ def track_cells(segmented_images):
             # Analyze division events if present
             division_events = 0
             for track in tracks:
-                if hasattr(track, 'children') and track.children:
+                if hasattr(track, "children") and track.children:
                     division_events += 1
 
             print(f"Cell division events: {division_events}")
@@ -148,31 +151,32 @@ def track_cells(segmented_images):
     for track in tracks:
         # Extract track data
         track_dict = {
-            'ID': track.ID,
-            'x': track.x,
-            'y': track.y,
-            't': track.t if hasattr(track, 't') else list(range(len(track.x)))
+            "ID": track.ID,
+            "x": track.x,
+            "y": track.y,
+            "t": track.t if hasattr(track, "t") else list(range(len(track.x))),
         }
 
         # Add lineage information with validation
         try:
             # Only set parent if it's different from own ID
-            if hasattr(track, 'parent') and track.parent != track.ID:
-                track_dict['parent'] = track.parent
+            if hasattr(track, "parent") and track.parent != track.ID:
+                track_dict["parent"] = track.parent
             else:
-                track_dict['parent'] = None
+                track_dict["parent"] = None
 
-            if hasattr(
-                    track, 'children') and track.children and len(
-                    track.children) > 0:
-                track_dict['children'] = track.children.copy()
+            if (
+                hasattr(track, "children")
+                and track.children
+                and len(track.children) > 0
+            ):
+                track_dict["children"] = track.children.copy()
             else:
-                track_dict['children'] = []
+                track_dict["children"] = []
         except Exception as e:
-            print(
-                f"Warning: Could not extract lineage for track {track.ID}: {e}")
-            track_dict['parent'] = None
-            track_dict['children'] = []
+            print(f"Warning: Could not extract lineage for track {track.ID}: {e}")
+            track_dict["parent"] = None
+            track_dict["children"] = []
 
         dict_tracks.append(track_dict)
 
@@ -213,8 +217,7 @@ def optimize_tracking_parameters(segmented_images, test_frames=None):
     for t in range(min(10, frames_to_analyze.shape[0])):
         # Subtract 1 for background
         num_cells = len(np.unique(frames_to_analyze[t])) - 1
-        frame_size = frames_to_analyze[t].shape[0] * \
-            frames_to_analyze[t].shape[1]
+        frame_size = frames_to_analyze[t].shape[0] * frames_to_analyze[t].shape[1]
         density = num_cells / frame_size
         density_values.append(density * 10000)  # Scale for readability
 
@@ -260,6 +263,7 @@ def optimize_tracking_parameters(segmented_images, test_frames=None):
 
                 # For each current centroid, find closest in next frame
                 from scipy.spatial.distance import cdist
+
                 dist_matrix = cdist(curr_points, next_points)
                 min_distances = np.min(dist_matrix, axis=1)
                 movement_distances.extend(min_distances)
@@ -273,41 +277,40 @@ def optimize_tracking_parameters(segmented_images, test_frames=None):
     # 1. Determine search radius based on cell movement
     if avg_movement > 0:
         # Set search radius to average movement + buffer
-        suggested_params['max_search_radius'] = int(
-            min(max(avg_movement * 2, 15), 50))
+        suggested_params["max_search_radius"] = int(min(max(avg_movement * 2, 15), 50))
     else:
         # Default to conservative value
-        suggested_params['max_search_radius'] = 25
+        suggested_params["max_search_radius"] = 25
 
     # 2. Determine optimization level based on density
     if avg_density > 100:  # Extremely dense
-        suggested_params['optimization_level'] = 3
-        suggested_params['max_lost_frames'] = 3
+        suggested_params["optimization_level"] = 3
+        suggested_params["max_lost_frames"] = 3
     elif avg_density > 50:  # Very dense
-        suggested_params['optimization_level'] = 2
-        suggested_params['max_lost_frames'] = 4
+        suggested_params["optimization_level"] = 2
+        suggested_params["max_lost_frames"] = 4
     elif avg_density > 20:  # Moderately dense
-        suggested_params['optimization_level'] = 1
-        suggested_params['max_lost_frames'] = 5
+        suggested_params["optimization_level"] = 1
+        suggested_params["max_lost_frames"] = 5
     else:  # Sparse
-        suggested_params['optimization_level'] = 0
-        suggested_params['max_lost_frames'] = 7
+        suggested_params["optimization_level"] = 0
+        suggested_params["max_lost_frames"] = 7
 
     # 3. Set minimum track length based on cell size
     if avg_cell_size > 0:
         # Smaller cells tend to need longer tracks to filter noise
         if avg_cell_size < 30:
-            suggested_params['min_track_length'] = 4
+            suggested_params["min_track_length"] = 4
         else:
-            suggested_params['min_track_length'] = 3
+            suggested_params["min_track_length"] = 3
     else:
-        suggested_params['min_track_length'] = 3
+        suggested_params["min_track_length"] = 3
 
     # 4. Set distance threshold based on movement and density
     if avg_movement > 0:
-        suggested_params['max_distance_threshold'] = max(avg_movement * 3, 20)
+        suggested_params["max_distance_threshold"] = max(avg_movement * 3, 20)
     else:
-        suggested_params['max_distance_threshold'] = 30
+        suggested_params["max_distance_threshold"] = 30
 
     print("\nSuggested tracking parameters for this dataset:")
     for param, value in suggested_params.items():
@@ -317,13 +320,14 @@ def optimize_tracking_parameters(segmented_images, test_frames=None):
 
 
 def overlay_tracks_on_images(
-        segmented_images,
-        tracks,
-        save_video=True,
-        output_path="tracked_cells.mp4",
-        show_frames=False,
-        max_tracks=None,
-        progress_callback=None):
+    segmented_images,
+    tracks,
+    save_video=True,
+    output_path="tracked_cells.mp4",
+    show_frames=False,
+    max_tracks=None,
+    progress_callback=None,
+):
     """
     Overlays tracking trajectories on segmented images and creates a video.
 
@@ -353,17 +357,17 @@ def overlay_tracks_on_images(
     # Filter tracks if needed
     if max_tracks is not None and max_tracks < len(tracks):
         # Sort by track length and take the longest ones
-        sorted_tracks = sorted(
-            tracks, key=lambda track: len(track['x']), reverse=True)
+        sorted_tracks = sorted(tracks, key=lambda track: len(track["x"]), reverse=True)
         tracks = sorted_tracks[:max_tracks]
 
     # Generate consistent colors for tracks
     import matplotlib.cm as cm
-    cmap = cm.get_cmap('tab20', min(20, len(tracks)))
+
+    cmap = cm.get_cmap("tab20", min(20, len(tracks)))
 
     colors = {}
     for i, track in enumerate(tracks):
-        track_id = track['ID']
+        track_id = track["ID"]
         # Convert matplotlib color (0-1 range) to OpenCV color (0-255 range)
         color = tuple(int(255 * x) for x in cmap(i % 20)[:3])
         # OpenCV uses BGR format
@@ -373,7 +377,7 @@ def overlay_tracks_on_images(
     # Setup video writer if needed
     out = None
     if save_video:
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         fps = 5  # Adjust as needed
         out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
@@ -397,9 +401,9 @@ def overlay_tracks_on_images(
 
         # Draw trails for each track
         for track in tracks:
-            track_id = track['ID']
-            x_coords, y_coords = track['x'], track['y']
-            times = track['t'] if 't' in track else list(range(len(x_coords)))
+            track_id = track["ID"]
+            x_coords, y_coords = track["x"], track["y"]
+            times = track["t"] if "t" in track else list(range(len(x_coords)))
 
             color = colors[track_id]
 
@@ -411,27 +415,49 @@ def overlay_tracks_on_images(
                     cv2.line(frame_rgb, pt1, pt2, color, 1)
 
             # Draw the current position if the track exists at this time
-            current_points = [(i, x, y) for i, (x, y, tm) in enumerate(
-                zip(x_coords, y_coords, times)) if tm == t]
+            current_points = [
+                (i, x, y)
+                for i, (x, y, tm) in enumerate(zip(x_coords, y_coords, times))
+                if tm == t
+            ]
 
             for idx, x, y in current_points:
                 # Mark current position with larger circle
                 cv2.circle(frame_rgb, (int(x), int(y)), 4, color, -1)
 
                 # Add track ID label
-                cv2.putText(frame_rgb, str(track_id), (int(x) + 5, int(y) - 5),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+                cv2.putText(
+                    frame_rgb,
+                    str(track_id),
+                    (int(x) + 5, int(y) - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.4,
+                    color,
+                    1,
+                )
 
                 # Mark division events
-                if 'children' in track and track['children'] and t == times[-1]:
+                if "children" in track and track["children"] and t == times[-1]:
                     # Draw division marker (star or 'X')
-                    cv2.drawMarker(frame_rgb, (int(x), int(y)),
-                                   (255, 255, 0), markerType=cv2.MARKER_STAR,
-                                   markerSize=10, thickness=2)
+                    cv2.drawMarker(
+                        frame_rgb,
+                        (int(x), int(y)),
+                        (255, 255, 0),
+                        markerType=cv2.MARKER_STAR,
+                        markerSize=10,
+                        thickness=2,
+                    )
 
         # Add frame number
-        cv2.putText(frame_rgb, f"Frame: {t}", (10, 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        cv2.putText(
+            frame_rgb,
+            f"Frame: {t}",
+            (10, 20),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (255, 255, 255),
+            1,
+        )
 
         # Show frame if requested
         if show_frames:
@@ -456,10 +482,8 @@ def overlay_tracks_on_images(
 
 
 def visualize_lineage_tree(
-        tracks,
-        output_path=None,
-        min_track_length=5,
-        progress_callback=None):
+    tracks, output_path=None, min_track_length=5, progress_callback=None
+):
     """
     Creates a lineage tree visualization showing cell divisions.
 
@@ -486,7 +510,7 @@ def visualize_lineage_tree(
         progress_callback(10)
 
     # Filter tracks by length
-    filtered_tracks = [t for t in tracks if len(t['x']) >= min_track_length]
+    filtered_tracks = [t for t in tracks if len(t["x"]) >= min_track_length]
     print(f"Visualizing {len(filtered_tracks)} tracks after filtering.")
 
     # Create a directed graph
@@ -494,17 +518,16 @@ def visualize_lineage_tree(
 
     # Organize tracks by start time
     for track in filtered_tracks:
-        track_id = track['ID']
-        start_time = track['t'][0] if track['t'] else 0
-        track_length = len(track['x'])
+        track_id = track["ID"]
+        start_time = track["t"][0] if track["t"] else 0
+        track_length = len(track["x"])
 
         # Add node with attributes
-        G.add_node(track_id, start_time=start_time,
-                   length=track_length, track=track)
+        G.add_node(track_id, start_time=start_time, length=track_length, track=track)
 
         # Add edge from parent to this track if available
-        if track['parent'] is not None:
-            G.add_edge(track['parent'], track_id)
+        if track["parent"] is not None:
+            G.add_edge(track["parent"], track_id)
 
     if progress_callback:
         progress_callback(30)
@@ -523,29 +546,38 @@ def visualize_lineage_tree(
         print(f"Warning: Error during layout generation: {e}")
         print("Using random positions instead")
         import random
-        base_pos = {node: (random.random(), random.random())
-                    for node in G.nodes()}
+
+        base_pos = {node: (random.random(), random.random()) for node in G.nodes()}
 
     if progress_callback:
         progress_callback(50)
 
     # Adjust positions: y-axis is start time, preserve x from layout
     for node in G.nodes():
-        start_time = G.nodes[node]['start_time']
+        start_time = G.nodes[node]["start_time"]
         # Negative to make time flow downward
         pos[node] = (base_pos[node][0], -start_time)
 
     # Draw nodes
-    node_sizes = [max(100, G.nodes[n]['length'] * 5) for n in G.nodes()]
-    nx.draw_networkx_nodes(G, pos, node_size=node_sizes,
-                           node_color='skyblue', alpha=0.8)
+    node_sizes = [max(100, G.nodes[n]["length"] * 5) for n in G.nodes()]
+    nx.draw_networkx_nodes(
+        G, pos, node_size=node_sizes, node_color="skyblue", alpha=0.8
+    )
 
     if progress_callback:
         progress_callback(70)
 
     # Draw edges with arrows showing parent-child relationships
-    nx.draw_networkx_edges(G, pos, edge_color='gray', width=1.5, alpha=0.8,
-                           arrows=True, arrowstyle='-|>', arrowsize=15)
+    nx.draw_networkx_edges(
+        G,
+        pos,
+        edge_color="gray",
+        width=1.5,
+        alpha=0.8,
+        arrows=True,
+        arrowstyle="-|>",
+        arrowsize=15,
+    )
 
     # Add labels
     nx.draw_networkx_labels(G, pos, font_size=8)
@@ -557,20 +589,26 @@ def visualize_lineage_tree(
     plt.title("Cell Lineage Tree")
     plt.xlabel("Cell Divisions")
     plt.ylabel("Time (frames)")
-    plt.grid(True, linestyle='--', alpha=0.3)
+    plt.grid(True, linestyle="--", alpha=0.3)
     plt.gca().invert_yaxis()  # Invert y-axis to have time flowing downward
 
     # Add stats
     total_tracks = len(filtered_tracks)
-    division_events = sum(1 for t in filtered_tracks if t.get('children', []))
+    division_events = sum(1 for t in filtered_tracks if t.get("children", []))
 
     stats_text = f"Total Tracks: {total_tracks}\nDivision Events: {division_events}"
-    plt.figtext(0.02, 0.02, stats_text, wrap=True, fontsize=10,
-                bbox=dict(facecolor='white', alpha=0.8))
+    plt.figtext(
+        0.02,
+        0.02,
+        stats_text,
+        wrap=True,
+        fontsize=10,
+        bbox=dict(facecolor="white", alpha=0.8),
+    )
 
     # Save or show
     if output_path:
-        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.savefig(output_path, dpi=300, bbox_inches="tight")
         print(f"Lineage tree saved to {output_path}")
     else:
         plt.show()
@@ -606,8 +644,7 @@ def visualize_cell_tracks(segmented_images, tracks):
     # Assign random colors to tracks
     np.random.seed(42)
     track_colors = {
-        track.ID: tuple(np.random.randint(0, 255, size=3).tolist())
-        for track in tracks
+        track.ID: tuple(np.random.randint(0, 255, size=3).tolist()) for track in tracks
     }
 
     for track in tracks:
@@ -657,7 +694,7 @@ def tracks_to_dataframe(tracks, features=None):
             "major_axis_length",
             "minor_axis_length",
             "orientation",
-            "solidity"
+            "solidity",
         ]
 
     data = []
@@ -670,22 +707,23 @@ def tracks_to_dataframe(tracks, features=None):
         for i in range(len(track.t)):
             # Create a row for each timepoint
             row = {
-                'ID': track_id,
-                't': track.t[i],
-                'x': track.x[i],
-                'y': track.y[i],
-                'z': 0.0,  # Most 2D tracking doesn't use z
-                'parent': track.parent if hasattr(track, 'parent') else None,
-                'root': track.root if hasattr(track, 'root') else None,
-                'state': track.state if hasattr(track, 'state') else None,
-                'generation': track.generation if hasattr(track, 'generation') else None
+                "ID": track_id,
+                "t": track.t[i],
+                "x": track.x[i],
+                "y": track.y[i],
+                "z": 0.0,  # Most 2D tracking doesn't use z
+                "parent": track.parent if hasattr(track, "parent") else None,
+                "root": track.root if hasattr(track, "root") else None,
+                "state": track.state if hasattr(track, "state") else None,
+                "generation": track.generation
+                if hasattr(track, "generation")
+                else None,
             }
 
             # Add any features the track might have
-            if hasattr(track, 'features') and track.features is not None:
+            if hasattr(track, "features") and track.features is not None:
                 for feature in features:
-                    if i < len(
-                            track.features) and feature in track.features[i]:
+                    if i < len(track.features) and feature in track.features[i]:
                         row[feature] = track.features[i][feature]
 
             data.append(row)
@@ -693,7 +731,7 @@ def tracks_to_dataframe(tracks, features=None):
     # Create DataFrame and sort by ID and t
     df = pd.DataFrame(data)
     if not df.empty:
-        df = df.sort_values(['ID', 't']).reset_index(drop=True)
+        df = df.sort_values(["ID", "t"]).reset_index(drop=True)
 
     return df
 
@@ -709,9 +747,9 @@ def calculate_cell_motility(track):
     dict of motility metrics
     """
     # Extract coordinates and times
-    x_coords = np.array(track['x'])
-    y_coords = np.array(track['y'])
-    times = np.array(track['t']) if 't' in track else np.arange(len(x_coords))
+    x_coords = np.array(track["x"])
+    y_coords = np.array(track["y"])
+    times = np.array(track["t"]) if "t" in track else np.arange(len(x_coords))
 
     # Check if track has enough points
     if len(x_coords) < 2:
@@ -723,7 +761,7 @@ def calculate_cell_motility(track):
             "max_velocity": 0,
             "min_velocity": 0,
             "median_velocity": 0,
-            "direction_angle": 0
+            "direction_angle": 0,
         }
 
     # Calculate distances between consecutive points
@@ -738,8 +776,7 @@ def calculate_cell_motility(track):
 
     # Net displacement (start to end)
     net_displacement = np.sqrt(
-        (x_coords[-1] - x_coords[0])**2 +
-        (y_coords[-1] - y_coords[0])**2
+        (x_coords[-1] - x_coords[0]) ** 2 + (y_coords[-1] - y_coords[0]) ** 2
     )
 
     # Tortuosity (path length / net displacement)
@@ -756,8 +793,7 @@ def calculate_cell_motility(track):
     # Calculate direction angle (in radians)
     if net_displacement > 0:
         direction_angle = np.arctan2(
-            y_coords[-1] - y_coords[0],
-            x_coords[-1] - x_coords[0]
+            y_coords[-1] - y_coords[0], x_coords[-1] - x_coords[0]
         )
     else:
         direction_angle = 0
@@ -769,8 +805,11 @@ def calculate_cell_motility(track):
         "avg_velocity": avg_velocity,
         "max_velocity": np.max(inst_velocities) if len(inst_velocities) > 0 else 0,
         "min_velocity": np.min(inst_velocities) if len(inst_velocities) > 0 else 0,
-        "median_velocity": np.median(inst_velocities) if len(inst_velocities) > 0 else 0,
-        "direction_angle": direction_angle}
+        "median_velocity": np.median(inst_velocities)
+        if len(inst_velocities) > 0
+        else 0,
+        "direction_angle": direction_angle,
+    }
 
 
 def calculate_motility_index(tracks):
@@ -817,11 +856,10 @@ def calculate_motility_index(tracks):
     velocity_variance = np.var(velocities)
 
     # Calculate coefficient of variation (CV) for displacement and velocity
-    cv_displacement = (np.std(displacements) /
-                       avg_displacement) if avg_displacement > 0 else 0
-    cv_velocity = (
-        np.std(velocities) /
-        avg_velocity) if avg_velocity > 0 else 0
+    cv_displacement = (
+        (np.std(displacements) / avg_displacement) if avg_displacement > 0 else 0
+    )
+    cv_velocity = (np.std(velocities) / avg_velocity) if avg_velocity > 0 else 0
 
     # Calculate the motility index
     # Normalize each component to 0-1 scale (with reasonable ranges)
@@ -835,10 +873,10 @@ def calculate_motility_index(tracks):
 
     # Combine metrics with weights
     motility_index = (
-        0.35 * norm_displacement +
-        0.35 * norm_velocity +
-        0.15 * directness +
-        0.15 * directional_coherence
+        0.35 * norm_displacement
+        + 0.35 * norm_velocity
+        + 0.15 * directness
+        + 0.15 * directional_coherence
     )
 
     # Scale to 0-100 for easier interpretation
@@ -857,7 +895,7 @@ def calculate_motility_index(tracks):
         "cv_velocity": cv_velocity,
         "noise_displacement": cv_displacement**2,  # Noise = CV²
         "noise_velocity": cv_velocity**2,
-        "individual_metrics": motility_metrics
+        "individual_metrics": motility_metrics,
     }
 
     return motility_index, detailed_metrics
@@ -874,7 +912,7 @@ def plot_motility_gauge(ax, motility_index):
     # Set up the gauge
     ax.set_xlim(0, 10)
     ax.set_ylim(0, 10)
-    ax.axis('off')
+    ax.axis("off")
 
     # Draw gauge background
     theta = np.linspace(0.75 * np.pi, 0.25 * np.pi, 100)
@@ -885,23 +923,16 @@ def plot_motility_gauge(ax, motility_index):
     for r in np.linspace(r_inner, r_outer, 10):
         x = 5 + r * np.cos(theta)
         y = 5 + r * np.sin(theta)
-        ax.plot(x, y, color='lightgray', linewidth=1)
+        ax.plot(x, y, color="lightgray", linewidth=1)
 
     # Color bands (red to green)
-    colors = ['#ff3232', '#ff7f32', '#ffcb32', '#cbff32', '#7fff32', '#32ff32']
+    colors = ["#ff3232", "#ff7f32", "#ffcb32", "#cbff32", "#7fff32", "#32ff32"]
     for i, color in enumerate(colors):
-        theta_band = np.linspace(0.75 *
-                                 np.pi -
-                                 i *
-                                 0.5 *
-                                 np.pi /
-                                 len(colors), 0.75 *
-                                 np.pi -
-                                 (i +
-                                  1) *
-                                 0.5 *
-                                 np.pi /
-                                 len(colors), 50)
+        theta_band = np.linspace(
+            0.75 * np.pi - i * 0.5 * np.pi / len(colors),
+            0.75 * np.pi - (i + 1) * 0.5 * np.pi / len(colors),
+            50,
+        )
         x_outer = 5 + r_outer * np.cos(theta_band)
         y_outer = 5 + r_outer * np.sin(theta_band)
         x_inner = 5 + r_inner * np.cos(theta_band)
@@ -913,45 +944,41 @@ def plot_motility_gauge(ax, motility_index):
         ax.fill(x, y, color=color, alpha=0.7)
 
     # Scale markers and labels
-    for i, label in enumerate(['0', '20', '40', '60', '80', '100']):
+    for i, label in enumerate(["0", "20", "40", "60", "80", "100"]):
         angle = 0.75 * np.pi - i * 0.1 * np.pi
         x = 5 + 4.5 * np.cos(angle)
         y = 5 + 4.5 * np.sin(angle)
-        ax.text(x, y, label, ha='center', va='center', fontsize=8)
+        ax.text(x, y, label, ha="center", va="center", fontsize=8)
 
     # Needle
     needle_angle = 0.75 * np.pi - (motility_index / 100) * 0.5 * np.pi
-    ax.plot([5, 5 + 4.2 * np.cos(needle_angle)],
-            [5, 5 + 4.2 * np.sin(needle_angle)],
-            color='black', linewidth=2)
+    ax.plot(
+        [5, 5 + 4.2 * np.cos(needle_angle)],
+        [5, 5 + 4.2 * np.sin(needle_angle)],
+        color="black",
+        linewidth=2,
+    )
 
     # Center circle
-    circle = plt.Circle((5, 5), 0.3, color='darkgray')
+    circle = plt.Circle((5, 5), 0.3, color="darkgray")
     ax.add_patch(circle)
 
     # Display motility index value
-    ax.text(5, 3, f"Motility Index", ha='center', fontsize=12)
-    ax.text(
-        5,
-        2,
-        f"{motility_index:.1f}",
-        ha='center',
-        fontsize=16,
-        fontweight='bold')
+    ax.text(5, 3, f"Motility Index", ha="center", fontsize=12)
+    ax.text(5, 2, f"{motility_index:.1f}", ha="center", fontsize=16, fontweight="bold")
 
 
 def visualize_cell_regions(tracks, chamber_dimensions=(1392, 1040)):
     """Visualize cell positions with color-coded regions."""
     import matplotlib.pyplot as plt
-    import numpy as np
     from matplotlib.patches import Rectangle
 
     # Extract all x,y positions from tracks
     all_x = []
     all_y = []
     for track in tracks:
-        all_x.extend(track['x'])
-        all_y.extend(track['y'])
+        all_x.extend(track["x"])
+        all_y.extend(track["y"])
 
     # Create figure
     plt.figure(figsize=(12, 9))
@@ -965,60 +992,142 @@ def visualize_cell_regions(tracks, chamber_dimensions=(1392, 1040)):
 
     # Create background for regions
     # Corner regions
-    corner_color = 'mistyrose'
-    plt.gca().add_patch(Rectangle((0, 0), corner_size, corner_size,
-                                  color=corner_color, alpha=0.3))  # Top-left
-    plt.gca().add_patch(Rectangle((0, height-corner_size), corner_size, corner_size,
-                                  color=corner_color, alpha=0.3))  # Bottom-left
-    plt.gca().add_patch(Rectangle((width-corner_size, 0), corner_size, corner_size,
-                                  color=corner_color, alpha=0.3))  # Top-right
-    plt.gca().add_patch(Rectangle((width-corner_size, height-corner_size), corner_size, corner_size,
-                                  color=corner_color, alpha=0.3))  # Bottom-right
+    corner_color = "mistyrose"
+    plt.gca().add_patch(
+        Rectangle((0, 0), corner_size, corner_size, color=corner_color, alpha=0.3)
+    )  # Top-left
+    plt.gca().add_patch(
+        Rectangle(
+            (0, height - corner_size),
+            corner_size,
+            corner_size,
+            color=corner_color,
+            alpha=0.3,
+        )
+    )  # Bottom-left
+    plt.gca().add_patch(
+        Rectangle(
+            (width - corner_size, 0),
+            corner_size,
+            corner_size,
+            color=corner_color,
+            alpha=0.3,
+        )
+    )  # Top-right
+    plt.gca().add_patch(
+        Rectangle(
+            (width - corner_size, height - corner_size),
+            corner_size,
+            corner_size,
+            color=corner_color,
+            alpha=0.3,
+        )
+    )  # Bottom-right
 
     # Edge regions (excluding corners)
-    edge_color = 'lightblue'
-    plt.gca().add_patch(Rectangle((0, corner_size), edge_margin, height-2*corner_size,
-                                  color=edge_color, alpha=0.3))  # Left edge
-    plt.gca().add_patch(Rectangle((width-edge_margin, corner_size), edge_margin, height-2*corner_size,
-                                  color=edge_color, alpha=0.3))  # Right edge
-    plt.gca().add_patch(Rectangle((corner_size, 0), width-2*corner_size, edge_margin,
-                                  color=edge_color, alpha=0.3))  # Top edge
-    plt.gca().add_patch(Rectangle((corner_size, height-edge_margin), width-2*corner_size, edge_margin,
-                                  color=edge_color, alpha=0.3))  # Bottom edge
+    edge_color = "lightblue"
+    plt.gca().add_patch(
+        Rectangle(
+            (0, corner_size),
+            edge_margin,
+            height - 2 * corner_size,
+            color=edge_color,
+            alpha=0.3,
+        )
+    )  # Left edge
+    plt.gca().add_patch(
+        Rectangle(
+            (width - edge_margin, corner_size),
+            edge_margin,
+            height - 2 * corner_size,
+            color=edge_color,
+            alpha=0.3,
+        )
+    )  # Right edge
+    plt.gca().add_patch(
+        Rectangle(
+            (corner_size, 0),
+            width - 2 * corner_size,
+            edge_margin,
+            color=edge_color,
+            alpha=0.3,
+        )
+    )  # Top edge
+    plt.gca().add_patch(
+        Rectangle(
+            (corner_size, height - edge_margin),
+            width - 2 * corner_size,
+            edge_margin,
+            color=edge_color,
+            alpha=0.3,
+        )
+    )  # Bottom edge
 
     # Right channel
-    plt.gca().add_patch(Rectangle((right_channel_x, 0), right_channel_width, height,
-                                  color='lightgreen', alpha=0.3))
+    plt.gca().add_patch(
+        Rectangle(
+            (right_channel_x, 0),
+            right_channel_width,
+            height,
+            color="lightgreen",
+            alpha=0.3,
+        )
+    )
 
     # Left edge (inlet)
-    plt.gca().add_patch(Rectangle((0, 0), edge_margin, height,
-                                  color='lightyellow', alpha=0.3))
+    plt.gca().add_patch(
+        Rectangle((0, 0), edge_margin, height, color="lightyellow", alpha=0.3)
+    )
 
     # Create scatter plot of cell positions
-    plt.scatter(all_x, all_y, alpha=0.3, s=1, color='blue')
+    plt.scatter(all_x, all_y, alpha=0.3, s=1, color="blue")
 
     # Add labels and title
-    plt.xlabel('X Position (pixels)')
-    plt.ylabel('Y Position (pixels)')
-    plt.title('Color-Coded Chamber Regions with Cell Positions')
+    plt.xlabel("X Position (pixels)")
+    plt.ylabel("Y Position (pixels)")
+    plt.title("Color-Coded Chamber Regions with Cell Positions")
 
     # Add region labels
-    plt.text(25, height/2, 'CHAMBER WALL', rotation=90,
-             ha='center', va='center', fontsize=12)
-    plt.text(right_channel_x + right_channel_width/2, height/2, 'OPENING',
-             rotation=90, ha='center', va='center', fontsize=12)
-    plt.text(width/2, height/2, 'CENTER',
-             ha='center', va='center', fontsize=14)
-    plt.text(corner_size/2, corner_size/2, 'CORNER',
-             ha='center', va='center', fontsize=10)
-    plt.text(width-corner_size/2, height-corner_size/2,
-             'CORNER', ha='center', va='center', fontsize=10)
+    plt.text(
+        25,
+        height / 2,
+        "CHAMBER WALL",
+        rotation=90,
+        ha="center",
+        va="center",
+        fontsize=12,
+    )
+    plt.text(
+        right_channel_x + right_channel_width / 2,
+        height / 2,
+        "OPENING",
+        rotation=90,
+        ha="center",
+        va="center",
+        fontsize=12,
+    )
+    plt.text(width / 2, height / 2, "CENTER", ha="center", va="center", fontsize=14)
+    plt.text(
+        corner_size / 2,
+        corner_size / 2,
+        "CORNER",
+        ha="center",
+        va="center",
+        fontsize=10,
+    )
+    plt.text(
+        width - corner_size / 2,
+        height - corner_size / 2,
+        "CORNER",
+        ha="center",
+        va="center",
+        fontsize=10,
+    )
 
     # Add legend for regions
-    from matplotlib.patches import Patch
 
     # Add grid and set limits
-    plt.grid(True, linestyle='--', alpha=0.3)
+    plt.grid(True, linestyle="--", alpha=0.3)
     plt.xlim(0, width)
     plt.ylim(0, height)
 
@@ -1028,7 +1137,9 @@ def visualize_cell_regions(tracks, chamber_dimensions=(1392, 1040)):
     # plt.show()
 
 
-def visualize_motility_with_chamber_regions(tracks, all_cell_positions, chamber_dimensions, motility_metrics=None):
+def visualize_motility_with_chamber_regions(
+    tracks, all_cell_positions, chamber_dimensions, motility_metrics=None
+):
     """
     Visualize cell motility patterns overlaid on the chamber regions map with all cell positions.
 
@@ -1050,15 +1161,17 @@ def visualize_motility_with_chamber_regions(tracks, all_cell_positions, chamber_
 
     # Calculate motility metrics if not provided
     if motility_metrics is None:
-        from nd2_analyzer.analysis.tracking.tracking import enhanced_motility_index
+        from nd2_analyzer.analysis.tracking import enhanced_motility_index
+
         motility_metrics = enhanced_motility_index(tracks, chamber_dimensions)
 
     # Create a lookup of track_id to metrics
-    metrics_by_id = {m['track_id']: m for m in motility_metrics['individual_metrics']}
+    metrics_by_id = {m["track_id"]: m for m in motility_metrics["individual_metrics"]}
 
     # Extract all motility indices for better normalization
-    all_motility_indices = [m['motility_index']
-                            for m in motility_metrics['individual_metrics']]
+    all_motility_indices = [
+        m["motility_index"] for m in motility_metrics["individual_metrics"]
+    ]
 
     # Debug: Check motility value distribution
     if all_motility_indices:
@@ -1067,7 +1180,8 @@ def visualize_motility_with_chamber_regions(tracks, all_cell_positions, chamber_
         mean_motility = np.mean(all_motility_indices)
         std_motility = np.std(all_motility_indices)
         print(
-            f"Motility index stats - Min: {min_motility:.1f}, Max: {max_motility:.1f}, Mean: {mean_motility:.1f}, Std: {std_motility:.1f}")
+            f"Motility index stats - Min: {min_motility:.1f}, Max: {max_motility:.1f}, Mean: {mean_motility:.1f}, Std: {std_motility:.1f}"
+        )
 
     # Set up the figure
     fig, ax = plt.subplots(figsize=(12, 10))
@@ -1081,34 +1195,92 @@ def visualize_motility_with_chamber_regions(tracks, all_cell_positions, chamber_
 
     # Draw chamber regions (with more subtle colors)
     # Corners
-    corner_color = 'mistyrose'
-    ax.add_patch(plt.Rectangle((0, 0), corner_size, corner_size,
-                               color=corner_color, alpha=0.2))  # Bottom-left
-    ax.add_patch(plt.Rectangle((0, height-corner_size), corner_size, corner_size,
-                               color=corner_color, alpha=0.2))  # Top-left
-    ax.add_patch(plt.Rectangle((width-corner_size, 0), corner_size, corner_size,
-                               color=corner_color, alpha=0.2))  # Bottom-right
-    ax.add_patch(plt.Rectangle((width-corner_size, height-corner_size), corner_size, corner_size,
-                               color=corner_color, alpha=0.2))  # Top-right
+    corner_color = "mistyrose"
+    ax.add_patch(
+        plt.Rectangle((0, 0), corner_size, corner_size, color=corner_color, alpha=0.2)
+    )  # Bottom-left
+    ax.add_patch(
+        plt.Rectangle(
+            (0, height - corner_size),
+            corner_size,
+            corner_size,
+            color=corner_color,
+            alpha=0.2,
+        )
+    )  # Top-left
+    ax.add_patch(
+        plt.Rectangle(
+            (width - corner_size, 0),
+            corner_size,
+            corner_size,
+            color=corner_color,
+            alpha=0.2,
+        )
+    )  # Bottom-right
+    ax.add_patch(
+        plt.Rectangle(
+            (width - corner_size, height - corner_size),
+            corner_size,
+            corner_size,
+            color=corner_color,
+            alpha=0.2,
+        )
+    )  # Top-right
 
     # Edges
-    edge_color = 'lightblue'
-    ax.add_patch(plt.Rectangle((0, corner_size), edge_margin, height-2*corner_size,
-                               color=edge_color, alpha=0.2))  # Left edge
-    ax.add_patch(plt.Rectangle((width-edge_margin, corner_size), edge_margin, height-2*corner_size,
-                               color=edge_color, alpha=0.2))  # Right edge
-    ax.add_patch(plt.Rectangle((corner_size, 0), width-2*corner_size, edge_margin,
-                               color=edge_color, alpha=0.2))  # Bottom edge
-    ax.add_patch(plt.Rectangle((corner_size, height-edge_margin), width-2*corner_size, edge_margin,
-                               color=edge_color, alpha=0.2))  # Top edge
+    edge_color = "lightblue"
+    ax.add_patch(
+        plt.Rectangle(
+            (0, corner_size),
+            edge_margin,
+            height - 2 * corner_size,
+            color=edge_color,
+            alpha=0.2,
+        )
+    )  # Left edge
+    ax.add_patch(
+        plt.Rectangle(
+            (width - edge_margin, corner_size),
+            edge_margin,
+            height - 2 * corner_size,
+            color=edge_color,
+            alpha=0.2,
+        )
+    )  # Right edge
+    ax.add_patch(
+        plt.Rectangle(
+            (corner_size, 0),
+            width - 2 * corner_size,
+            edge_margin,
+            color=edge_color,
+            alpha=0.2,
+        )
+    )  # Bottom edge
+    ax.add_patch(
+        plt.Rectangle(
+            (corner_size, height - edge_margin),
+            width - 2 * corner_size,
+            edge_margin,
+            color=edge_color,
+            alpha=0.2,
+        )
+    )  # Top edge
 
     # Right channel
-    ax.add_patch(plt.Rectangle((right_channel_x, 0), right_channel_width, height,
-                               color='lightgreen', alpha=0.2))
+    ax.add_patch(
+        plt.Rectangle(
+            (right_channel_x, 0),
+            right_channel_width,
+            height,
+            color="lightgreen",
+            alpha=0.2,
+        )
+    )
 
     # Left edge (inlet)
-    ax.add_patch(plt.Rectangle((0, 0), edge_margin, height,
-                               color='lightyellow', alpha=0.2))
+    ax.add_patch(
+        plt.Rectangle((0, 0), edge_margin, height, color="lightyellow", alpha=0.2)
+    )
 
     # 1. Plot all cell positions as small, semi-transparent dots
     if all_cell_positions:
@@ -1123,15 +1295,15 @@ def visualize_motility_with_chamber_regions(tracks, all_cell_positions, chamber_
                 x_all = []
                 y_all = []
                 for track in tracks:
-                    x_all.extend(track['x'])
-                    y_all.extend(track['y'])
+                    x_all.extend(track["x"])
+                    y_all.extend(track["y"])
         else:
             # Numpy array of points [N, 2]
             x_all = all_cell_positions[:, 0]
             y_all = all_cell_positions[:, 1]
 
         # Plot as a scatter with blue, semi-transparent dots
-        plt.scatter(x_all, y_all, s=2, color='blue', alpha=0.1)
+        plt.scatter(x_all, y_all, s=2, color="blue", alpha=0.1)
 
     # 2. Set up colormap for motility index
     # Use a colormap with more perceptual variation
@@ -1163,44 +1335,51 @@ def visualize_motility_with_chamber_regions(tracks, all_cell_positions, chamber_
 
     # 3. Plot tracked cell trajectories with color based on motility
     for track in tracks:
-        track_id = track.get('ID', -1)
+        track_id = track.get("ID", -1)
         if track_id in metrics_by_id:
             metrics = metrics_by_id[track_id]
-            motility_index = metrics['motility_index']
+            motility_index = metrics["motility_index"]
 
             # Get track coordinates
-            x = track['x']
-            y = track['y']
+            x = track["x"]
+            y = track["y"]
 
             # Plot track colored by motility index
             track_color = cmap(norm(motility_index))
-            line, = plt.plot(x, y, '-', linewidth=2, alpha=0.8,
-                             color=track_color, picker=5)
+            (line,) = plt.plot(
+                x, y, "-", linewidth=2, alpha=0.8, color=track_color, picker=5
+            )
 
             # Mark start and end points
-            start, = plt.plot(x[0], y[0], 'o', markersize=4,
-                              color=track_color, picker=5)
-            end, = plt.plot(x[-1], y[-1], 's', markersize=4,
-                            color=track_color, picker=5)
+            (start,) = plt.plot(
+                x[0], y[0], "o", markersize=4, color=track_color, picker=5
+            )
+            (end,) = plt.plot(
+                x[-1], y[-1], "s", markersize=4, color=track_color, picker=5
+            )
 
             # Store track information for hover functionality
             track_info = {
-                'track_id': track_id,
-                'motility_index': motility_index,
-                'track_length': len(x),
-                'path_length': metrics.get('path_length', 0),
-                'avg_velocity': metrics.get('avg_velocity', 0),
-                'confinement_ratio': metrics.get('confinement_ratio', 0),
-                'directional_persistence': metrics.get('directional_persistence', 0),
-                'plot_objects': [line, start, end]
+                "track_id": track_id,
+                "motility_index": motility_index,
+                "track_length": len(x),
+                "path_length": metrics.get("path_length", 0),
+                "avg_velocity": metrics.get("avg_velocity", 0),
+                "confinement_ratio": metrics.get("confinement_ratio", 0),
+                "directional_persistence": metrics.get("directional_persistence", 0),
+                "plot_objects": [line, start, end],
             }
             track_plots.append(track_info)
 
     # Setup hover annotation
-    annot = ax.annotate("", xy=(0, 0), xytext=(20, 20),
-                        textcoords="offset points",
-                        bbox=dict(boxstyle="round", fc="w", alpha=0.9),
-                        arrowprops=dict(arrowstyle="->"))
+    annot = ax.annotate(
+        "",
+        xy=(0, 0),
+        xytext=(20, 20),
+        textcoords="offset points",
+        bbox=dict(boxstyle="round", fc="w", alpha=0.9),
+        arrowprops=dict(arrowstyle="->"),
+    )
     annot.set_visible(False)
 
     def update_annot(track_info, point):
@@ -1209,13 +1388,15 @@ def visualize_motility_with_chamber_regions(tracks, all_cell_positions, chamber_
         annot.xy = point
 
         # Create the annotation text with track details
-        text = (f"Track ID: {track_info['track_id']}\n"
-                f"Motility Index: {track_info['motility_index']:.1f}\n"
-                f"Track Length: {track_info['track_length']} frames\n"
-                f"Path Length: {track_info['path_length']:.1f} px\n"
-                f"Avg Velocity: {track_info['avg_velocity']:.2f} px/frame\n"
-                f"Confinement: {track_info['confinement_ratio']:.2f}\n"
-                f"Persistence: {track_info['directional_persistence']:.2f}")
+        text = (
+            f"Track ID: {track_info['track_id']}\n"
+            f"Motility Index: {track_info['motility_index']:.1f}\n"
+            f"Track Length: {track_info['track_length']} frames\n"
+            f"Path Length: {track_info['path_length']:.1f} px\n"
+            f"Avg Velocity: {track_info['avg_velocity']:.2f} px/frame\n"
+            f"Confinement: {track_info['confinement_ratio']:.2f}\n"
+            f"Persistence: {track_info['directional_persistence']:.2f}"
+        )
 
         annot.set_text(text)
 
@@ -1229,7 +1410,7 @@ def visualize_motility_with_chamber_regions(tracks, all_cell_positions, chamber_
                 hovering_this_track = False
 
                 # Check if we're hovering over any part of this track
-                for i, plot_obj in enumerate(track_info['plot_objects']):
+                for i, plot_obj in enumerate(track_info["plot_objects"]):
                     cont, _ = plot_obj.contains(event)
                     if cont:
                         hovering_this_track = True
@@ -1239,9 +1420,9 @@ def visualize_motility_with_chamber_regions(tracks, all_cell_positions, chamber_
                 # If hovering over this track, highlight it and show annotation
                 if hovering_this_track:
                     # Store original linewidths before modifying if not already stored
-                    for i, plot_obj in enumerate(track_info['plot_objects']):
-                        if not hasattr(plot_obj, '_original_linewidth'):
-                            if hasattr(plot_obj, 'get_linewidth'):
+                    for i, plot_obj in enumerate(track_info["plot_objects"]):
+                        if not hasattr(plot_obj, "_original_linewidth"):
+                            if hasattr(plot_obj, "get_linewidth"):
                                 plot_obj._original_linewidth = plot_obj.get_linewidth()
                             else:
                                 plot_obj._original_linewidth = 2 if i == 0 else 4
@@ -1257,11 +1438,10 @@ def visualize_motility_with_chamber_regions(tracks, all_cell_positions, chamber_
                     annot.set_visible(True)
                 else:
                     # Restore to original appearance if not hovering
-                    for i, plot_obj in enumerate(track_info['plot_objects']):
-                        if hasattr(plot_obj, '_original_linewidth'):
+                    for i, plot_obj in enumerate(track_info["plot_objects"]):
+                        if hasattr(plot_obj, "_original_linewidth"):
                             if i == 0:  # Main line
-                                plot_obj.set_linewidth(
-                                    plot_obj._original_linewidth)
+                                plot_obj.set_linewidth(plot_obj._original_linewidth)
                             else:  # Markers
                                 # Original marker size
                                 plot_obj.set_markersize(4)
@@ -1277,23 +1457,47 @@ def visualize_motility_with_chamber_regions(tracks, all_cell_positions, chamber_
     fig.canvas.mpl_connect("motion_notify_event", hover)
 
     # Add region labels
-    plt.text(edge_margin/2, height/2, 'CHAMBER WALL', rotation=90,
-             ha='center', va='center', fontsize=12)
-    plt.text(right_channel_x + right_channel_width/2, height/2, 'OPENING',
-             rotation=90, ha='center', va='center', fontsize=12)
-    plt.text(width/2, height/2, 'CENTER',
-             ha='center', va='center', fontsize=14)
-    plt.text(corner_size/2, corner_size/2, 'CORNER',
-             ha='center', va='center', fontsize=10)
-    plt.text(width-corner_size/2, height-corner_size/2,
-             'CORNER', ha='center', va='center', fontsize=10)
+    plt.text(
+        edge_margin / 2,
+        height / 2,
+        "CHAMBER WALL",
+        rotation=90,
+        ha="center",
+        va="center",
+        fontsize=12,
+    )
+    plt.text(
+        right_channel_x + right_channel_width / 2,
+        height / 2,
+        "OPENING",
+        rotation=90,
+        ha="center",
+        va="center",
+        fontsize=12,
+    )
+    plt.text(width / 2, height / 2, "CENTER", ha="center", va="center", fontsize=14)
+    plt.text(
+        corner_size / 2,
+        corner_size / 2,
+        "CORNER",
+        ha="center",
+        va="center",
+        fontsize=10,
+    )
+    plt.text(
+        width - corner_size / 2,
+        height - corner_size / 2,
+        "CORNER",
+        ha="center",
+        va="center",
+        fontsize=10,
+    )
 
     # Add colorbar
     cbar = plt.colorbar(sm, ax=ax)
-    cbar.set_label('Motility Index (0-100)')
+    cbar.set_label("Motility Index (0-100)")
 
     # Add legend for regions
-    from matplotlib.patches import Patch
 
     # Add statistical summary
     summary_text = (
@@ -1303,14 +1507,15 @@ def visualize_motility_with_chamber_regions(tracks, all_cell_positions, chamber_
         f"Heterogeneity: {motility_metrics['population_heterogeneity']:.2f}\n"
         f"Sample Size: {motility_metrics['sample_size']} tracks"
     )
-    plt.figtext(0.02, 0.02, summary_text, bbox=dict(
-        facecolor='white', alpha=0.8), fontsize=10)
+    plt.figtext(
+        0.02, 0.02, summary_text, bbox=dict(facecolor="white", alpha=0.8), fontsize=10
+    )
 
     # Set labels and title
-    plt.xlabel('X Position (pixels)')
-    plt.ylabel('Y Position (pixels)')
-    plt.title('Cell Motility by Chamber Region')
-    plt.grid(True, linestyle='--', alpha=0.3)
+    plt.xlabel("X Position (pixels)")
+    plt.ylabel("Y Position (pixels)")
+    plt.title("Cell Motility by Chamber Region")
+    plt.grid(True, linestyle="--", alpha=0.3)
 
     # Set axis limits
     plt.xlim(0, width)
@@ -1339,7 +1544,6 @@ def visualize_motility_map(tracks, chamber_dimensions=None, motility_metrics=Non
         The figure containing the visualization
     """
     import matplotlib.pyplot as plt
-    import numpy as np
 
     # Set up the figure
     fig, ax = plt.subplots(figsize=(12, 10))
@@ -1349,8 +1553,8 @@ def visualize_motility_map(tracks, chamber_dimensions=None, motility_metrics=Non
         width, height = chamber_dimensions
     else:
         # Estimate dimensions from track coordinates
-        x_coords = [x for track in tracks for x in track.get('x', [])]
-        y_coords = [y for track in tracks for y in track.get('y', [])]
+        x_coords = [x for track in tracks for x in track.get("x", [])]
+        y_coords = [y for track in tracks for y in track.get("y", [])]
         if x_coords and y_coords:
             width = max(x_coords) + 50
             height = max(y_coords) + 50
@@ -1368,81 +1572,173 @@ def visualize_motility_map(tracks, chamber_dimensions=None, motility_metrics=Non
     right_channel_width = 70
 
     # Corners
-    corner_color = 'lightgreen'
-    ax.add_patch(plt.Rectangle((0, 0), corner_size, corner_size,
-                               color=corner_color, alpha=0.15))  # Bottom-left
-    ax.add_patch(plt.Rectangle((0, height-corner_size), corner_size, corner_size,
-                               color=corner_color, alpha=0.15))  # Top-left
-    ax.add_patch(plt.Rectangle((width-corner_size, 0), corner_size, corner_size,
-                               color=corner_color, alpha=0.15))  # Bottom-right
-    ax.add_patch(plt.Rectangle((width-corner_size, height-corner_size), corner_size, corner_size,
-                               color=corner_color, alpha=0.15))  # Top-right
+    corner_color = "lightgreen"
+    ax.add_patch(
+        plt.Rectangle((0, 0), corner_size, corner_size, color=corner_color, alpha=0.15)
+    )  # Bottom-left
+    ax.add_patch(
+        plt.Rectangle(
+            (0, height - corner_size),
+            corner_size,
+            corner_size,
+            color=corner_color,
+            alpha=0.15,
+        )
+    )  # Top-left
+    ax.add_patch(
+        plt.Rectangle(
+            (width - corner_size, 0),
+            corner_size,
+            corner_size,
+            color=corner_color,
+            alpha=0.15,
+        )
+    )  # Bottom-right
+    ax.add_patch(
+        plt.Rectangle(
+            (width - corner_size, height - corner_size),
+            corner_size,
+            corner_size,
+            color=corner_color,
+            alpha=0.15,
+        )
+    )  # Top-right
 
     # Edges
-    edge_color = 'lightblue'
-    ax.add_patch(plt.Rectangle((corner_size, 0), width-2*corner_size, edge_margin,
-                               color=edge_color, alpha=0.15))  # Bottom edge
-    ax.add_patch(plt.Rectangle((corner_size, height-edge_margin), width-2*corner_size, edge_margin,
-                               color=edge_color, alpha=0.15))  # Top edge
-    ax.add_patch(plt.Rectangle((width-edge_margin, corner_size), edge_margin, height-2*corner_size,
-                               color=edge_color, alpha=0.15))  # Right edge
+    edge_color = "lightblue"
+    ax.add_patch(
+        plt.Rectangle(
+            (corner_size, 0),
+            width - 2 * corner_size,
+            edge_margin,
+            color=edge_color,
+            alpha=0.15,
+        )
+    )  # Bottom edge
+    ax.add_patch(
+        plt.Rectangle(
+            (corner_size, height - edge_margin),
+            width - 2 * corner_size,
+            edge_margin,
+            color=edge_color,
+            alpha=0.15,
+        )
+    )  # Top edge
+    ax.add_patch(
+        plt.Rectangle(
+            (width - edge_margin, corner_size),
+            edge_margin,
+            height - 2 * corner_size,
+            color=edge_color,
+            alpha=0.15,
+        )
+    )  # Right edge
 
     # Right channel
-    ax.add_patch(plt.Rectangle((right_channel_x, 0), right_channel_width, height,
-                               color=corner_color, alpha=0.15))
+    ax.add_patch(
+        plt.Rectangle(
+            (right_channel_x, 0),
+            right_channel_width,
+            height,
+            color=corner_color,
+            alpha=0.15,
+        )
+    )
 
     # Left edge/inlet
-    inlet_color = 'lightyellow'
-    ax.add_patch(plt.Rectangle((0, corner_size), edge_margin, height-2*corner_size,
-                               color=inlet_color, alpha=0.15))  # Left edge
+    inlet_color = "lightyellow"
+    ax.add_patch(
+        plt.Rectangle(
+            (0, corner_size),
+            edge_margin,
+            height - 2 * corner_size,
+            color=inlet_color,
+            alpha=0.15,
+        )
+    )  # Left edge
 
     # Collect all cell positions
     all_x = []
     all_y = []
     for track in tracks:
         # Add all positions from the track
-        all_x.extend(track['x'])
-        all_y.extend(track['y'])
+        all_x.extend(track["x"])
+        all_y.extend(track["y"])
 
     # Plot cell positions as small blue dots
-    plt.scatter(all_x, all_y, s=1, color='blue', alpha=0.3)
+    plt.scatter(all_x, all_y, s=1, color="blue", alpha=0.3)
 
     # Add region labels
-    plt.text(edge_margin/2, height/2, 'CHAMBER WALL', rotation=90,
-             ha='center', va='center', fontsize=12)
-    plt.text(right_channel_x + right_channel_width/2, height/2, 'OPENING',
-             rotation=90, ha='center', va='center', fontsize=12)
-    plt.text(width/2, height/2, 'CENTER',
-             ha='center', va='center', fontsize=14)
-    plt.text(corner_size/2, corner_size/2, 'CORNER',
-             ha='center', va='center', fontsize=10)
-    plt.text(width-corner_size/2, height-corner_size/2,
-             'CORNER', ha='center', va='center', fontsize=10)
+    plt.text(
+        edge_margin / 2,
+        height / 2,
+        "CHAMBER WALL",
+        rotation=90,
+        ha="center",
+        va="center",
+        fontsize=12,
+    )
+    plt.text(
+        right_channel_x + right_channel_width / 2,
+        height / 2,
+        "OPENING",
+        rotation=90,
+        ha="center",
+        va="center",
+        fontsize=12,
+    )
+    plt.text(width / 2, height / 2, "CENTER", ha="center", va="center", fontsize=14)
+    plt.text(
+        corner_size / 2,
+        corner_size / 2,
+        "CORNER",
+        ha="center",
+        va="center",
+        fontsize=10,
+    )
+    plt.text(
+        width - corner_size / 2,
+        height - corner_size / 2,
+        "CORNER",
+        ha="center",
+        va="center",
+        fontsize=10,
+    )
 
     # Add legend
     from matplotlib.patches import Patch
+
     legend_elements = [
-        Patch(facecolor=inlet_color, alpha=0.4,
-              edgecolor='gray', label='Chamber Wall Region'),
-        Patch(facecolor=corner_color, alpha=0.4,
-              edgecolor='gray', label='Corner Regions'),
-        Patch(facecolor='white', alpha=0.4,
-              edgecolor='gray', label='Center Region'),
-        Patch(facecolor=corner_color, alpha=0.4,
-              edgecolor='gray', label='Opening Channel'),
-        Patch(facecolor=edge_color, alpha=0.4,
-              edgecolor='gray', label='Edge Regions')
+        Patch(
+            facecolor=inlet_color,
+            alpha=0.4,
+            edgecolor="gray",
+            label="Chamber Wall Region",
+        ),
+        Patch(
+            facecolor=corner_color, alpha=0.4, edgecolor="gray", label="Corner Regions"
+        ),
+        Patch(facecolor="white", alpha=0.4, edgecolor="gray", label="Center Region"),
+        Patch(
+            facecolor=corner_color, alpha=0.4, edgecolor="gray", label="Opening Channel"
+        ),
+        Patch(facecolor=edge_color, alpha=0.4, edgecolor="gray", label="Edge Regions"),
     ]
-    ax.legend(handles=legend_elements, loc='upper center',
-              bbox_to_anchor=(0.5, -0.05), ncol=3, frameon=True)
+    ax.legend(
+        handles=legend_elements,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.05),
+        ncol=3,
+        frameon=True,
+    )
 
     # Set labels and title
-    plt.xlabel('X Position (pixels)')
-    plt.ylabel('Y Position (pixels)')
-    plt.title('Color-Coded Chamber Regions with Cell Positions')
+    plt.xlabel("X Position (pixels)")
+    plt.ylabel("Y Position (pixels)")
+    plt.title("Color-Coded Chamber Regions with Cell Positions")
 
     # Add light grid
-    plt.grid(True, linestyle='--', alpha=0.2)
+    plt.grid(True, linestyle="--", alpha=0.2)
 
     plt.tight_layout()
     return fig, ax
@@ -1469,13 +1765,13 @@ def enhanced_motility_index(tracks, chamber_dimensions=None):
 
     # Process each track
     for track in tracks:
-        if len(track.get('x', [])) < 3:  # Skip very short tracks
+        if len(track.get("x", [])) < 3:  # Skip very short tracks
             continue
 
         # Extract coordinates and times
-        x = np.array(track['x'])
-        y = np.array(track['y'])
-        t = np.array(track['t']) if 't' in track else np.arange(len(x))
+        x = np.array(track["x"])
+        y = np.array(track["y"])
+        t = np.array(track["t"]) if "t" in track else np.arange(len(x))
 
         # Time intervals between frames
         dt = np.diff(t)
@@ -1490,8 +1786,9 @@ def enhanced_motility_index(tracks, chamber_dimensions=None):
         start_point = (x[0], y[0])
         end_point = (x[-1], y[-1])
 
-        net_displacement = np.sqrt((end_point[0] - start_point[0])**2 +
-                                   (end_point[1] - start_point[1])**2)
+        net_displacement = np.sqrt(
+            (end_point[0] - start_point[0]) ** 2 + (end_point[1] - start_point[1]) ** 2
+        )
         path_length = np.sum(step_distances)
         confinement_ratio = net_displacement / path_length if path_length > 0 else 0
 
@@ -1499,8 +1796,9 @@ def enhanced_motility_index(tracks, chamber_dimensions=None):
         instantaneous_velocities = step_distances / dt
         avg_velocity = np.mean(instantaneous_velocities)
         max_velocity = np.max(instantaneous_velocities)
-        velocity_cv = np.std(instantaneous_velocities) / \
-            avg_velocity if avg_velocity > 0 else 0
+        velocity_cv = (
+            np.std(instantaneous_velocities) / avg_velocity if avg_velocity > 0 else 0
+        )
 
         # 3. Directional metrics
         # Calculate turning angles
@@ -1509,7 +1807,7 @@ def enhanced_motility_index(tracks, chamber_dimensions=None):
             # Vector 1
             v1 = np.array([dx[i], dy[i]])
             # Vector 2
-            v2 = np.array([dx[i+1], dy[i+1]])
+            v2 = np.array([dx[i + 1], dy[i + 1]])
 
             # Normalize vectors
             v1_norm = np.linalg.norm(v1)
@@ -1517,16 +1815,15 @@ def enhanced_motility_index(tracks, chamber_dimensions=None):
 
             if v1_norm > 0 and v2_norm > 0:
                 # Calculate angle between vectors
-                cos_angle = np.clip(
-                    np.dot(v1, v2) / (v1_norm * v2_norm), -1.0, 1.0)
+                cos_angle = np.clip(np.dot(v1, v2) / (v1_norm * v2_norm), -1.0, 1.0)
                 angle = np.arccos(cos_angle)
                 turning_angles.append(angle)
 
         # Directional persistence
-        mean_turning_angle = np.mean(
-            turning_angles) if turning_angles else np.pi/2
-        directional_persistence = 1 - \
-            (mean_turning_angle / np.pi)  # 1 = straight, 0 = random
+        mean_turning_angle = np.mean(turning_angles) if turning_angles else np.pi / 2
+        directional_persistence = 1 - (
+            mean_turning_angle / np.pi
+        )  # 1 = straight, 0 = random
 
         # MSD calculation (simplified)
         # For a full implementation, calculate MSD at multiple time lags
@@ -1536,11 +1833,13 @@ def enhanced_motility_index(tracks, chamber_dimensions=None):
         if chamber_dimensions:
             width, height = chamber_dimensions
             # Determine if cell is in center, edge, or corner
-            center_x, center_y = width/2, height/2
+            center_x, center_y = width / 2, height / 2
             distance_from_center = np.sqrt(
-                (np.mean(x) - center_x)**2 + (np.mean(y) - center_y)**2)
-            normalized_center_distance = distance_from_center / \
-                np.sqrt(center_x**2 + center_y**2)
+                (np.mean(x) - center_x) ** 2 + (np.mean(y) - center_y) ** 2
+            )
+            normalized_center_distance = distance_from_center / np.sqrt(
+                center_x**2 + center_y**2
+            )
 
             # Higher value means closer to edge
             region_factor = normalized_center_distance
@@ -1550,10 +1849,10 @@ def enhanced_motility_index(tracks, chamber_dimensions=None):
         # Calculate combined motility index
         # Weights can be adjusted based on importance of each factor
         weights = {
-            'confinement': 0.25,
-            'velocity': 0.25,
-            'persistence': 0.25,
-            'region': 0.25
+            "confinement": 0.25,
+            "velocity": 0.25,
+            "persistence": 0.25,
+            "region": 0.25,
         }
 
         # Normalize each component to 0-1 scale
@@ -1563,54 +1862,216 @@ def enhanced_motility_index(tracks, chamber_dimensions=None):
         norm_velocity = min(1.0, avg_velocity / 20)
 
         motility_index = (
-            weights['confinement'] * norm_confinement +
-            weights['velocity'] * norm_velocity +
-            weights['persistence'] * directional_persistence +
-            weights['region'] * region_factor
+            weights["confinement"] * norm_confinement
+            + weights["velocity"] * norm_velocity
+            + weights["persistence"] * directional_persistence
+            + weights["region"] * region_factor
         ) * 100  # Scale to 0-100
 
         # Store all metrics for this track
-        track_metrics.append({
-            'track_id': track.get('ID', -1),
-            'net_displacement': net_displacement,
-            'path_length': path_length,
-            'confinement_ratio': confinement_ratio,
-            'avg_velocity': avg_velocity,
-            'max_velocity': max_velocity,
-            'velocity_cv': velocity_cv,
-            'directional_persistence': directional_persistence,
-            'mean_turning_angle': mean_turning_angle,
-            'msd': msd,
-            'region_factor': region_factor,
-            'track_length': len(t),
-            'motility_index': motility_index
-        })
+        track_metrics.append(
+            {
+                "track_id": track.get("ID", -1),
+                "net_displacement": net_displacement,
+                "path_length": path_length,
+                "confinement_ratio": confinement_ratio,
+                "avg_velocity": avg_velocity,
+                "max_velocity": max_velocity,
+                "velocity_cv": velocity_cv,
+                "directional_persistence": directional_persistence,
+                "mean_turning_angle": mean_turning_angle,
+                "msd": msd,
+                "region_factor": region_factor,
+                "track_length": len(t),
+                "motility_index": motility_index,
+            }
+        )
 
     # Population-level statistics
     if track_metrics:
         # Calculate population metrics
-        all_indices = [t['motility_index'] for t in track_metrics]
+        all_indices = [t["motility_index"] for t in track_metrics]
         population_avg_index = np.mean(all_indices)
         population_std_index = np.std(all_indices)
 
         # Calculate motility heterogeneity (coefficient of variation)
-        heterogeneity = population_std_index / \
-            population_avg_index if population_avg_index > 0 else 0
+        heterogeneity = (
+            population_std_index / population_avg_index
+            if population_avg_index > 0
+            else 0
+        )
 
         result = {
-            'individual_metrics': track_metrics,
-            'population_avg_motility': population_avg_index,
-            'population_std_motility': population_std_index,
-            'population_heterogeneity': heterogeneity,
-            'sample_size': len(track_metrics)
+            "individual_metrics": track_metrics,
+            "population_avg_motility": population_avg_index,
+            "population_std_motility": population_std_index,
+            "population_heterogeneity": heterogeneity,
+            "sample_size": len(track_metrics),
         }
     else:
         result = {
-            'individual_metrics': [],
-            'population_avg_motility': 0,
-            'population_std_motility': 0,
-            'population_heterogeneity': 0,
-            'sample_size': 0
+            "individual_metrics": [],
+            "population_avg_motility": 0,
+            "population_std_motility": 0,
+            "population_heterogeneity": 0,
+            "sample_size": 0,
         }
 
     return result
+
+
+def create_density_based_regions_from_forecast_data(
+    all_cell_positions, chamber_dimensions, grid_size=50, tracks=None
+):
+    """
+    Create density-based regions with optional tracking data for enhanced export.
+
+    Parameters:
+    -----------
+    all_cell_positions : list of tuples
+        (x, y) coordinates from collect_cell_positions method
+    chamber_dimensions : tuple
+        (width, height) of the chamber
+    grid_size : int
+        Size of pixel blocks for density calculation
+    tracks : list, optional
+        List of track dictionaries with cell IDs and time points
+
+    Returns:
+    --------
+    dict : Contains density data and enhanced export data
+    """
+    width, height = chamber_dimensions
+
+    # Create grid
+    x_bins = np.arange(0, width + grid_size, grid_size)
+    y_bins = np.arange(0, height + grid_size, grid_size)
+
+    if not all_cell_positions:
+        return {
+            "density_grid": np.zeros((len(y_bins) - 1, len(x_bins) - 1)),
+            "export_data": [],
+            "grid_export_data": [],
+        }
+
+    # Extract x, y coordinates - all_cell_positions are tuples (x, y)
+    if tracks:
+        # Use positions from selected tracks for density calculation
+        all_x = []
+        all_y = []
+        for track in tracks:
+            all_x.extend(track["x"])
+            all_y.extend(track["y"])
+        print(
+            f"Using {len(all_x)} positions from {len(tracks)} selected tracks for density grid"
+        )
+    else:
+        # Fallback to original all_cell_positions
+        all_x = [pos[0] for pos in all_cell_positions]
+        all_y = [pos[1] for pos in all_cell_positions]
+        print(f"Using {len(all_x)} positions from all_cell_positions for density grid")
+
+    print(f"Using {len(all_x)} cell positions for density analysis")
+
+    # Create 2D histogram (density map)
+    density_grid, x_edges, y_edges = np.histogram2d(all_x, all_y, bins=[x_bins, y_bins])
+    density_grid = density_grid.T  # Transpose to match image coordinates
+
+    # Calculate density thresholds
+    flat_density = density_grid.flatten()
+    non_zero_density = flat_density[flat_density > 0]
+
+    if len(non_zero_density) > 0:
+        low_threshold = np.percentile(non_zero_density, 33)
+        high_threshold = np.percentile(non_zero_density, 67)
+    else:
+        low_threshold = high_threshold = 0
+
+    # ENHANCED EXPORT DATA - Use tracks if available, otherwise fallback to positions
+    export_data = []
+
+    if tracks:
+        print(f"Creating enhanced export with tracking data from {len(tracks)} tracks")
+        # Use tracking data for rich export
+        for track in tracks:
+            track_id = track.get("ID", -1)
+            x_coords = track["x"]
+            y_coords = track["y"]
+            t_coords = track.get("t", list(range(len(x_coords))))
+
+            # Get lineage information
+            parent_id = track.get("parent")
+            children_ids = track.get("children", [])
+
+            for i, (x, y, t) in enumerate(zip(x_coords, y_coords, t_coords)):
+                export_data.append(
+                    {
+                        "cell_id": track_id,
+                        "time_point": t,
+                        "position_in_track": i,
+                        "x_position_pixels": x,
+                        "y_position_pixels": y,
+                        "x_position_um": x * 0.07,
+                        "y_position_um": y * 0.07,
+                        "parent_id": parent_id,
+                        "has_children": len(children_ids) > 0,
+                        "track_length": len(x_coords),
+                        "source": "tracking_data_with_lineage",
+                    }
+                )
+    else:
+        print("No tracking data available, using position-only export")
+        # Fallback to position-only data
+        for i, (x, y) in enumerate(zip(all_x, all_y)):
+            export_data.append(
+                {
+                    "position_id": i,
+                    "cell_id": None,  # Unknown without tracking
+                    "time_point": None,  # Unknown without tracking
+                    "x_position_pixels": x,
+                    "y_position_pixels": y,
+                    "x_position_um": x * 0.07,
+                    "y_position_um": y * 0.07,
+                    "source": "position_only_data",
+                }
+            )
+
+    # Prepare grid export data
+    grid_export_data = []
+    for i in range(density_grid.shape[0]):
+        for j in range(density_grid.shape[1]):
+            x_center = x_bins[j] + grid_size / 2
+            y_center = y_bins[i] + grid_size / 2
+            cell_count = density_grid[i, j]
+
+            # Determine density region
+            if cell_count == 0:
+                region_type = "Empty"
+            elif cell_count <= low_threshold:
+                region_type = "Low-Density"
+            elif cell_count <= high_threshold:
+                region_type = "Medium-Density"
+            else:
+                region_type = "High-Density"
+
+            grid_export_data.append(
+                {
+                    "grid_x_center": x_center,
+                    "grid_y_center": y_center,
+                    "grid_size": grid_size,
+                    "cell_count": int(cell_count),
+                    "density_per_1000px": (cell_count * 1000) / (grid_size**2),
+                    "region_type": region_type,
+                }
+            )
+
+    return {
+        "density_grid": density_grid,
+        "x_bins": x_bins,
+        "y_bins": y_bins,
+        "export_data": export_data,  # Now includes tracking data when available
+        "grid_export_data": grid_export_data,
+        "thresholds": {"low": low_threshold, "high": high_threshold},
+        "total_cells": len(all_x),
+        "chamber_dimensions": chamber_dimensions,
+    }
