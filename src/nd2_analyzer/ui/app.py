@@ -338,6 +338,13 @@ class App(QMainWindow):
         load_action.triggered.connect(self.load_from_folder)
         file_menu.addAction(load_action)
 
+        file_menu.addSeparator()
+
+        switch_mode_action = QAction("Switch Analysis Mode", self)
+        switch_mode_action.setShortcut("Ctrl+M")
+        switch_mode_action.triggered.connect(self.switch_analysis_mode)
+        file_menu.addAction(switch_mode_action)
+
         help_menu = menu_bar.addMenu("Help")
         about_action = QAction("About", self)
         about_action.triggered.connect(self.show_about_dialog)
@@ -394,6 +401,28 @@ class App(QMainWindow):
         ImageData.load_nd2(
             "/Users/hiram/Documents/EVERYTHING/20-29 Research/22 OliveiraLab/22.12 ND2 analyzer/nd2-analyzer/final_data/rpu_nd2/3-RPU_mCherry_M9Plain_10h002.nd2"
         )
+
+    def switch_analysis_mode(self):
+        """Re-open the mode selection dialog and rebuild the UI tabs"""
+        dialog = ModeSelectionDialog(self.analysis_config, self)
+        result = dialog.exec()
+        if result != QDialog.Accepted:
+            return
+
+        new_mode = dialog.get_selected_mode()
+        if new_mode == self.current_analysis_mode:
+            return
+
+        self.current_analysis_mode = new_mode
+        self.setWindowTitle(f"Partaker 3 - {new_mode.display_name}")
+
+        while self.tab_widget.count():
+            self.tab_widget.removeTab(0)
+
+        if new_mode == AnalysisMode.SINGLE_CELL:
+            self.init_single_cell_tabs()
+        elif new_mode == AnalysisMode.BIOFILM_CLOUD:
+            self.init_biofilm_cloud_tabs()
 
     def show_experiment_dialog(self):
         experiment = ExperimentDialog()

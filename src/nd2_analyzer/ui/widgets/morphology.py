@@ -259,17 +259,12 @@ class MorphologyWidget(QWidget):
             return
 
         try:
-            # Get current frame information
-            t = pub.sendMessage("get_current_t", default=0)
-            p = pub.sendMessage("get_current_p", default=0)
-            c = pub.sendMessage("get_current_c", default=0)
+            # Get current frame information from stored view index
+            t = getattr(self, "_current_t", 0)
+            p = getattr(self, "_current_p", 0)
+            c = getattr(self, "_current_c", 0)
 
-            print(f"   Raw values from pub.sendMessage: t={t}, p={p}, c={c}")
-
-            # Ensure values are not None
-            t = t if t is not None else 0
-            p = p if p is not None else 0
-            c = c if c is not None else 0
+            print(f"   Current view: t={t}, p={p}, c={c}")
 
             print(f"🔵 Fetching metrics for T:{t}, P:{p}, C:{c}")
 
@@ -989,9 +984,7 @@ class MorphologyWidget(QWidget):
 
     def on_view_index_changed(self, index):
         """Handler for when the current view changes (time/position/channel)"""
-        # ViewAreaWidget now handles all tracking highlighting automatically
-        # This method can be used for other morphology-specific view updates if needed
-        pass
+        self._current_t, self._current_p, self._current_c = index
 
     def process_morphology_time_series(self):
         """Process morphology across time points using metrics service."""
