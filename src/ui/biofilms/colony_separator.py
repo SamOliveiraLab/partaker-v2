@@ -5,8 +5,7 @@ from skimage.segmentation import clear_border
 from typing import List, Dict, Tuple
 import polars as pl
 
-from PyQt5.QtWidgets import QDialog  # Add this import if using PyQt5
-# from PySide2.QtWidgets import QDialog  # Or use this if using PySide2
+from PySide6.QtWidgets import QDialog
 
 class ColonySeparator:
     """BiofilmQ-style colony separation tool for automatic biofilm region detection"""
