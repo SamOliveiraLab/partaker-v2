@@ -2957,6 +2957,13 @@ class App(QMainWindow):
         load_action.triggered.connect(self.load_from_folder)
         file_menu.addAction(load_action)
 
+        file_menu.addSeparator()
+
+        switch_mode_action = QAction("Switch Analysis Mode", self)
+        switch_mode_action.setShortcut("Ctrl+M")
+        switch_mode_action.triggered.connect(self.switch_analysis_mode)
+        file_menu.addAction(switch_mode_action)
+
         # Help menu (for About dialog)
         help_menu = menu_bar.addMenu("Help")
 
@@ -2969,6 +2976,33 @@ class App(QMainWindow):
             about_action_mac = QAction("About", self)
             about_action_mac.triggered.connect(self.show_about_dialog)
             self.menuBar().addAction(about_action_mac)
+
+    def switch_analysis_mode(self):
+        """Re-open the mode selection dialog and rebuild the UI tabs"""
+        dialog = ModeSelectionDialog(self.analysis_config, self)
+        result = dialog.exec()
+        if result != QDialog.Accepted:
+            return
+
+        new_mode = dialog.get_selected_mode()
+        if new_mode == self.current_analysis_mode:
+            return
+
+        self.current_analysis_mode = new_mode
+        mode_name = new_mode.display_name
+        self.setWindowTitle(f"Partaker 3 - {mode_name}")
+
+        # Remove all existing tabs
+        while self.tab_widget.count():
+            self.tab_widget.removeTab(0)
+
+        # Rebuild tabs for the selected mode (without recreating the menu bar)
+        if self.current_analysis_mode == AnalysisMode.SINGLE_CELL:
+            self.init_single_cell_tabs()
+            self.initMorphologyTimeTab()
+            self.initMorphologyVisualizationTab()
+        elif self.current_analysis_mode == AnalysisMode.BIOFILM_CLOUD:
+            self.init_biofilm_cloud_tabs()
 
     def show_new_experiment_dialog(self):
         experiment = ExperimentDialog()
