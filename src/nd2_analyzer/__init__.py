@@ -1,5 +1,8 @@
 import sys
 
+from PySide6.QtWidgets import QApplication, QSplashScreen
+from PySide6.QtGui import QPixmap
+
 
 def _patch_torch_load_for_cpu():
     """Force CPU mapping and disable weights_only so CUDA-saved checkpoints
@@ -24,10 +27,23 @@ def _patch_torch_load_for_cpu():
 
 _patch_torch_load_for_cpu()
 
-# Force UTF-8 stdout/stderr on Windows so emoji prints don't crash on cp1252.
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding="utf-8")
         sys.stderr.reconfigure(encoding="utf-8")
     except Exception:
         pass
+
+from nd2_analyzer.ui import App  # noqa: E402  (must come after patches)
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setApplicationName("Partaker")
+    mainWin = App()
+    mainWin.show()
+    return app.exec()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

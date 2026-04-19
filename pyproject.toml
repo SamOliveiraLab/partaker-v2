@@ -43,11 +43,10 @@ dependencies = [
 ]
 
 [project.gui-scripts]
-gui = "nd2_analyzer.__main__:main"
+gui = "nd2_analyzer:main"
 
 [tool.uv]
 package = true
-link-mode = "copy"
 
 [build-system]
 requires = ["hatchling"]
