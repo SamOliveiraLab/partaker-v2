@@ -147,11 +147,17 @@ def _trackastra_napari_to_dict_tracks(napari_tracks, napari_graph):
     y_col = 3 if has_z else 2
     x_col = 4 if has_z else 3
 
-    # Build children map by inverting napari_graph (child -> [parent,...]).
+    # Build children map by inverting napari_graph.
+    # The mapping is child_id -> parents, where "parents" may be either a
+    # single int (trackastra) or an iterable of ints (napari's looser spec).
     children_map = {}
     for child_id, parents in (napari_graph or {}).items():
-        for parent_id in parents:
-            children_map.setdefault(int(parent_id), []).append(int(child_id))
+        if isinstance(parents, (int, np.integer)):
+            parents_iter = [int(parents)]
+        else:
+            parents_iter = [int(p) for p in parents]
+        for parent_id in parents_iter:
+            children_map.setdefault(parent_id, []).append(int(child_id))
 
     # Group rows by track_id, sorted by time.
     order = np.argsort(napari_tracks[:, 1], kind="stable")
@@ -165,10 +171,15 @@ def _trackastra_napari_to_dict_tracks(napari_tracks, napari_graph):
         # Already time-sorted because ordered is time-sorted; but enforce.
         rows = rows[np.argsort(rows[:, 1], kind="stable")]
 
-        parents = (napari_graph or {}).get(tid_int, [])
-        if not parents:
-            parents = (napari_graph or {}).get(tid, [])
-        parent = int(parents[0]) if parents else None
+        parents = (napari_graph or {}).get(tid_int)
+        if parents is None:
+            parents = (napari_graph or {}).get(tid)
+        if parents is None:
+            parent = None
+        elif isinstance(parents, (int, np.integer)):
+            parent = int(parents)
+        else:
+            parent = int(parents[0]) if len(parents) > 0 else None
 
         dict_tracks.append({
             "ID": tid_int,
