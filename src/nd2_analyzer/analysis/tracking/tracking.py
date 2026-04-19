@@ -7,6 +7,55 @@ from skimage.color import label2rgb
 from skimage.measure import label
 
 
+def run_tracker(segmented_images, algorithm="btrack"):
+    """
+    Dispatch tracking to the selected algorithm.
+
+    Parameters:
+    -----------
+    segmented_images : np.ndarray
+        3D array (time, height, width) of labeled segmented images.
+    algorithm : str
+        One of "btrack", "trackastra", "delta", "ultrack".
+
+    Returns:
+    --------
+    list, dict
+        A list of track dictionaries and a lineage graph.
+    """
+    algorithm = algorithm.lower()
+    if algorithm == "btrack":
+        return track_cells(segmented_images)
+    if algorithm == "trackastra":
+        return track_with_trackastra(segmented_images)
+    if algorithm == "delta":
+        return track_with_delta(segmented_images)
+    if algorithm == "ultrack":
+        return track_with_ultrack(segmented_images)
+    raise ValueError(f"Unknown tracking algorithm: {algorithm}")
+
+
+def track_with_trackastra(segmented_images):
+    raise NotImplementedError(
+        "Trackastra is not yet integrated. Install with `pip install trackastra` "
+        "and see https://github.com/weigertlab/trackastra"
+    )
+
+
+def track_with_delta(segmented_images):
+    raise NotImplementedError(
+        "DeLTA 2.0 is not yet integrated. "
+        "See https://gitlab.com/dunloplab/delta"
+    )
+
+
+def track_with_ultrack(segmented_images):
+    raise NotImplementedError(
+        "Ultrack is not yet integrated. Install with `pip install ultrack` "
+        "and see https://github.com/royerlab/ultrack"
+    )
+
+
 def track_cells(segmented_images):
     import btrack
 

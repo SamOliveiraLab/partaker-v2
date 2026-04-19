@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QFileDialog,
     QApplication,
+    QComboBox,
+    QLabel,
 )
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from pubsub import pub
@@ -51,6 +53,23 @@ class TrackingWidget(QWidget):
     def init_ui(self):
         """Initialize the user interface"""
         layout = QVBoxLayout(self)
+
+        # Selector row: algorithm + position
+        selector_row = QHBoxLayout()
+
+        selector_row.addWidget(QLabel("Algorithm:"))
+        self.algorithm_combo = QComboBox()
+        self.algorithm_combo.addItems(["btrack", "trackastra", "delta", "ultrack"])
+        selector_row.addWidget(self.algorithm_combo)
+
+        selector_row.addSpacing(20)
+
+        selector_row.addWidget(QLabel("Position:"))
+        self.position_combo = QComboBox()
+        selector_row.addWidget(self.position_combo)
+
+        selector_row.addStretch()
+        layout.addLayout(selector_row)
 
         # Create buttons layout
         buttons_layout = QHBoxLayout()
@@ -156,6 +175,12 @@ class TrackingWidget(QWidget):
         else:
             self.has_channels = False
 
+        # Populate the position dropdown
+        self.position_combo.clear()
+        p_count = shape[1] if len(shape) >= 4 else 1
+        for p in range(p_count):
+            self.position_combo.addItem(f"Position {p}", p)
+
         # Clear visualization
         self.figure.clear()
         self.canvas.draw()
@@ -244,14 +269,33 @@ class TrackingWidget(QWidget):
             )
             return
 
-        # Use segmentation parameters
-        selected_positions = segmentation_params["positions"]
+        # Use segmentation parameters, but scope to the single selected position
+        available_positions = segmentation_params["positions"]
+        selected_p = self.position_combo.currentData()
+
+        if selected_p is None:
+            QMessageBox.warning(
+                self, "Error", "Please select a position to track."
+            )
+            return
+
+        if selected_p not in available_positions:
+            QMessageBox.warning(
+                self,
+                "Error",
+                f"Position {selected_p} has not been segmented.\n"
+                f"Segmented positions: {available_positions}\n\n"
+                "Please segment this position first, or pick one that has been segmented.",
+            )
+            return
+
+        selected_positions = [selected_p]
         time_start = segmentation_params["time_start"]
         time_end = segmentation_params["time_end"]
         selected_channel = segmentation_params["channel"]
 
         print(f"Using segmentation parameters:")
-        print(f"  Positions: {selected_positions}")
+        print(f"  Position: {selected_p} (single)")
         print(f"  Time range: {time_start} - {time_end}")
         print(f"  Channel: {selected_channel}")
 
@@ -349,9 +393,15 @@ class TrackingWidget(QWidget):
             progress.setValue(0)
             progress.setMaximum(100)
 
-            from nd2_analyzer.analysis.tracking.tracking import track_cells
+            from nd2_analyzer.analysis.tracking.tracking import run_tracker
 
-            all_tracks, _ = track_cells(labeled_frames)
+            algorithm = self.algorithm_combo.currentText()
+            print(f"Running tracker: {algorithm} on position {selected_p}")
+            try:
+                all_tracks, _ = run_tracker(labeled_frames, algorithm=algorithm)
+            except NotImplementedError as e:
+                QMessageBox.warning(self, "Tracker not available", str(e))
+                return
             self.lineage_tracks = all_tracks
 
             # Filter tracks by length for display
