@@ -6,9 +6,10 @@ Analyze your time lapse data straight from the microscope!
 
 1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/).
 2. Clone this repo and `cd` into it.
-3. `uv sync`
-4. `uv run gui`
+3. `uv run gui`
 
-Optional: `python -m nd2_analyzer` or `python src/main.py` after `uv sync` (uses the same env).
+uv's cache is configured in `pyproject.toml` to sit inside the repo (`.uv-cache/`), so installs stay fast on any filesystem — including external drives — without drive-specific config.
+
+Optional: `python -m nd2_analyzer` or `python src/main.py` after the first run (uses the same env).
 
 For Cellpose + MPS notes, see [MouseLand/cellpose#1063](https://github.com/MouseLand/cellpose/issues/1063).

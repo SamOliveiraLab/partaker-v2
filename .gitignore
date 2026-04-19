@@ -4,6 +4,7 @@
 *.gif
 trash/
 .venv/
+.uv-cache/
 env/
 ._*
 

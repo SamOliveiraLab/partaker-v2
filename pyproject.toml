@@ -47,6 +47,7 @@ gui = "nd2_analyzer:main"
 
 [tool.uv]
 package = true
+cache-dir = ".uv-cache"
 
 [build-system]
 requires = ["hatchling"]
