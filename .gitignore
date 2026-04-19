@@ -5,6 +5,7 @@
 trash/
 .venv/
 env/
+._*
 
 __pycache__/
 *.py[cod]
