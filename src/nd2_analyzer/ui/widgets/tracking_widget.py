@@ -387,6 +387,7 @@ class TrackingWidget(QWidget):
 
             # Prepare frames for tracking - only process frames with existing data
             labeled_frames = []
+            raw_frames = []  # parallel list; only used by Trackastra
             frame_count = 0
 
             for t, p in available_frames:
@@ -426,6 +427,26 @@ class TrackingWidget(QWidget):
                 # print(f"  Found {num_objects} objects in frame")
                 labeled_frames.append(labeled_frame)
 
+                # Grab the matching raw intensity frame for Trackastra. Wrapped
+                # in a try/except because data layout (channelled vs. not,
+                # index vs. name) varies; on failure we just skip raw frames
+                # and the tracker will fall back to a mask-based proxy.
+                try:
+                    raw_data = self.image_data.data
+                    if raw_data.ndim == 5:
+                        raw_frame = raw_data[t, p, selected_channel]
+                    elif raw_data.ndim == 4:
+                        raw_frame = raw_data[t, p]
+                    else:
+                        raw_frame = None
+                    if raw_frame is not None:
+                        raw_frames.append(np.asarray(raw_frame))
+                    else:
+                        raw_frames.append(None)
+                except Exception as raw_exc:
+                    print(f"Could not fetch raw frame for T={t}, P={p}: {raw_exc}")
+                    raw_frames.append(None)
+
             progress.setValue(total_frames)
 
             if not labeled_frames:
@@ -448,8 +469,22 @@ class TrackingWidget(QWidget):
 
             algorithm = self.algorithm_combo.currentText()
             print(f"Running tracker: {algorithm} on position {selected_p}")
+
+            # Assemble raw intensity stack for Trackastra. Must align 1:1 with
+            # labeled_frames; if any frame failed to fetch a raw image, skip.
+            raw_stack = None
+            if algorithm == "trackastra":
+                if raw_frames and all(f is not None for f in raw_frames) \
+                        and len(raw_frames) == len(labeled_frames):
+                    raw_stack = np.array(raw_frames)
+                    print(f"Passing raw intensity stack to Trackastra: shape={raw_stack.shape}")
+                else:
+                    print("Raw frames unavailable; Trackastra will use mask-as-proxy.")
+
             try:
-                all_tracks, _ = run_tracker(labeled_frames, algorithm=algorithm)
+                all_tracks, _ = run_tracker(
+                    labeled_frames, algorithm=algorithm, raw_images=raw_stack
+                )
             except NotImplementedError as e:
                 QMessageBox.warning(self, "Tracker not available", str(e))
                 return

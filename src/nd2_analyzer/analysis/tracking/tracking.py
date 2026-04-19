@@ -7,7 +7,7 @@ from skimage.color import label2rgb
 from skimage.measure import label
 
 
-def run_tracker(segmented_images, algorithm="btrack"):
+def run_tracker(segmented_images, algorithm="btrack", raw_images=None):
     """
     Dispatch tracking to the selected algorithm.
 
@@ -17,6 +17,10 @@ def run_tracker(segmented_images, algorithm="btrack"):
         3D array (time, height, width) of labeled segmented images.
     algorithm : str
         One of "btrack", "trackastra", "delta", "ultrack".
+    raw_images : np.ndarray, optional
+        3D array of raw intensity images aligned with ``segmented_images``.
+        Required for Trackastra (the transformer uses appearance
+        features); ignored by btrack.
 
     Returns:
     --------
@@ -27,7 +31,7 @@ def run_tracker(segmented_images, algorithm="btrack"):
     if algorithm == "btrack":
         return track_cells(segmented_images)
     if algorithm == "trackastra":
-        return track_with_trackastra(segmented_images)
+        return track_with_trackastra(segmented_images, raw_images=raw_images)
     if algorithm == "delta":
         return track_with_delta(segmented_images)
     if algorithm == "ultrack":
@@ -35,11 +39,141 @@ def run_tracker(segmented_images, algorithm="btrack"):
     raise ValueError(f"Unknown tracking algorithm: {algorithm}")
 
 
-def track_with_trackastra(segmented_images):
-    raise NotImplementedError(
-        "Trackastra is not yet integrated. Install with `pip install trackastra` "
-        "and see https://github.com/weigertlab/trackastra"
-    )
+def track_with_trackastra(segmented_images, raw_images=None, model_name="general_2d",
+                          mode="greedy", device=None):
+    """
+    Track cells using Trackastra (transformer-based tracker).
+
+    See https://github.com/weigertlab/trackastra for the upstream package.
+
+    Parameters:
+    -----------
+    segmented_images : np.ndarray
+        3D array (T, H, W) of integer label masks. Each frame must use
+        integer labels (0 = background).
+    raw_images : np.ndarray, optional
+        3D array (T, H, W) of raw intensity images. If omitted, the binary
+        mask is used as a (poor) appearance proxy — this lets the call
+        succeed but will give weaker associations than passing real
+        intensities.
+    model_name : str
+        Pretrained checkpoint name. Defaults to ``"general_2d"``.
+    mode : str
+        Association mode: ``"greedy"`` (fast) or ``"ilp"`` (optimal, slower,
+        requires extra solver dependencies).
+    device : str, optional
+        ``"cuda"`` / ``"cpu"`` / ``"mps"``. Auto-detected when ``None``.
+
+    Returns:
+    --------
+    list, networkx.DiGraph
+        btrack-style track dicts and the raw trackastra track graph.
+    """
+    try:
+        import torch
+        from trackastra.model import Trackastra
+        from trackastra.tracking import graph_to_napari_tracks
+    except ImportError as e:
+        raise NotImplementedError(
+            "Trackastra is not installed. Run `pip install trackastra` "
+            "(see https://github.com/weigertlab/trackastra). "
+            f"Import error: {e}"
+        )
+
+    if segmented_images is None or segmented_images.ndim != 3:
+        raise ValueError(
+            "segmented_images must be a 3D array (T, H, W) of label masks."
+        )
+
+    masks = np.asarray(segmented_images).astype(np.int32)
+
+    if raw_images is None:
+        print("track_with_trackastra: no raw images supplied; using mask as proxy.")
+        imgs = (masks > 0).astype(np.float32)
+    else:
+        imgs = np.asarray(raw_images).astype(np.float32)
+        if imgs.shape != masks.shape:
+            raise ValueError(
+                f"raw_images shape {imgs.shape} must match "
+                f"segmented_images shape {masks.shape}"
+            )
+
+    if device is None:
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
+    print(f"Trackastra: loading model '{model_name}' on device '{device}'")
+
+    model = Trackastra.from_pretrained(model_name, device=device)
+
+    print(f"Trackastra: running association (mode={mode}) over {len(imgs)} frames")
+    track_graph = model.track(imgs, masks, mode=mode)
+
+    # Convert the trackastra graph to btrack-compatible track dicts.
+    napari_tracks, napari_graph, _props = graph_to_napari_tracks(track_graph)
+    dict_tracks = _trackastra_napari_to_dict_tracks(napari_tracks, napari_graph)
+    print(f"Trackastra: produced {len(dict_tracks)} tracks")
+
+    return dict_tracks, track_graph
+
+
+def _trackastra_napari_to_dict_tracks(napari_tracks, napari_graph):
+    """Convert napari-style tracks + parent graph to btrack-style dicts.
+
+    napari_tracks is an (N, 4) or (N, 5) array with columns
+    ``[track_id, t, (z,) y, x]``. ``napari_graph`` maps child_track_id ->
+    ``[parent_track_id, ...]``. The btrack consumer downstream expects:
+    ``{"ID", "x", "y", "t", "parent" (int|None), "children" (list[int])}``.
+    """
+    import numpy as np
+
+    napari_tracks = np.asarray(napari_tracks)
+    if napari_tracks.ndim != 2 or napari_tracks.shape[1] < 4:
+        raise RuntimeError(
+            f"Unexpected napari_tracks shape {napari_tracks.shape}"
+        )
+
+    # Columns: [id, t, (z,) y, x]. We only take y and x.
+    has_z = napari_tracks.shape[1] == 5
+    y_col = 3 if has_z else 2
+    x_col = 4 if has_z else 3
+
+    # Build children map by inverting napari_graph (child -> [parent,...]).
+    children_map = {}
+    for child_id, parents in (napari_graph or {}).items():
+        for parent_id in parents:
+            children_map.setdefault(int(parent_id), []).append(int(child_id))
+
+    # Group rows by track_id, sorted by time.
+    order = np.argsort(napari_tracks[:, 1], kind="stable")
+    ordered = napari_tracks[order]
+
+    dict_tracks = []
+    unique_ids = np.unique(ordered[:, 0])
+    for tid in unique_ids:
+        tid_int = int(tid)
+        rows = ordered[ordered[:, 0] == tid]
+        # Already time-sorted because ordered is time-sorted; but enforce.
+        rows = rows[np.argsort(rows[:, 1], kind="stable")]
+
+        parents = (napari_graph or {}).get(tid_int, [])
+        if not parents:
+            parents = (napari_graph or {}).get(tid, [])
+        parent = int(parents[0]) if parents else None
+
+        dict_tracks.append({
+            "ID": tid_int,
+            "t": [int(v) for v in rows[:, 1].tolist()],
+            "x": rows[:, x_col].tolist(),
+            "y": rows[:, y_col].tolist(),
+            "parent": parent,
+            "children": list(children_map.get(tid_int, [])),
+        })
+
+    return dict_tracks
 
 
 def track_with_delta(segmented_images):
