@@ -110,7 +110,13 @@ def track_with_trackastra(segmented_images, raw_images=None, model_name="general
     model = Trackastra.from_pretrained(model_name, device=device)
 
     print(f"Trackastra: running association (mode={mode}) over {len(imgs)} frames")
-    track_graph = model.track(imgs, masks, mode=mode)
+    # Trackastra >=0.5 returns (graph, tracked_masks); older versions
+    # returned just the graph. Handle both.
+    track_result = model.track(imgs, masks, mode=mode)
+    if isinstance(track_result, tuple):
+        track_graph = track_result[0]
+    else:
+        track_graph = track_result
 
     # Convert the trackastra graph to btrack-compatible track dicts.
     napari_tracks, napari_graph, _props = graph_to_napari_tracks(track_graph)
@@ -288,11 +294,17 @@ def track_cells(segmented_images):
             tracker.track(step_size=100)
 
             # Optimize tracks (resolves track hypotheses and detects divisions)
-            # NOTE: This step can take time with large cell counts (10+ min with 700+ cells)
-            # But it's REQUIRED for lineage detection!
+            # GLPK options:
+            #   tm_lim  - wall time in ms (hard cap so we never grind for hours)
+            #   mip_gap - stop branch-and-bound once the relative gap to the
+            #             LP bound is < 1%. The solution is effectively
+            #             optimal long before GLPK proves it to 0%.
+            # Passing these explicitly is required; btrack's default
+            # `tracker.optimize()` with no args ends up sending an empty
+            # options dict, which disables the built-in safeguards.
             print("Running optimization to detect divisions...")
-            print("(This may take several minutes for large datasets)")
-            tracker.optimize()
+            print("(tm_lim=5min, mip_gap=1% - will stop early if converged)")
+            tracker.optimize(tm_lim=300_000, mip_gap=0.01)
 
             # Get the tracks and graph data for visualization
             data, properties, graph = tracker.to_napari()

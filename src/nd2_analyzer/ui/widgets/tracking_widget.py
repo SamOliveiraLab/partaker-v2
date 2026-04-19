@@ -251,49 +251,83 @@ class TrackingWidget(QWidget):
 
         # Check if we already have tracking data FOR THE CURRENTLY SELECTED
         # POSITION. Different positions are independent, so we only short
-        # circuit when this specific p has cached tracks.
+        # circuit when this specific p has cached tracks AND the cached
+        # tracks were produced by the algorithm currently selected. If the
+        # user switched the algorithm dropdown they almost certainly want
+        # to re-track — ask before discarding work.
         current_p = self.position_combo.currentData()
+        selected_algo = self.algorithm_combo.currentText()
         existing_entry = self.tracks_by_position.get(current_p)
         if existing_entry and existing_entry.get("lineage_tracks"):
-            lineage_tracks = existing_entry["lineage_tracks"]
-            tracked_cells = existing_entry.get("tracked_cells")
-            print(
-                f"TRACKING DATA EXISTS for p={current_p}: {len(lineage_tracks)} lineage tracks"
-            )
+            cached_algo = existing_entry.get("algorithm")
 
-            # Rebuild tracked_cells if missing
-            if not tracked_cells:
-                print("Regenerating tracked_cells from lineage_tracks")
-                MIN_TRACK_LENGTH = 2
-                filtered_tracks = [
-                    track
-                    for track in lineage_tracks
-                    if "x" in track and len(track["x"]) >= MIN_TRACK_LENGTH
-                ]
-                filtered_tracks.sort(key=lambda track: len(track["x"]), reverse=True)
-                MAX_TRACKS_TO_DISPLAY = 100
-                tracked_cells = filtered_tracks[:MAX_TRACKS_TO_DISPLAY]
-                existing_entry["tracked_cells"] = tracked_cells
+            if cached_algo and cached_algo != selected_algo:
+                reply = QMessageBox.question(
+                    self,
+                    "Re-track with different algorithm?",
+                    f"Position {current_p} already has "
+                    f"{len(existing_entry['lineage_tracks'])} tracks from "
+                    f"'{cached_algo}'.\n\n"
+                    f"You selected '{selected_algo}'. Re-track with "
+                    f"'{selected_algo}' (existing '{cached_algo}' tracks "
+                    f"for this position will be replaced)?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.Yes,
+                )
+                if reply == QMessageBox.No:
+                    # Keep the cached tracks; just surface them as the
+                    # active view and bail out of track_cells.
+                    self.lineage_tracks = existing_entry["lineage_tracks"]
+                    self.tracked_cells = existing_entry.get("tracked_cells")
+                    self.visualize_tracks()
+                    return
+                # Fall through to re-tracking below.
+                print(
+                    f"Re-tracking p={current_p}: '{cached_algo}' -> '{selected_algo}'"
+                )
+            else:
+                # Same algorithm as cached, or no algorithm recorded (legacy
+                # data). Reuse the cached tracks as before.
+                lineage_tracks = existing_entry["lineage_tracks"]
+                tracked_cells = existing_entry.get("tracked_cells")
+                print(
+                    f"TRACKING DATA EXISTS for p={current_p}: "
+                    f"{len(lineage_tracks)} lineage tracks (algo={cached_algo})"
+                )
 
-            # Publish active view
-            self.lineage_tracks = lineage_tracks
-            self.tracked_cells = tracked_cells
+                # Rebuild tracked_cells if missing
+                if not tracked_cells:
+                    print("Regenerating tracked_cells from lineage_tracks")
+                    MIN_TRACK_LENGTH = 2
+                    filtered_tracks = [
+                        track
+                        for track in lineage_tracks
+                        if "x" in track and len(track["x"]) >= MIN_TRACK_LENGTH
+                    ]
+                    filtered_tracks.sort(key=lambda track: len(track["x"]), reverse=True)
+                    MAX_TRACKS_TO_DISPLAY = 100
+                    tracked_cells = filtered_tracks[:MAX_TRACKS_TO_DISPLAY]
+                    existing_entry["tracked_cells"] = tracked_cells
 
-            self.lineage_button.setEnabled(True)
-            self.motility_button.setEnabled(True)
-            self.cell_view_button.setEnabled(True)
-            self.export_video_button.setEnabled(True)
+                # Publish active view
+                self.lineage_tracks = lineage_tracks
+                self.tracked_cells = tracked_cells
 
-            self.visualize_tracks()
+                self.lineage_button.setEnabled(True)
+                self.motility_button.setEnabled(True)
+                self.cell_view_button.setEnabled(True)
+                self.export_video_button.setEnabled(True)
 
-            QMessageBox.information(
-                self,
-                "Using Existing Tracking Data",
-                f"Using cached tracking data for position {current_p} "
-                f"({len(lineage_tracks)} tracks).",
-            )
-            print("Returning from track_cells without reprocessing")
-            return
+                self.visualize_tracks()
+
+                QMessageBox.information(
+                    self,
+                    "Using Existing Tracking Data",
+                    f"Using cached tracking data for position {current_p} "
+                    f"({len(lineage_tracks)} tracks, algorithm={cached_algo}).",
+                )
+                print("Returning from track_cells without reprocessing")
+                return
 
         # If we get here, we need to run tracking
         print("Continuing with tracking process...")
@@ -486,8 +520,13 @@ class TrackingWidget(QWidget):
                     labeled_frames, algorithm=algorithm, raw_images=raw_stack
                 )
             except NotImplementedError as e:
+                progress.close()
                 QMessageBox.warning(self, "Tracker not available", str(e))
                 return
+
+            # Tracking finished; dismiss the progress dialog before we draw.
+            progress.close()
+
             self.lineage_tracks = all_tracks
 
             # Filter tracks by length for display
@@ -541,6 +580,10 @@ class TrackingWidget(QWidget):
             import traceback
 
             traceback.print_exc()
+            try:
+                progress.close()
+            except Exception:
+                pass
             QMessageBox.warning(self, "Error", f"Failed to track cells: {str(e)}")
 
     def visualize_tracks(self):
