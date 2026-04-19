@@ -23,7 +23,7 @@ class ColonySeparator:
 
         # Common parameters
         self.min_colony_size = 50
-        self.max_colony_size = 100000
+        # self.max_colony_size = 100000
 
         # Storage
         self.detected_colonies = []
@@ -245,8 +245,8 @@ class ColonySeparator:
         #    self.min_object_size = min_object_size
         if min_colony_size is not None:
             self.min_colony_size = min_colony_size
-        if max_colony_size is not None:
-            self.max_colony_size = max_colony_size
+        # if max_colony_size is not None:
+        #    self.max_colony_size = max_colony_size
 
         print(f"Updated parameters: intensity_threshold={self.intensity_threshold}, "
               f"min_colony_size={self.min_colony_size}")
