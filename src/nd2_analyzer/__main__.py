@@ -25,17 +25,13 @@ from nd2_analyzer.ui import App
 # splash.finish(window)
 # sys.exit(app.exec())
 
-if __name__ == "__main__":
+def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Partaker")
-
-    # # TODO: Splash screen setup
-    # pixmap = QPixmap(":/splashscreen.png")
-    # splash = QSplashScreen(pixmap)
-    # splash.show()
-    # app.processEvents()
-
     mainWin = App()
     mainWin.show()
-    # splash.finish(mainWin)
     sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()
