@@ -1,4 +1,5 @@
 # tracking_widget.py
+import json
 import os
 import pickle
 from datetime import datetime
@@ -43,6 +44,14 @@ class TrackingWidget(QWidget):
         self.has_channels = False
         self.image_data = None
 
+        # Per-position tracking store. Keys are ints (position p), values are
+        # dicts: {"tracked_cells", "lineage_tracks", "algorithm",
+        # "time_range", "saved_at"}. The flat self.tracked_cells /
+        # self.lineage_tracks above are a view into whichever position is
+        # currently selected, kept for backward compatibility with the rest
+        # of the UI.
+        self.tracks_by_position = {}
+
         # Initialize UI components
         self.init_ui()
 
@@ -66,6 +75,7 @@ class TrackingWidget(QWidget):
 
         selector_row.addWidget(QLabel("Position:"))
         self.position_combo = QComboBox()
+        self.position_combo.currentIndexChanged.connect(self._on_position_changed)
         selector_row.addWidget(self.position_combo)
 
         selector_row.addStretch()
@@ -163,10 +173,13 @@ class TrackingWidget(QWidget):
         # Reset tracking data
         self.tracked_cells = None
         self.lineage_tracks = None
+        self.tracks_by_position = {}
 
         # Reset UI
         self.lineage_button.setEnabled(False)
         self.motility_button.setEnabled(False)
+        self.cell_view_button.setEnabled(False)
+        self.export_video_button.setEnabled(False)
 
         # Determine if image has channels
         shape = image_data.data.shape
@@ -175,15 +188,55 @@ class TrackingWidget(QWidget):
         else:
             self.has_channels = False
 
-        # Populate the position dropdown
+        # Populate the position dropdown (suppress the signal while filling it
+        # so _on_position_changed doesn't fire for every addItem call).
+        self.position_combo.blockSignals(True)
         self.position_combo.clear()
         p_count = shape[1] if len(shape) >= 4 else 1
         for p in range(p_count):
             self.position_combo.addItem(f"Position {p}", p)
+        self.position_combo.blockSignals(False)
 
         # Clear visualization
         self.figure.clear()
         self.canvas.draw()
+
+    def _on_position_changed(self, _index=None):
+        """Swap the active tracks/UI when the position selector changes.
+
+        Each position has its own independent tracks, so changing the
+        selector must load that position's cached tracks (if any) into the
+        legacy self.lineage_tracks / self.tracked_cells attributes that
+        downstream UI still reads.
+        """
+        selected_p = self.position_combo.currentData()
+        entry = self.tracks_by_position.get(selected_p)
+
+        if entry is not None:
+            self.tracked_cells = entry.get("tracked_cells")
+            self.lineage_tracks = entry.get("lineage_tracks")
+        else:
+            self.tracked_cells = None
+            self.lineage_tracks = None
+
+        has_tracks = bool(self.lineage_tracks)
+        self.lineage_button.setEnabled(has_tracks)
+        self.motility_button.setEnabled(has_tracks)
+        self.cell_view_button.setEnabled(has_tracks)
+        self.export_video_button.setEnabled(has_tracks)
+
+        # Let the rest of the app know which tracks are active for this p.
+        pub.sendMessage(
+            "tracking_data_available",
+            lineage_tracks=self.lineage_tracks if has_tracks else None,
+        )
+
+        # Refresh the plot for the newly-selected position.
+        self.figure.clear()
+        if has_tracks and self.tracked_cells:
+            self.visualize_tracks()
+        else:
+            self.canvas.draw()
 
     def provide_lineage_tracks(self, callback):
         """Provide lineage tracks to other components"""
@@ -196,50 +249,48 @@ class TrackingWidget(QWidget):
         """Process cell tracking with lineage detection - using segmentation cache like the old architecture"""
         print("\n======= track_cells method called =======")
 
-        # Check if we already have tracking data
-        if hasattr(self, "lineage_tracks") and self.lineage_tracks:
+        # Check if we already have tracking data FOR THE CURRENTLY SELECTED
+        # POSITION. Different positions are independent, so we only short
+        # circuit when this specific p has cached tracks.
+        current_p = self.position_combo.currentData()
+        existing_entry = self.tracks_by_position.get(current_p)
+        if existing_entry and existing_entry.get("lineage_tracks"):
+            lineage_tracks = existing_entry["lineage_tracks"]
+            tracked_cells = existing_entry.get("tracked_cells")
             print(
-                f"TRACKING DATA EXISTS: Found {len(self.lineage_tracks)} existing lineage tracks"
+                f"TRACKING DATA EXISTS for p={current_p}: {len(lineage_tracks)} lineage tracks"
             )
 
-            # If we have lineage_tracks but no tracked_cells, generate them
-            if not hasattr(self, "tracked_cells") or not self.tracked_cells:
+            # Rebuild tracked_cells if missing
+            if not tracked_cells:
                 print("Regenerating tracked_cells from lineage_tracks")
-                # Filter tracks by length
-                MIN_TRACK_LENGTH = (
-                    2  # Using a smaller value since 5 might be too restrictive
-                )
+                MIN_TRACK_LENGTH = 2
                 filtered_tracks = [
                     track
-                    for track in self.lineage_tracks
+                    for track in lineage_tracks
                     if "x" in track and len(track["x"]) >= MIN_TRACK_LENGTH
                 ]
                 filtered_tracks.sort(key=lambda track: len(track["x"]), reverse=True)
-
                 MAX_TRACKS_TO_DISPLAY = 100
-                self.tracked_cells = filtered_tracks[:MAX_TRACKS_TO_DISPLAY]
-                print(
-                    f"Generated {len(self.tracked_cells)} tracked_cells from lineage data"
-                )
-            else:
-                print(
-                    f"TRACKED CELLS EXIST: Found {len(self.tracked_cells)} tracked cells"
-                )
+                tracked_cells = filtered_tracks[:MAX_TRACKS_TO_DISPLAY]
+                existing_entry["tracked_cells"] = tracked_cells
 
-            # Enable UI elements
+            # Publish active view
+            self.lineage_tracks = lineage_tracks
+            self.tracked_cells = tracked_cells
+
             self.lineage_button.setEnabled(True)
             self.motility_button.setEnabled(True)
+            self.cell_view_button.setEnabled(True)
             self.export_video_button.setEnabled(True)
 
-            # Visualize existing tracks
-            print("Visualizing existing tracked cells")
             self.visualize_tracks()
 
-            # Show information message
             QMessageBox.information(
                 self,
                 "Using Existing Tracking Data",
-                f"Using existing tracking data with {len(self.lineage_tracks)} tracks.",
+                f"Using cached tracking data for position {current_p} "
+                f"({len(lineage_tracks)} tracks).",
             )
             print("Returning from track_cells without reprocessing")
             return
@@ -414,6 +465,15 @@ class TrackingWidget(QWidget):
             MAX_TRACKS_TO_DISPLAY = 100
             self.tracked_cells = filtered_tracks[:MAX_TRACKS_TO_DISPLAY]
 
+            # Store per-position with metadata so save/load can round-trip.
+            self.tracks_by_position[selected_p] = {
+                "tracked_cells": self.tracked_cells,
+                "lineage_tracks": self.lineage_tracks,
+                "algorithm": algorithm,
+                "time_range": [time_start, time_end],
+                "saved_at": datetime.now().isoformat(timespec="seconds"),
+            }
+
             # Update UI
             self.lineage_button.setEnabled(True)
             self.motility_button.setEnabled(True)
@@ -529,36 +589,72 @@ class TrackingWidget(QWidget):
         )
 
     def save_tracking_data(self, folder_path):
-        """Save tracking data to a file in the specified folder"""
+        """Save tracking data to ``<folder_path>/tracking_data/``.
+
+        Layout (one pickle per position, plus a JSON manifest):
+
+            tracking_data/
+                p0_tracks.pkl
+                p3_tracks.pkl
+                manifest.json
+
+        Each pickle stores ``{"tracked_cells", "lineage_tracks"}``. The
+        manifest records per-position metadata (algorithm, time range, save
+        date). This makes multi-position projects round-trip cleanly without
+        one position's tracks clobbering another's.
+        """
         try:
-            # Ensure the folder exists
-            os.makedirs(folder_path, exist_ok=True)
-
-            # Prepare tracking data dictionary
-            tracking_data = {}
-
-            if hasattr(self, "tracked_cells") and self.tracked_cells is not None:
-                tracking_data["tracked_cells"] = self.tracked_cells
-                print(f"Saving {len(self.tracked_cells)} tracked cells")
-            else:
-                print("No tracked_cells to save")
-
-            if hasattr(self, "lineage_tracks") and self.lineage_tracks is not None:
-                tracking_data["lineage_tracks"] = self.lineage_tracks
-                print(f"Saving {len(self.lineage_tracks)} lineage tracks")
-            else:
-                print("No lineage_tracks to save")
-
-            # Save data if we have any
-            if tracking_data:
-                tracking_path = os.path.join(folder_path, "tracking_data.pkl")
-                with open(tracking_path, "wb") as f:
-                    pickle.dump(tracking_data, f)
-                print(f"Tracking data saved to {tracking_path}")
-                return True
-            else:
-                print("No tracking data to save")
+            if not self.tracks_by_position:
+                print("No tracking data to save (tracks_by_position empty)")
                 return False
+
+            tracking_dir = os.path.join(folder_path, "tracking_data")
+            os.makedirs(tracking_dir, exist_ok=True)
+
+            manifest = {
+                "version": 2,
+                "positions": {},
+            }
+
+            for p, entry in self.tracks_by_position.items():
+                lineage_tracks = entry.get("lineage_tracks")
+                tracked_cells = entry.get("tracked_cells")
+                if not lineage_tracks:
+                    continue
+
+                pkl_name = f"p{p}_tracks.pkl"
+                pkl_path = os.path.join(tracking_dir, pkl_name)
+                with open(pkl_path, "wb") as f:
+                    pickle.dump(
+                        {
+                            "tracked_cells": tracked_cells,
+                            "lineage_tracks": lineage_tracks,
+                        },
+                        f,
+                    )
+
+                manifest["positions"][str(p)] = {
+                    "file": pkl_name,
+                    "algorithm": entry.get("algorithm"),
+                    "time_range": entry.get("time_range"),
+                    "saved_at": entry.get("saved_at")
+                    or datetime.now().isoformat(timespec="seconds"),
+                    "n_lineage_tracks": len(lineage_tracks),
+                    "n_tracked_cells": len(tracked_cells) if tracked_cells else 0,
+                }
+                print(
+                    f"Saved p={p}: {len(lineage_tracks)} lineage tracks -> {pkl_path}"
+                )
+
+            if not manifest["positions"]:
+                print("No non-empty per-position tracks to save")
+                return False
+
+            manifest_path = os.path.join(tracking_dir, "manifest.json")
+            with open(manifest_path, "w") as f:
+                json.dump(manifest, f, indent=2)
+            print(f"Wrote manifest with {len(manifest['positions'])} position(s)")
+            return True
 
         except Exception as e:
             import traceback
@@ -568,53 +664,84 @@ class TrackingWidget(QWidget):
             return False
 
     def load_tracking_data(self, folder_path):
-        """
-        Load tracking data from a file in the specified folder.
+        """Load per-position tracking data.
 
-        Args:
-            folder_path: Path to the folder containing the data
-
-        Returns:
-            bool: True if data was loaded successfully, False otherwise
+        Prefers the new layout (``tracking_data/manifest.json`` + one pickle
+        per position). Falls back to the legacy flat ``tracking_data.pkl``
+        file so older projects still open; legacy data is assigned to the
+        currently-selected position as a best effort.
         """
         try:
-            tracking_path = os.path.join(folder_path, "tracking_data.pkl")
+            self.tracks_by_position = {}
+            loaded_any = False
 
-            if not os.path.exists(tracking_path):
-                print(f"No tracking data found at {tracking_path}")
+            tracking_dir = os.path.join(folder_path, "tracking_data")
+            manifest_path = os.path.join(tracking_dir, "manifest.json")
+
+            if os.path.exists(manifest_path):
+                with open(manifest_path, "r") as f:
+                    manifest = json.load(f)
+
+                for p_str, meta in manifest.get("positions", {}).items():
+                    try:
+                        p = int(p_str)
+                    except ValueError:
+                        print(f"Skipping non-integer position key {p_str!r}")
+                        continue
+
+                    pkl_path = os.path.join(tracking_dir, meta.get("file", ""))
+                    if not os.path.exists(pkl_path):
+                        print(f"Manifest references missing file: {pkl_path}")
+                        continue
+
+                    with open(pkl_path, "rb") as f:
+                        payload = pickle.load(f)
+
+                    self.tracks_by_position[p] = {
+                        "tracked_cells": payload.get("tracked_cells"),
+                        "lineage_tracks": payload.get("lineage_tracks"),
+                        "algorithm": meta.get("algorithm"),
+                        "time_range": meta.get("time_range"),
+                        "saved_at": meta.get("saved_at"),
+                    }
+                    loaded_any = True
+                    print(
+                        f"Loaded p={p}: "
+                        f"{len(payload.get('lineage_tracks') or [])} lineage tracks"
+                        f" (algo={meta.get('algorithm')})"
+                    )
+            else:
+                # Legacy fallback: a single flat pickle with no position tag.
+                legacy_path = os.path.join(folder_path, "tracking_data.pkl")
+                if os.path.exists(legacy_path):
+                    print(f"Loading legacy tracking file {legacy_path}")
+                    with open(legacy_path, "rb") as f:
+                        tracking_data = pickle.load(f)
+
+                    legacy_p = self.position_combo.currentData()
+                    if legacy_p is None:
+                        legacy_p = 0
+                    self.tracks_by_position[legacy_p] = {
+                        "tracked_cells": tracking_data.get("tracked_cells"),
+                        "lineage_tracks": tracking_data.get("lineage_tracks"),
+                        "algorithm": "btrack",
+                        "time_range": None,
+                        "saved_at": None,
+                    }
+                    loaded_any = True
+                    print(
+                        f"Legacy tracks assigned to p={legacy_p} "
+                        f"({len(tracking_data.get('lineage_tracks') or [])} tracks)"
+                    )
+
+            if not loaded_any:
+                print(f"No tracking data found under {folder_path}")
                 return False
 
-            with open(tracking_path, "rb") as f:
-                tracking_data = pickle.load(f)
-
-            # Load tracked cells if available
-            if "tracked_cells" in tracking_data and tracking_data["tracked_cells"]:
-                self.tracked_cells = tracking_data["tracked_cells"]
-                print(f"Loaded {len(self.tracked_cells)} tracked cells")
-
-            # Load lineage tracks if available
-            if "lineage_tracks" in tracking_data and tracking_data["lineage_tracks"]:
-                self.lineage_tracks = tracking_data["lineage_tracks"]
-                print(f"Loaded {len(self.lineage_tracks)} lineage tracks")
-
-            # Update UI based on loaded data
-            if self.lineage_tracks:
-                self.lineage_button.setEnabled(True)
-                self.motility_button.setEnabled(True)
-                self.cell_view_button.setEnabled(True)
-
-                # Notify other components about tracking data (especially MorphologyWidget)
-                print(
-                    f"Publishing tracking_data_available message with {len(self.lineage_tracks)} tracks"
-                )
-                pub.sendMessage(
-                    "tracking_data_available", lineage_tracks=self.lineage_tracks
-                )
-
-                # Visualize tracks if we have tracked_cells
-                if self.tracked_cells:
-                    self.visualize_tracks()
-
+            # Populate the active view from whichever position is currently
+            # selected in the combo (falls back to clearing if the selected
+            # p has no stored tracks).
+            self._on_position_changed()
             return True
 
         except Exception as e:
