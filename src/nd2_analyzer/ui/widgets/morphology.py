@@ -416,89 +416,100 @@ class MorphologyWidget(QWidget):
             self.find_cell_in_tracking_data(self.selected_cell_id)
 
     def find_cell_in_tracking_data(self, cell_id):
-        """Find a cell in the tracking data and prepare tracking information"""
+        """Find a cell in the tracking data using spatial seg-label lookup."""
         print(f"Finding cell {cell_id} in tracking data...")
 
-        # Clear previous tracking
         self.tracked_cell_lineage = {}
 
-        # Get current frame to know where this cell_id exists
         from nd2_analyzer.data.appstate import ApplicationState
+        from nd2_analyzer.data.image_data import ImageData
+        from skimage.measure import label as sk_label
 
         appstate = ApplicationState.get_instance()
         if appstate and appstate.view_index:
             t, p, c = appstate.view_index
         else:
-            t, p = 0, 0
+            t, p, c = 0, 0, 0
 
         print(f"Current frame: T={t}, P={p}")
-        print(f"Looking for segmentation cell_id {cell_id} in this frame...")
 
-        # Get the cell's position from the current cell_mapping
-        if cell_id not in self.cell_mapping:
-            print(f"Cell {cell_id} not in current frame's cell_mapping")
+        # Get the labeled segmentation mask for this frame
+        image_data = ImageData.get_instance()
+        labeled_mask = None
+        if image_data and hasattr(image_data, "segmentation_cache"):
+            try:
+                model = image_data.segmentation_service.models.available_models[0]
+                seg = image_data.segmentation_cache.with_model(model)[t, p, c]
+                if seg is not None:
+                    seg = np.asarray(seg)
+                    if seg.max() <= 255 and len(np.unique(seg)) <= 100:
+                        labeled_mask = sk_label(seg > 0)
+                    else:
+                        labeled_mask = seg
+            except Exception as e:
+                print(f"Could not get segmentation mask: {e}")
+
+        if labeled_mask is None:
             QMessageBox.warning(
-                self, "Cell Not Found",
-                f"Cell {cell_id} is not in the current frame.\n"
-                f"Make sure you're viewing the frame where this cell exists."
+                self, "Error",
+                "Could not get segmentation mask for this frame."
             )
             return
 
-        cell_info = self.cell_mapping[cell_id]
-
-        # Get centroid from bbox
-        y1, x1, y2, x2 = cell_info["bbox"]
-        cell_x = (x1 + x2) / 2
-        cell_y = (y1 + y2) / 2
-
-        print(f"Cell {cell_id} position: ({cell_x:.1f}, {cell_y:.1f})")
-
-        # Find which track passes through this position at time t
-        # We'll look for the track that's closest to this position at this time
+        # Spatial lookup: find which track's (x,y) sits on seg label == cell_id
         selected_track = None
-        min_distance = float('inf')
-
-        print(f"Total lineage tracks available: {len(self.lineage_tracks)}")
-
-        # Debug: Check a few sample tracks
-        for i, track in enumerate(self.lineage_tracks[:5]):
-            print(f"Sample track {i}: ID={track.get('ID')}, has 't'={('t' in track)}, has 'x'={('x' in track)}, has 'y'={('y' in track)}")
-            if 't' in track:
-                print(f"  Time points: {track['t']}")
-
-        tracks_at_time_t = 0
         for track in self.lineage_tracks:
-            if "t" in track and "x" in track and "y" in track:
-                # Check if this track exists at time t
-                for i, track_t in enumerate(track["t"]):
-                    if track_t == t:
-                        tracks_at_time_t += 1
-                        # Found this track at the right time, check distance
-                        track_x = track["x"][i]
-                        track_y = track["y"][i]
-                        distance = np.sqrt((track_x - cell_x)**2 + (track_y - cell_y)**2)
-
-                        if tracks_at_time_t <= 10:  # Only print first 10 to avoid spam
-                            print(f"  Track {track['ID']}: position ({track_x:.1f}, {track_y:.1f}), distance={distance:.1f}")
-
-                        if distance < min_distance:
-                            min_distance = distance
+            if "t" not in track or "x" not in track or "y" not in track:
+                continue
+            for i, track_t in enumerate(track["t"]):
+                if track_t == t:
+                    tx = int(round(track["x"][i]))
+                    ty = int(round(track["y"][i]))
+                    if 0 <= ty < labeled_mask.shape[0] and 0 <= tx < labeled_mask.shape[1]:
+                        if int(labeled_mask[ty, tx]) == cell_id:
                             selected_track = track
-                        break
-
-        print(f"Found {tracks_at_time_t} tracks at time {t}")
+                            print(f"Track {track['ID']} at ({tx},{ty}) lands on seg label {cell_id}")
+                    break
+            if selected_track:
+                break
 
         if not selected_track:
-            print(f"No track found for cell {cell_id} at frame {t}")
-            QMessageBox.warning(
-                self, "Cell Not Tracked",
-                f"Cell {cell_id} was not tracked.\n"
-                f"This might be because tracking was run on different frames,\n"
-                f"or this cell was filtered out during tracking."
-            )
-            return
+            print(f"No track found on seg label {cell_id}, falling back to nearest distance")
+            # Fallback: use centroid from metrics if available
+            cell_cx, cell_cy = None, None
+            if cell_id in self.cell_mapping:
+                info = self.cell_mapping[cell_id]
+                if "metrics" in info:
+                    m = info["metrics"]
+                    if "centroid_x" in m and "centroid_y" in m:
+                        cell_cx = float(m["centroid_x"])
+                        cell_cy = float(m["centroid_y"])
+                if cell_cx is None:
+                    y1, x1, y2, x2 = info["bbox"]
+                    cell_cx, cell_cy = (x1 + x2) / 2, (y1 + y2) / 2
 
-        print(f"✅ Matched cell_id {cell_id} to Track ID {selected_track['ID']} (distance: {min_distance:.1f} pixels)")
+            if cell_cx is not None:
+                min_dist = float("inf")
+                for track in self.lineage_tracks:
+                    if "t" not in track or "x" not in track or "y" not in track:
+                        continue
+                    for i, track_t in enumerate(track["t"]):
+                        if track_t == t:
+                            d = np.sqrt((track["x"][i] - cell_cx)**2 + (track["y"][i] - cell_cy)**2)
+                            if d < min_dist:
+                                min_dist = d
+                                selected_track = track
+                            break
+
+            if not selected_track or min_dist > 30:
+                QMessageBox.warning(
+                    self, "Cell Not Tracked",
+                    f"Cell {cell_id} could not be matched to any track."
+                )
+                return
+            print(f"Fallback matched cell {cell_id} to Track {selected_track['ID']} (dist={min_dist:.1f}px)")
+
+        print(f"Matched seg cell {cell_id} -> Track ID {selected_track['ID']}")
 
         # Get all frames where this track appears
         if "t" in selected_track:

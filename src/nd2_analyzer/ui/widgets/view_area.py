@@ -372,162 +372,101 @@ class ViewAreaWidget(QWidget):
         self.on_slider_changed()
 
     def _apply_tracked_cell_highlighting(self, display_image, time, position, channel, mode):
-        """Apply tracked cell highlighting - exact copy of upstream logic"""
-        # Only highlight if we have tracking data
+        """Overlay tracked cell highlight on top of the current display image."""
         if not hasattr(self, "tracked_cell_lineage") or not self.tracked_cell_lineage:
             return display_image
 
-        # Check if current frame has cells to highlight
         if time not in self.tracked_cell_lineage:
             return display_image
 
         tracked_ids = self.tracked_cell_lineage[time]
 
-        print(f"\n{'='*60}")
-        print(f"TRACKING HIGHLIGHT DEBUG - Frame T={time}, P={position}, C={channel}")
-        print(f"{'='*60}")
-        print(f"Tracked cell IDs for this frame: {tracked_ids}")
-        print(f"Current display mode: {mode}")
-
-        # IMPORTANT: Get segmented image directly from cache (ROI/registration already applied during segmentation)
-        # The segmentation cache contains the already-processed masks
         from nd2_analyzer.data.image_data import ImageData
+        from skimage.measure import label as sk_label
 
         image_data = ImageData.get_instance()
         if not hasattr(image_data, "segmentation_cache"):
-            print(f"❌ No segmentation cache available")
             return display_image
 
-        # Get from cache with the current model
         try:
             segmented = image_data.segmentation_cache.with_model(self.current_model)[time, position, channel]
-        except Exception as e:
-            print(f"❌ Error getting segmentation from cache: {e}")
-            segmented = None
+        except Exception:
+            return display_image
 
         if segmented is None:
-            print(f"❌ No segmentation available for tracking highlight")
             return display_image
 
-        # COMPREHENSIVE LOGGING
-        print(f"\n📊 SEGMENTATION ANALYSIS:")
-        print(f"  Segmentation shape: {segmented.shape}")
-        print(f"  Segmentation dtype: {segmented.dtype}")
-        print(f"  Segmentation min/max: {segmented.min()}/{segmented.max()}")
-        print(f"  Number of unique cell IDs: {len(np.unique(segmented))}")
-        print(f"  Total pixels marked as cells: {np.sum(segmented > 0)}")
-
-        # Create a color version of the segmented image
-        import cv2
-        from skimage.measure import label, regionprops
-
-        # Convert to RGB for display
-        segmented_rgb = cv2.cvtColor(
-            (segmented > 0).astype(np.uint8) * 255, cv2.COLOR_GRAY2BGR
-        )
-
-        # Check if segmentation is already labeled or binary
-        print(f"\n🏷️  LABELING CHECK:")
-        max_value = segmented.max()
-        unique_values = len(np.unique(segmented))
-        print(f"  Max value: {max_value}, Unique values: {unique_values}")
-
-        # If already labeled (OmniPose/Cellpose), use as-is
-        # If binary (UNET), call label()
-        if max_value > 255 or unique_values > 100:
-            print(f"  ✓ Already labeled! Using cell IDs directly (no renumbering)")
-            labeled = segmented
+        # Build labeled mask
+        seg = np.asarray(segmented)
+        if seg.max() <= 255 and len(np.unique(seg)) <= 100:
+            labeled = sk_label(seg > 0)
         else:
-            print(f"  ✓ Binary mask, calling label() to number cells...")
-            labeled = label(segmented)
+            labeled = seg
 
-        num_regions = labeled.max()
-        print(f"  Total labeled regions: {num_regions}")
-
-        # Get positions for tracked cells from tracking data
         if not hasattr(self, "lineage_tracks") or not self.lineage_tracks:
-            print("No lineage_tracks available for position lookup")
             return display_image
 
-        print(f"\n🎯 POSITION LOOKUP & HIGHLIGHTING:")
+        # Convert display_image to RGB so we can draw on it
+        img = display_image.copy()
+        if img.dtype == np.uint16:
+            img = (img.astype(np.float32) / max(img.max(), 1) * 255).astype(np.uint8)
+        if len(img.shape) == 2:
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+        elif img.shape[2] == 4:
+            img = img[:, :, :3]
+
+        # Collect combined mask of all tracked cells at this frame + label positions
+        tracked_mask = np.zeros(labeled.shape, dtype=bool)
+        label_positions = []  # (cell_id, x, y, bbox)
+
         for cell_id in tracked_ids:
-            cell_position = None
-            print(f"\n  [Cell {cell_id}] Looking for track in {len(self.lineage_tracks)} tracks...")
-
-            # Find this cell's position in tracking data
             for track in self.lineage_tracks:
-                if track["ID"] == cell_id:
-                    print(f"  [Cell {cell_id}] ✓ Found track")
-                    if "t" in track and "x" in track and "y" in track:
-                        print(f"  [Cell {cell_id}] Track time range: {track['t'][0]} to {track['t'][-1]}")
-                        print(f"  [Cell {cell_id}] Looking for time {time} in track...")
-                        for i, t in enumerate(track["t"]):
-                            if t == time:
-                                if i < len(track["x"]) and i < len(track["y"]):
-                                    cell_position = (int(track["x"][i]), int(track["y"][i]))
-                                    print(f"  [Cell {cell_id}] ✅ Found position: ({cell_position[0]}, {cell_position[1]})")
-                                    print(f"  [Cell {cell_id}] This is index {i} in the track")
-                                    break
-                        if not cell_position:
-                            print(f"  [Cell {cell_id}] ❌ Time {time} not in track times")
-                    else:
-                        print(f"  [Cell {cell_id}] ❌ Track missing position data")
+                if track["ID"] != cell_id:
+                    continue
+                if "t" not in track or "x" not in track or "y" not in track:
                     break
+                for i, t_val in enumerate(track["t"]):
+                    if t_val == time and i < len(track["x"]) and i < len(track["y"]):
+                        x = int(round(track["x"][i]))
+                        y = int(round(track["y"][i]))
+                        if 0 <= y < labeled.shape[0] and 0 <= x < labeled.shape[1]:
+                            cell_label = int(labeled[y, x])
+                            if cell_label > 0:
+                                cell_mask = labeled == cell_label
+                                tracked_mask |= cell_mask
+                                ys_px, xs_px = np.where(cell_mask)
+                                if len(ys_px) > 0:
+                                    bbox = (int(xs_px.min()), int(ys_px.min()),
+                                            int(xs_px.max()), int(ys_px.max()))
+                                    label_positions.append((cell_id, x, y, bbox))
+                        break
+                break
 
-            if cell_position:
-                x, y = cell_position
-                print(f"  [Cell {cell_id}] 📍 Checking labeled image at position ({x}, {y})")
-                print(f"  [Cell {cell_id}] Labeled image bounds: width={labeled.shape[1]}, height={labeled.shape[0]}")
+        if not tracked_mask.any():
+            return img
 
-                # Find the region in the labeled image
-                if 0 <= y < labeled.shape[0] and 0 <= x < labeled.shape[1]:
-                    cell_label = labeled[y, x]
-                    print(f"  [Cell {cell_id}] Label at position: {cell_label}")
+        # Spotlight effect: blur + dim everything, keep tracked cell bright and sharp
+        dimmed = cv2.GaussianBlur(img, (21, 21), 0)
+        dimmed = (dimmed.astype(np.float32) * 0.35).astype(np.uint8)
 
-                    if cell_label > 0:
-                        # Get mask for this specific cell
-                        cell_mask = labeled == cell_label
-                        num_pixels = np.sum(cell_mask)
-                        print(f"  [Cell {cell_id}] Cell mask has {num_pixels} pixels")
+        # Soft halo around the tracked region so it doesn't look stamped
+        mask_u8 = tracked_mask.astype(np.uint8) * 255
+        halo = cv2.GaussianBlur(mask_u8, (51, 51), 0).astype(np.float32) / 255.0
+        halo = np.clip(halo, 0.0, 1.0)[..., None]  # (H, W, 1)
 
-                        # Get region props to verify
-                        region_props = regionprops(cell_mask.astype(np.uint8))
-                        if region_props:
-                            region = region_props[0]
-                            y1, x1, y2, x2 = region.bbox
-                            centroid_y, centroid_x = region.centroid
-                            print(f"  [Cell {cell_id}] Region bbox: ({x1}, {y1}) to ({x2}, {y2})")
-                            print(f"  [Cell {cell_id}] Region centroid: ({int(centroid_x)}, {int(centroid_y)})")
-                            print(f"  [Cell {cell_id}] Region area: {region.area} pixels")
-                            print(f"  [Cell {cell_id}] Track position vs Centroid: ({x}, {y}) vs ({int(centroid_x)}, {int(centroid_y)})")
-                            distance = np.sqrt((x - centroid_x)**2 + (y - centroid_y)**2)
-                            print(f"  [Cell {cell_id}] Distance from track pos to centroid: {distance:.2f} pixels")
+        # Blend: original where tracked (+halo glow), dimmed+blurred elsewhere
+        blended = dimmed.astype(np.float32) * (1.0 - halo) + img.astype(np.float32) * halo
+        # Force tracked cell pixels to full original brightness (no blur bleed)
+        blended[tracked_mask] = img[tracked_mask]
+        out = blended.astype(np.uint8)
 
-                        # Color the cell blue (BGR format)
-                        segmented_rgb[cell_mask] = [255, 0, 0]
+        # Draw bbox + cell id on top
+        for cell_id, x, y, (bx1, by1, bx2, by2) in label_positions:
+            cv2.rectangle(out, (bx1, by1), (bx2, by2), (0, 255, 0), 1)
+            cv2.putText(out, str(cell_id), (x, y - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
-                        # Get bounding box for this cell
-                        if region_props:
-                            # Draw bounding box in green
-                            cv2.rectangle(segmented_rgb, (x1, y1), (x2, y2), (0, 255, 0), 1)
-                            print(f"  [Cell {cell_id}] ✅ Highlighted successfully!")
-
-                        # Add cell ID text in green
-                        cv2.putText(
-                            segmented_rgb,
-                            str(cell_id),
-                            (x, y - 5),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.5,
-                            (0, 255, 0),
-                            1,
-                        )
-                    else:
-                        print(f"    ⚠️ No cell found at position ({x}, {y}) - label is 0")
-                else:
-                    print(f"    ❌ Position ({x}, {y}) is out of bounds for image shape {labeled.shape}")
-
-        return segmented_rgb
+        return out
 
     def on_segmentation_cache_miss(self, time, position, channel, model):
         """Handle when cached segmentation is not available"""
