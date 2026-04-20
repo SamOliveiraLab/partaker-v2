@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QLabel,
+    QTabWidget,
 )
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from pubsub import pub
@@ -27,6 +28,7 @@ import imageio
 import matplotlib.cm as cm
 
 from nd2_analyzer.analysis.metrics_service import MetricsService
+from nd2_analyzer.ui.widgets.environment_view_tab import EnvironmentViewTab
 
 
 class TrackingWidget(QWidget):
@@ -60,10 +62,20 @@ class TrackingWidget(QWidget):
         pub.subscribe(self.provide_lineage_tracks, "get_lineage_tracks")
 
     def init_ui(self):
-        """Initialize the user interface"""
+        """Initialize the user interface.
+
+        Layout:
+          - Selector row (algorithm + position)
+          - Upstream/utility row: [Track Cells] ........ [Export Tracking Video]
+          - QTabWidget with two tabs: "Cell View" and "Environment View".
+            Each tab owns the analyses specific to that approach (paper-1
+            deck, Figure 2): Cell View = per-cell tracking/histories/
+            motility/lineage; Environment View = grid-based aggregates.
+          - Progress bar
+        """
         layout = QVBoxLayout(self)
 
-        # Selector row: algorithm + position
+        # --- Selector row: algorithm + position --- #
         selector_row = QHBoxLayout()
 
         selector_row.addWidget(QLabel("Algorithm:"))
@@ -81,53 +93,15 @@ class TrackingWidget(QWidget):
         selector_row.addStretch()
         layout.addLayout(selector_row)
 
-        # Create buttons layout
-        buttons_layout = QHBoxLayout()
+        # --- Upstream/utility row: run tracking + export --- #
+        upstream_row = QHBoxLayout()
 
-        # Track cells button
         self.track_button = QPushButton("Track Cells")
         self.track_button.clicked.connect(self.track_cells)
-        buttons_layout.addWidget(self.track_button)
+        upstream_row.addWidget(self.track_button)
 
-        # Show lineage tree button
-        self.lineage_button = QPushButton("Show Lineage Trees")
-        self.lineage_button.clicked.connect(self.show_lineage_dialog)
-        self.lineage_button.setEnabled(False)
-        buttons_layout.addWidget(self.lineage_button)
+        upstream_row.addStretch()
 
-        # Motility analysis button
-        self.motility_button = QPushButton("Analyze Motility")
-        self.motility_button.clicked.connect(self.analyze_motility)
-        self.motility_button.setEnabled(False)
-        buttons_layout.addWidget(self.motility_button)
-
-        # Cell View button (NEW!)
-        self.cell_view_button = QPushButton("📊 Cell View (Histories)")
-        self.cell_view_button.clicked.connect(self.open_cell_view)
-        self.cell_view_button.setEnabled(False)
-        self.cell_view_button.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 6px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-            QPushButton:pressed {
-                background-color: #3d8b40;
-            }
-            QPushButton:disabled {
-                background-color: #CCCCCC;
-                color: #666666;
-            }
-        """)
-        buttons_layout.addWidget(self.cell_view_button)
-
-        # Export tracking video button
         self.export_video_button = QPushButton("🎬 Export Tracking Video")
         self.export_video_button.clicked.connect(self.export_tracking_video)
         self.export_video_button.setEnabled(False)
@@ -151,14 +125,93 @@ class TrackingWidget(QWidget):
                 color: #666666;
             }
         """)
-        buttons_layout.addWidget(self.export_video_button)
+        upstream_row.addWidget(self.export_video_button)
 
-        layout.addLayout(buttons_layout)
+        layout.addLayout(upstream_row)
 
-        # Add visualization area
+        # --- Two analysis tabs: Cell View vs Environment View --- #
+        self.view_tabs = QTabWidget()
+
+        # Cell View tab ------------------------------------------------ #
+        cell_view_tab = QWidget()
+        cell_layout = QVBoxLayout(cell_view_tab)
+
+        cell_buttons_row = QHBoxLayout()
+
+        self.cell_view_button = QPushButton("📊 Cell View (Histories)")
+        self.cell_view_button.clicked.connect(self.open_cell_view)
+        self.cell_view_button.setEnabled(False)
+        self.cell_view_button.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 6px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+            QPushButton:pressed {
+                background-color: #3d8b40;
+            }
+            QPushButton:disabled {
+                background-color: #CCCCCC;
+                color: #666666;
+            }
+        """)
+        cell_buttons_row.addWidget(self.cell_view_button)
+
+        self.lineage_button = QPushButton("Show Lineage Trees")
+        self.lineage_button.clicked.connect(self.show_lineage_dialog)
+        self.lineage_button.setEnabled(False)
+        cell_buttons_row.addWidget(self.lineage_button)
+
+        self.motility_button = QPushButton("Analyze Motility")
+        self.motility_button.clicked.connect(self.analyze_motility)
+        self.motility_button.setEnabled(False)
+        cell_buttons_row.addWidget(self.motility_button)
+
+        self.animated_view_button = QPushButton("🎬 Animated Cell View")
+        self.animated_view_button.clicked.connect(self.open_animated_cell_view)
+        self.animated_view_button.setEnabled(False)
+        self.animated_view_button.setStyleSheet("""
+            QPushButton {
+                background-color: #8E44AD;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 6px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #7D3C98;
+            }
+            QPushButton:pressed {
+                background-color: #6C3483;
+            }
+            QPushButton:disabled {
+                background-color: #CCCCCC;
+                color: #666666;
+            }
+        """)
+        cell_buttons_row.addWidget(self.animated_view_button)
+
+        cell_buttons_row.addStretch()
+        cell_layout.addLayout(cell_buttons_row)
+
         self.figure = plt.figure()
         self.canvas = FigureCanvas(self.figure)
-        layout.addWidget(self.canvas)
+        cell_layout.addWidget(self.canvas)
+
+        self.view_tabs.addTab(cell_view_tab, "Cell View")
+
+        # Environment View tab ---------------------------------------- #
+        self.env_view_tab = EnvironmentViewTab()
+        self.view_tabs.addTab(self.env_view_tab, "Environment View")
+
+        layout.addWidget(self.view_tabs)
 
         # Progress bar
         self.progress_bar = QProgressBar()
@@ -179,6 +232,7 @@ class TrackingWidget(QWidget):
         self.lineage_button.setEnabled(False)
         self.motility_button.setEnabled(False)
         self.cell_view_button.setEnabled(False)
+        self.animated_view_button.setEnabled(False)
         self.export_video_button.setEnabled(False)
 
         # Determine if image has channels
@@ -200,6 +254,32 @@ class TrackingWidget(QWidget):
         # Clear visualization
         self.figure.clear()
         self.canvas.draw()
+
+        # Clear the environment-view tab too; no tracks yet for this dataset.
+        self._refresh_env_view()
+
+    def _current_image_shape(self):
+        """Return ``(height, width)`` of the current frames, or ``None``.
+
+        Used by the Environment View tab to map pixel coords to grid
+        buckets. Handles both 4D (T,P,Y,X) and 5D (T,P,C,Y,X) layouts.
+        """
+        if self.image_data is None:
+            return None
+        try:
+            shape = self.image_data.data.shape
+        except Exception:
+            return None
+        if len(shape) >= 2:
+            return (int(shape[-2]), int(shape[-1]))
+        return None
+
+    def _refresh_env_view(self):
+        """Push the currently-active tracks into the Environment View tab."""
+        env = getattr(self, "env_view_tab", None)
+        if env is None:
+            return
+        env.set_tracks(self.lineage_tracks, self._current_image_shape())
 
     def _on_position_changed(self, _index=None):
         """Swap the active tracks/UI when the position selector changes.
@@ -223,6 +303,7 @@ class TrackingWidget(QWidget):
         self.lineage_button.setEnabled(has_tracks)
         self.motility_button.setEnabled(has_tracks)
         self.cell_view_button.setEnabled(has_tracks)
+        self.animated_view_button.setEnabled(has_tracks)
         self.export_video_button.setEnabled(has_tracks)
 
         # Let the rest of the app know which tracks are active for this p.
@@ -237,6 +318,10 @@ class TrackingWidget(QWidget):
             self.visualize_tracks()
         else:
             self.canvas.draw()
+
+        # Feed the environment-view tab the same tracks so its grid
+        # aggregates stay in sync with the selected position.
+        self._refresh_env_view()
 
     def provide_lineage_tracks(self, callback):
         """Provide lineage tracks to other components"""
@@ -316,9 +401,11 @@ class TrackingWidget(QWidget):
                 self.lineage_button.setEnabled(True)
                 self.motility_button.setEnabled(True)
                 self.cell_view_button.setEnabled(True)
+                self.animated_view_button.setEnabled(True)
                 self.export_video_button.setEnabled(True)
 
                 self.visualize_tracks()
+                self._refresh_env_view()
 
                 QMessageBox.information(
                     self,
@@ -561,6 +648,7 @@ class TrackingWidget(QWidget):
 
             # Visualize tracks
             self.visualize_tracks()
+            self._refresh_env_view()
 
             # Show success message with detailed stats
             total_tracks = len(all_tracks)
@@ -852,12 +940,48 @@ class TrackingWidget(QWidget):
         # Import the dialog
         from nd2_analyzer.ui.widgets.cell_view_dialog import CellViewDialog
 
-        # Open the dialog
+        selected_p = self.position_combo.currentData()
+        if selected_p is None:
+            selected_p = 0
+
         dialog = CellViewDialog(
             self.lineage_tracks,
             self.metrics_service,
             self.image_data,
-            self
+            position=selected_p,
+            parent=self,
+        )
+        dialog.exec()
+
+    def open_animated_cell_view(self):
+        """Open the Animated Cell View dialog — click a cell, watch its life.
+
+        Approach-2 (Cell View) visual: cartoon playback of the chamber
+        over time with spotlight on the clicked cell (and its daughters
+        after division), plus a trajectory panel and morphology filmstrip
+        that draw themselves as time advances.
+        """
+        if not self.lineage_tracks:
+            QMessageBox.warning(self, "Error", "No tracking data available.")
+            return
+        if self.image_data is None:
+            QMessageBox.warning(self, "Error", "No image data available.")
+            return
+
+        from nd2_analyzer.ui.widgets.animated_cell_view_dialog import (
+            AnimatedCellViewDialog,
+        )
+
+        position = self.position_combo.currentData()
+        if position is None:
+            position = 0
+
+        dialog = AnimatedCellViewDialog(
+            lineage_tracks=self.lineage_tracks,
+            image_data=self.image_data,
+            metrics_service=self.metrics_service,
+            position=int(position),
+            parent=self,
         )
         dialog.exec()
 

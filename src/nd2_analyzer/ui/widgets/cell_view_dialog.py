@@ -1,1085 +1,876 @@
 """
-Cell View Dialog - Interactive Cell History Viewer
+Cell View Dialog — follow individual bacteria through time.
 
-This dialog builds and visualizes cell histories, allowing you to:
-1. Build cell-based organization from tracking data (ROI-aware)
-2. Click on cells to see their complete time series
-3. Select all long tracks (20+ frames) for batch export
-4. Export animations with trajectory visualization
-5. Validate the reorganization worked correctly
+Select a founding cell from the list on the left. Three synced panels show:
+  1. The segmented chamber view with the selected cell glowing bright
+  2. The trajectory drawn stroke-by-stroke as time advances
+  3. The lineage tree growing as divisions happen
 
-IMPORTANT: All analysis respects ROI boundaries when ROI is defined.
-Only tracks with ≥50% of points within ROI are included.
+All panels share one time cursor. Play, pause, scrub, adjust speed.
+Position-aware: only shows cells from the selected position (p).
 """
+from __future__ import annotations
+
+from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (
-    QDialog,
-    QVBoxLayout,
-    QHBoxLayout,
-    QPushButton,
-    QLabel,
-    QComboBox,
-    QTableWidget,
-    QTableWidgetItem,
-    QMessageBox,
-    QSplitter,
-    QWidget,
-    QTextEdit,
-)
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
-from nd2_analyzer.analysis.cell_history import CellHistoryBuilder
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import (
+    QComboBox,
+    QCheckBox,
+    QDialog,
+    QFileDialog,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QSlider,
+    QSplitter,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
 from nd2_analyzer.analysis.roi_helper import ROIHelper
 
 
+# -------------------------------------------------------------------- #
+# Helpers                                                               #
+# -------------------------------------------------------------------- #
+
+def _build_cell_lookup(tracks):
+    """dict[t] -> list[(cell_id, x, y)]"""
+    out: dict[int, list[tuple[int, float, float]]] = {}
+    for tr in tracks or []:
+        cid = tr.get("ID")
+        xs, ys, ts = tr.get("x", []), tr.get("y", []), tr.get("t", [])
+        if cid is None or not (len(xs) == len(ys) == len(ts)):
+            continue
+        for x, y, t in zip(xs, ys, ts):
+            out.setdefault(int(t), []).append((int(cid), float(x), float(y)))
+    return out
+
+
+def _find_founders(tracks):
+    """Return list of track dicts that have no parent (generation 0)."""
+    return [tr for tr in (tracks or []) if tr.get("parent") is None]
+
+
+def _descendants(root_id, tracks_by_id):
+    """BFS from root_id through children -> set of all descendant IDs."""
+    result = {root_id}
+    queue = [root_id]
+    while queue:
+        cid = queue.pop(0)
+        tr = tracks_by_id.get(cid)
+        if not tr:
+            continue
+        for ch in tr.get("children") or []:
+            ch = int(ch)
+            if ch not in result:
+                result.add(ch)
+                queue.append(ch)
+    return result
+
+
+def _track_to_seg_label(labeled_mask, x, y):
+    """Look up which segmentation label sits at (x, y) in the mask."""
+    yi, xi = int(round(y)), int(round(x))
+    if 0 <= yi < labeled_mask.shape[0] and 0 <= xi < labeled_mask.shape[1]:
+        return int(labeled_mask[yi, xi])
+    return 0
+
+
+# -------------------------------------------------------------------- #
+# Dialog                                                                #
+# -------------------------------------------------------------------- #
+
 class CellViewDialog(QDialog):
-    """
-    Dialog for viewing and validating cell histories.
 
-    Shows:
-    - Table of all cells with their stats
-    - Click a cell to see its complete time series
-    - Validation that data reorganization worked
-    """
+    BASE_TICK_MS = 400
 
-    def __init__(self, lineage_tracks, metrics_service, image_data=None, parent=None):
+    def __init__(
+        self,
+        lineage_tracks,
+        metrics_service,
+        image_data=None,
+        position: int = 0,
+        parent: Optional[QWidget] = None,
+    ):
         super().__init__(parent)
+        self.setWindowTitle("Cell View — follow a bacterium through time")
+        self.setMinimumSize(1600, 950)
 
-        self.lineage_tracks = lineage_tracks
+        # --- data ---
+        self.tracks = list(lineage_tracks or [])
         self.metrics_service = metrics_service
         self.image_data = image_data
-        self.builder = None
-        self.cell_database = None
-        self.current_cell_id = None
+        self.position = int(position)
 
-        # Set dialog properties
-        self.setWindowTitle("Cell View - Cell History Viewer")
-        self.setMinimumWidth(1400)
-        self.setMinimumHeight(900)
+        self.tracks_by_id = {int(tr["ID"]): tr for tr in self.tracks if "ID" in tr}
+        self.cells_per_frame = _build_cell_lookup(self.tracks)
+        self.founders = _find_founders(self.tracks)
 
-        # Initialize UI
-        self.init_ui()
+        all_ts = sorted(self.cells_per_frame.keys())
+        self.t_min = all_ts[0] if all_ts else 0
+        self.t_max = all_ts[-1] if all_ts else 0
+        self.current_t = self.t_min
 
-        # Build cell histories automatically
-        self.build_histories()
+        # --- image / ROI ---
+        self._image_shape = self._infer_image_shape()
+        self._crop = self._infer_roi_bbox()
 
-    def init_ui(self):
-        """Initialize the dialog UI"""
-        layout = QVBoxLayout(self)
+        # --- geometry cache (for rod rendering) ---
+        self._geom_cache: dict[int, list[dict]] = {}
 
-        # Status bar at top
-        status_layout = QHBoxLayout()
-        self.status_label = QLabel("Building cell histories...")
-        self.status_label.setStyleSheet("font-size: 14px; font-weight: bold; padding: 10px;")
-        status_layout.addWidget(self.status_label)
+        # --- seg label cache: t -> labeled_mask (full frame) ---
+        self._seg_cache: dict[int, np.ndarray] = {}
 
-        self.rebuild_button = QPushButton("Rebuild")
-        self.rebuild_button.clicked.connect(self.build_histories)
-        status_layout.addWidget(self.rebuild_button)
+        # --- selection ---
+        self.selected_root_id: Optional[int] = None
+        self.spotlight_ids: set[int] = set()
 
-        layout.addLayout(status_layout)
+        # --- playback ---
+        self.is_playing = False
+        self.speed_multiplier = 1.0
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._on_tick)
 
-        # Create splitter for left (table) and right (plots)
-        splitter = QSplitter(Qt.Horizontal)
+        # --- build UI and render ---
+        self._init_ui()
+        self._render_all()
 
-        # LEFT SIDE: Cell list table
-        left_widget = QWidget()
-        left_layout = QVBoxLayout(left_widget)
+    # ================================================================ #
+    # Setup                                                            #
+    # ================================================================ #
 
-        left_layout.addWidget(QLabel("All Cells (click to view):"))
-
-        # Cell table - allow multi-selection with Ctrl/Cmd
-        self.cell_table = QTableWidget()
-        self.cell_table.setColumnCount(6)
-        self.cell_table.setHorizontalHeaderLabels([
-            "Cell ID", "Lifespan", "Fate", "Displacement", "Avg Velocity", "Coverage %"
-        ])
-        self.cell_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.cell_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)  # Multi-select enabled
-        self.cell_table.cellClicked.connect(self.on_cell_clicked)
-        left_layout.addWidget(self.cell_table)
-
-        # Filter controls
-        filter_layout = QHBoxLayout()
-        filter_layout.addWidget(QLabel("Filter:"))
-
-        self.filter_combo = QComboBox()
-        self.filter_combo.addItems([
-            "All Cells",
-            "Long Cells (20+ frames)",
-            "Divided Cells",
-            "High Coverage (>90%)"
-        ])
-        self.filter_combo.currentTextChanged.connect(self.apply_filter)
-        filter_layout.addWidget(self.filter_combo)
-
-        # Add "Select All Long Tracks" button
-        self.select_long_button = QPushButton("Select All Long (20+)")
-        self.select_long_button.clicked.connect(self.select_all_long_tracks)
-        self.select_long_button.setStyleSheet("""
-            QPushButton {
-                background-color: #4a4a4a;
-                color: white;
-                padding: 5px 10px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #5a5a5a;
-            }
-        """)
-        filter_layout.addWidget(self.select_long_button)
-
-        left_layout.addLayout(filter_layout)
-
-        splitter.addWidget(left_widget)
-
-        # RIGHT SIDE: Visualization
-        right_widget = QWidget()
-        right_layout = QVBoxLayout(right_widget)
-
-        # Cell info display
-        self.cell_info_label = QLabel("Select a cell to view its history")
-        self.cell_info_label.setStyleSheet("""
-            background-color: #2b2b2b;
-            color: #ffffff;
-            padding: 15px;
-            border-radius: 5px;
-            font-size: 12px;
-        """)
-        right_layout.addWidget(self.cell_info_label)
-
-        # Plots
-        self.figure = plt.figure(figsize=(12, 10))
-        self.canvas = FigureCanvas(self.figure)
-        right_layout.addWidget(self.canvas)
-
-        # Export options
-        from PySide6.QtWidgets import QCheckBox
-        export_options_layout = QVBoxLayout()
-
-        self.show_cells_checkbox = QCheckBox("Show cell segmentation in animation")
-        self.show_cells_checkbox.setChecked(True)  # Default: show cells
-        self.show_cells_checkbox.setStyleSheet("""
-            QCheckBox {
-                color: #ffffff;
-                font-size: 11px;
-                padding: 5px;
-            }
-        """)
-        export_options_layout.addWidget(self.show_cells_checkbox)
-
-        right_layout.addLayout(export_options_layout)
-
-        # Action buttons
-        validation_layout = QHBoxLayout()
-
-        self.validate_button = QPushButton("🔍 Validate This Cell")
-        self.validate_button.clicked.connect(self.validate_current_cell)
-        self.validate_button.setEnabled(False)
-        validation_layout.addWidget(self.validate_button)
-
-        self.export_animation_button = QPushButton("🎬 Export Animation")
-        self.export_animation_button.clicked.connect(self.export_animation)
-        self.export_animation_button.setEnabled(False)
-        validation_layout.addWidget(self.export_animation_button)
-
-        self.export_button = QPushButton("💾 Export Cell Histories CSV")
-        self.export_button.clicked.connect(self.export_csv)
-        self.export_button.setEnabled(False)
-        validation_layout.addWidget(self.export_button)
-
-        right_layout.addLayout(validation_layout)
-
-        splitter.addWidget(right_widget)
-
-        # Set splitter sizes (30% table, 70% plots)
-        splitter.setSizes([400, 1000])
-        layout.addWidget(splitter)
-
-        # Close button
-        close_button = QPushButton("Close")
-        close_button.clicked.connect(self.accept)
-        layout.addWidget(close_button)
-
-    def build_histories(self):
-        """Build cell histories using CellHistoryBuilder"""
-        print("\n" + "="*80)
-        print("🔄 Building cell histories from GUI...")
-        print("="*80)
-
+    def _infer_image_shape(self):
         try:
-            # VALIDATE ROI BEFORE PROCESSING
-            ROIHelper.validate_analysis_within_roi("Cell History Building")
+            s = self.image_data.data.shape
+            if len(s) >= 2:
+                return int(s[-2]), int(s[-1])
+        except Exception:
+            pass
+        xs, ys = [], []
+        for tr in self.tracks:
+            xs.extend(tr.get("x", []))
+            ys.extend(tr.get("y", []))
+        if xs:
+            return int(max(ys)) + 10, int(max(xs)) + 10
+        return None
 
-            # Filter tracks by ROI if ROI is defined
-            tracks_to_process = self.lineage_tracks
-            if ROIHelper.has_roi():
-                print("\n🎯 Filtering tracks by ROI (minimum 50% coverage)...")
-                original_count = len(tracks_to_process)
-                tracks_to_process = ROIHelper.filter_tracks_by_roi(tracks_to_process, min_roi_coverage=0.5)
-                filtered_count = len(tracks_to_process)
-                print(f"  Filtered: {original_count} tracks → {filtered_count} tracks (within ROI)")
+    def _infer_roi_bbox(self):
+        try:
+            mask = ROIHelper.get_roi_mask()
+        except Exception:
+            mask = None
+        if mask is None:
+            return None
+        ys, xs = np.where(mask > 0)
+        if len(ys) == 0:
+            return None
+        return int(ys.min()), int(xs.min()), int(ys.max()) + 1, int(xs.max()) + 1
 
-                if filtered_count == 0:
-                    QMessageBox.warning(
-                        self,
-                        "No Tracks in ROI",
-                        "No tracks found within the ROI boundaries.\n\n"
-                        "Please check your ROI selection or tracking parameters."
-                    )
-                    return
+    # ================================================================ #
+    # UI                                                               #
+    # ================================================================ #
 
-            # Create builder
-            self.builder = CellHistoryBuilder(tracks_to_process, self.metrics_service)
+    def _init_ui(self):
+        root = QVBoxLayout(self)
 
-            # Build with minimum 5 frames
-            self.cell_database = self.builder.build(min_track_length=5)
+        # --- playback controls ---
+        ctrl = QHBoxLayout()
 
-            if not self.cell_database:
-                QMessageBox.warning(self, "Error", "No cells were processed!")
-                return
+        self.play_btn = QPushButton("▶ Play")
+        self.play_btn.clicked.connect(self._toggle_play)
+        ctrl.addWidget(self.play_btn)
 
-            # Build segmentation_id -> track_id mapping using frame 0 as reference
-            self._build_seg_to_track_mapping()
+        ctrl.addWidget(QLabel("Speed:"))
+        self.speed_combo = QComboBox()
+        for label, mult in [("0.25×", 0.25), ("0.5×", 0.5), ("1×", 1.0),
+                            ("2×", 2.0), ("4×", 4.0), ("8×", 8.0)]:
+            self.speed_combo.addItem(label, mult)
+        self.speed_combo.setCurrentIndex(2)
+        self.speed_combo.currentIndexChanged.connect(self._on_speed_changed)
+        ctrl.addWidget(self.speed_combo)
 
-            # Update status with ROI info
-            num_cells = len(self.cell_database)
-            long_cells = len([c for c in self.cell_database.values() if c['lifespan'] >= 20])
+        ctrl.addSpacing(12)
+        ctrl.addWidget(QLabel("Time:"))
+        self.time_slider = QSlider(Qt.Horizontal)
+        self.time_slider.setMinimum(self.t_min)
+        self.time_slider.setMaximum(self.t_max)
+        self.time_slider.setValue(self.t_min)
+        self.time_slider.valueChanged.connect(self._on_slider_changed)
+        ctrl.addWidget(self.time_slider, stretch=1)
 
-            roi_info = ROIHelper.get_roi_info()
-            roi_text = " | ROI Active" if roi_info['has_roi'] else ""
+        self.time_label = QLabel(f"t={self.t_min}")
+        ctrl.addWidget(self.time_label)
 
-            self.status_label.setText(
-                f"✓ Built {num_cells} cell histories | {long_cells} long cells (20+ frames){roi_text}"
-            )
-            self.status_label.setStyleSheet(
-                "font-size: 14px; font-weight: bold; padding: 10px; color: green;"
-            )
+        ctrl.addSpacing(12)
+        self.follow_daughters_cb = QCheckBox("Follow daughters")
+        self.follow_daughters_cb.setChecked(True)
+        self.follow_daughters_cb.stateChanged.connect(self._refresh_spotlight)
+        ctrl.addWidget(self.follow_daughters_cb)
 
-            # Populate table
-            self.populate_table()
+        root.addLayout(ctrl)
 
-            # Enable export
-            self.export_button.setEnabled(True)
+        # --- main area: cell list | chamber | traj + tree ---
+        outer_split = QSplitter(Qt.Horizontal)
 
-            print(f"✓ Cell histories built successfully: {num_cells} cells")
+        # LEFT: founding cell list
+        left_w = QWidget()
+        left_l = QVBoxLayout(left_w)
+        left_l.setContentsMargins(0, 0, 0, 0)
+        left_l.addWidget(QLabel("Founding cells (no parent):"))
 
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            QMessageBox.critical(self, "Error", f"Failed to build cell histories:\n{str(e)}")
+        self.cell_table = QTableWidget()
+        self.cell_table.setColumnCount(4)
+        self.cell_table.setHorizontalHeaderLabels(["ID", "Lifespan", "Fate", "Kids"])
+        self.cell_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.cell_table.setSelectionMode(QTableWidget.SingleSelection)
+        self.cell_table.cellClicked.connect(self._on_table_click)
+        hdr = self.cell_table.horizontalHeader()
+        hdr.setSectionResizeMode(QHeaderView.Stretch)
+        left_l.addWidget(self.cell_table)
 
-    def _build_seg_to_track_mapping(self):
-        """Build mapping from segmentation cell IDs to track IDs using frame 0"""
-        print("\n🔗 Building segmentation ID → track ID mapping...")
+        # filter
+        filt_row = QHBoxLayout()
+        filt_row.addWidget(QLabel("Show:"))
+        self.filter_combo = QComboBox()
+        self.filter_combo.addItems(["All founders", "Long (20+)", "With divisions"])
+        self.filter_combo.currentTextChanged.connect(self._populate_table)
+        filt_row.addWidget(self.filter_combo)
+        left_l.addLayout(filt_row)
 
-        # Get segmentation at frame 0
-        from skimage.measure import regionprops, label
-        model = self.image_data.segmentation_service.models.available_models[0]
-        seg_mask = self.image_data.segmentation_cache.with_model(model)[(0, 0, 0)]
+        outer_split.addWidget(left_w)
 
-        # Check if already labeled or binary
-        max_value = seg_mask.max()
-        unique_values = len(np.unique(seg_mask))
-        if max_value > 255 or unique_values > 100:
-            labeled = seg_mask
-        else:
-            labeled = label(seg_mask)
+        # CENTER: chamber canvas
+        self.main_fig = plt.figure(figsize=(8, 8))
+        self.main_canvas = FigureCanvas(self.main_fig)
+        self.main_canvas.mpl_connect("button_press_event", self._on_canvas_click)
+        outer_split.addWidget(self.main_canvas)
 
-        # For each track, find which segmentation ID it corresponds to at frame 0
-        self.seg_to_track = {}  # segmentation_id -> track_id
-        self.track_to_seg = {}  # track_id -> segmentation_id
+        # RIGHT: trajectory (top) + lineage tree (bottom)
+        right_w = QWidget()
+        right_l = QVBoxLayout(right_w)
+        right_l.setContentsMargins(0, 0, 0, 0)
 
-        for track in self.lineage_tracks:
-            track_id = track['ID']
-            if 't' in track and 'x' in track and 'y' in track:
-                # Find if this track exists at frame 0
-                for i, t in enumerate(track['t']):
-                    if t == 0:
-                        x, y = int(track['x'][i]), int(track['y'][i])
-                        if 0 <= y < labeled.shape[0] and 0 <= x < labeled.shape[1]:
-                            seg_id = labeled[y, x]
-                            if seg_id > 0:
-                                self.seg_to_track[seg_id] = track_id
-                                self.track_to_seg[track_id] = seg_id
-                        break
+        right_split = QSplitter(Qt.Vertical)
 
-        print(f"  Mapped {len(self.seg_to_track)} segmentation IDs to track IDs")
+        self.traj_fig = plt.figure(figsize=(5, 4))
+        self.traj_canvas = FigureCanvas(self.traj_fig)
+        right_split.addWidget(self.traj_canvas)
 
-        # Build hierarchical lineage naming (e.g., 10.1, 10.1.2)
-        self._build_lineage_names()
+        self.tree_fig = plt.figure(figsize=(5, 4))
+        self.tree_canvas = FigureCanvas(self.tree_fig)
+        right_split.addWidget(self.tree_canvas)
 
-    def _build_lineage_names(self):
-        """Build hierarchical names for cells based on lineage (e.g., 10, 10.1, 10.1.2)"""
-        print("\n🌳 Building hierarchical lineage names...")
+        right_split.setSizes([400, 400])
+        right_l.addWidget(right_split)
+        outer_split.addWidget(right_w)
 
-        self.track_to_lineage_name = {}  # track_id -> hierarchical name (e.g., "10.1.2")
+        outer_split.setSizes([250, 800, 450])
+        root.addWidget(outer_split, stretch=1)
 
-        # First pass: Assign base names to cells at frame 0 (generation 0)
-        for track_id, seg_id in self.track_to_seg.items():
-            self.track_to_lineage_name[track_id] = str(seg_id)
+        # --- stats bar ---
+        self.stats_label = QLabel("Select a cell from the list or click on the chamber.")
+        self.stats_label.setStyleSheet(
+            "background:#111; color:#ddd; padding:8px; border-radius:4px;"
+            "font-family:monospace;"
+        )
+        root.addWidget(self.stats_label)
 
-        # Create a mapping of parent -> children for easier traversal
-        parent_to_children = {}
-        for track in self.lineage_tracks:
-            track_id = track['ID']
-            children = track.get('children', [])
-            if children:
-                parent_to_children[track_id] = children
+        # --- bottom buttons ---
+        bottom = QHBoxLayout()
+        self.export_btn = QPushButton("Export GIF")
+        self.export_btn.setEnabled(False)
+        self.export_btn.clicked.connect(self._export_gif)
+        bottom.addWidget(self.export_btn)
+        bottom.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        bottom.addWidget(close_btn)
+        root.addLayout(bottom)
 
-        # Recursive function to assign names to descendants
-        def assign_descendant_names(parent_id, parent_name):
-            if parent_id not in parent_to_children:
-                return
+        # --- populate the cell table ---
+        self._populate_table()
 
-            children = parent_to_children[parent_id]
-            for idx, child_id in enumerate(children, 1):
-                # Child name = parent_name + "." + index
-                child_name = f"{parent_name}.{idx}"
-                self.track_to_lineage_name[child_id] = child_name
-
-                # Recursively assign names to this child's descendants
-                assign_descendant_names(child_id, child_name)
-
-        # Start recursive naming from all generation 0 cells
-        for track_id in self.track_to_seg.keys():
-            base_name = self.track_to_lineage_name[track_id]
-            assign_descendant_names(track_id, base_name)
-
-        # Count how many cells have hierarchical names
-        total_named = len(self.track_to_lineage_name)
-        daughters = sum(1 for name in self.track_to_lineage_name.values() if '.' in name)
-        print(f"  Created {total_named} hierarchical names ({daughters} daughter cells)")
-
-        # Print some examples
-        examples = list(self.track_to_lineage_name.items())[:5]
-        print(f"  Examples:")
-        for track_id, name in examples:
-            print(f"    Track {track_id} → {name}")
-
-    def populate_table(self, filter_func=None):
-        """Populate the cell table with data"""
+    def _populate_table(self, _filter_text=None):
+        filt = self.filter_combo.currentText() if hasattr(self, "filter_combo") else "All founders"
         self.cell_table.setRowCount(0)
 
-        cells = self.cell_database.values()
+        cells = list(self.founders)
+        if filt == "Long (20+)":
+            cells = [tr for tr in cells if len(tr.get("t", [])) >= 20]
+        elif filt == "With divisions":
+            cells = [tr for tr in cells if tr.get("children")]
 
-        # Apply filter if provided
-        if filter_func:
-            cells = [c for c in cells if filter_func(c)]
-
-        # Sort by segmentation ID (ascending) if available, otherwise by track ID
-        if hasattr(self, 'track_to_seg'):
-            cells = sorted(cells, key=lambda c: self.track_to_seg.get(c['cell_id'], c['cell_id']))
-        else:
-            cells = sorted(cells, key=lambda c: c['cell_id'])
-
+        cells.sort(key=lambda tr: tr.get("ID", 0))
         self.cell_table.setRowCount(len(cells))
 
-        for row, cell in enumerate(cells):
-            track_id = cell['cell_id']
+        for row, tr in enumerate(cells):
+            cid = tr["ID"]
+            lifespan = len(tr.get("t", []))
+            children = tr.get("children") or []
+            has_kids = len(children) > 0
+            fate = "divided" if has_kids else (
+                "alive" if lifespan >= (self.t_max - self.t_min + 1) else "lost"
+            )
 
-            # Cell ID - show hierarchical lineage name (e.g., 10, 10.1, 10.1.2)
-            if hasattr(self, 'track_to_lineage_name') and track_id in self.track_to_lineage_name:
-                cell_id_text = self.track_to_lineage_name[track_id]
-            elif hasattr(self, 'track_to_seg') and track_id in self.track_to_seg:
-                seg_id = self.track_to_seg[track_id]
-                cell_id_text = str(seg_id)
-            else:
-                cell_id_text = str(track_id)
+            id_item = QTableWidgetItem(str(cid))
+            id_item.setData(Qt.UserRole, cid)
+            self.cell_table.setItem(row, 0, id_item)
+            self.cell_table.setItem(row, 1, QTableWidgetItem(str(lifespan)))
+            self.cell_table.setItem(row, 2, QTableWidgetItem(fate))
+            self.cell_table.setItem(row, 3, QTableWidgetItem(str(len(children))))
 
-            # Store track_id as hidden data for later retrieval
-            item = QTableWidgetItem(cell_id_text)
-            item.setData(Qt.UserRole, track_id)  # Store track ID as hidden data
-            self.cell_table.setItem(row, 0, item)
+    # ================================================================ #
+    # Selection                                                        #
+    # ================================================================ #
 
-            # Lifespan
-            self.cell_table.setItem(row, 1, QTableWidgetItem(str(cell['lifespan'])))
-
-            # Fate
-            self.cell_table.setItem(row, 2, QTableWidgetItem(cell['fate']))
-
-            # Displacement
-            self.cell_table.setItem(row, 3, QTableWidgetItem(f"{cell['total_displacement']:.1f}"))
-
-            # Avg Velocity
-            self.cell_table.setItem(row, 4, QTableWidgetItem(f"{cell['avg_velocity']:.2f}"))
-
-            # Coverage
-            coverage_pct = cell['morphology_coverage'] * 100
-            self.cell_table.setItem(row, 5, QTableWidgetItem(f"{coverage_pct:.1f}%"))
-
-        self.cell_table.resizeColumnsToContents()
-
-    def apply_filter(self, filter_name):
-        """Apply filter to cell table"""
-        if filter_name == "All Cells":
-            self.populate_table()
-        elif filter_name == "Long Cells (20+ frames)":
-            self.populate_table(lambda c: c['lifespan'] >= 20)
-        elif filter_name == "Divided Cells":
-            self.populate_table(lambda c: c['fate'] == 'divided')
-        elif filter_name == "High Coverage (>90%)":
-            self.populate_table(lambda c: c['morphology_coverage'] > 0.9)
-
-    def select_all_long_tracks(self):
-        """Select all cells with lifespan >= 20 frames for batch export"""
-        if not self.cell_database:
+    def _on_table_click(self, row, _col):
+        item = self.cell_table.item(row, 0)
+        if not item:
             return
+        cid = item.data(Qt.UserRole)
+        self._select_cell(int(cid))
 
-        # Clear current selection
-        self.cell_table.clearSelection()
-
-        # Count long tracks
-        long_track_count = 0
-
-        # Use selection model to select multiple rows
-        from PySide6.QtCore import QItemSelectionModel
-        selection_model = self.cell_table.selectionModel()
-
-        # Select all rows where lifespan >= 20
-        for row in range(self.cell_table.rowCount()):
-            # Get the lifespan from column 1
-            lifespan_item = self.cell_table.item(row, 1)
-            if lifespan_item:
-                try:
-                    lifespan = int(lifespan_item.text())
-                    if lifespan >= 20:
-                        # Select the entire row using the selection model
-                        index = self.cell_table.model().index(row, 0)
-                        selection_model.select(
-                            index,
-                            QItemSelectionModel.Select | QItemSelectionModel.Rows
-                        )
-                        long_track_count += 1
-                except ValueError:
-                    continue
-
-        # Enable export button if tracks were selected
-        if long_track_count > 0:
-            self.export_animation_button.setEnabled(True)
-
-        # Show message
-        from PySide6.QtWidgets import QMessageBox
-        QMessageBox.information(
-            self,
-            "Selection Complete",
-            f"Selected {long_track_count} cells with lifespan ≥ 20 frames.\n\n"
-            f"Click '🎬 Export Animation' to create a video of all selected tracks."
-        )
-
-        print(f"\n✓ Selected {long_track_count} long tracks (≥20 frames)")
-
-    def on_cell_clicked(self, row, column):
-        """Handle cell selection from table"""
-        cell_id_item = self.cell_table.item(row, 0)
-        if not cell_id_item:
+    def _on_canvas_click(self, event):
+        if event.xdata is None or event.ydata is None:
             return
-
-        # Get track ID from hidden data
-        track_id = cell_id_item.data(Qt.UserRole)
-        self.current_cell_id = track_id
-
-        # Get cell data using track ID
-        cell = self.builder.get_cell(track_id)
-        if not cell:
+        cx, cy = float(event.xdata), float(event.ydata)
+        cells = self.cells_per_frame.get(self.current_t, [])
+        if not cells:
             return
+        best, best_d2 = None, float("inf")
+        for cid, x, y in cells:
+            vx, vy = self._xy_in_view(x, y)
+            d2 = (vx - cx) ** 2 + (vy - cy) ** 2
+            if d2 < best_d2:
+                best_d2 = d2
+                best = cid
+        if best is None or np.sqrt(best_d2) > 50:
+            return
+        # Find the root ancestor of this cell
+        root = self._find_root(best)
+        self._select_cell(root)
 
-        # Update info display
-        self.update_cell_info(cell)
+    def _find_root(self, cid):
+        visited = set()
+        while cid not in visited:
+            visited.add(cid)
+            tr = self.tracks_by_id.get(cid)
+            if not tr or tr.get("parent") is None:
+                return cid
+            cid = int(tr["parent"])
+        return cid
 
-        # Plot cell history
-        self.plot_cell_history(cell)
+    def _select_cell(self, root_id):
+        self.selected_root_id = root_id
+        self._refresh_spotlight()
+        self.export_btn.setEnabled(True)
+        self._render_all()
 
-        # Enable action buttons
-        self.validate_button.setEnabled(True)
-        self.export_animation_button.setEnabled(True)
-
-    def update_cell_info(self, cell):
-        """Update the cell info label"""
-        info_text = f"""
-<b>Cell ID:</b> {cell['cell_id']}<br>
-<b>Lifespan:</b> {cell['lifespan']} frames<br>
-<b>Fate:</b> {cell['fate']}<br>
-<b>Time Range:</b> {cell['start_time']} to {cell['end_time']}<br>
-<br>
-<b>Movement:</b><br>
-• Total Displacement: {cell['total_displacement']:.1f} pixels<br>
-• Path Length: {cell['path_length']:.1f} pixels<br>
-• Avg Velocity: {cell['avg_velocity']:.2f} pixels/frame<br>
-• Directionality: {cell['directionality']:.3f}<br>
-<br>
-<b>Lineage:</b><br>
-• Parent ID: {cell['parent_id'] if cell['parent_id'] else 'None'}<br>
-• Children: {len(cell['children_ids'])} ({', '.join(map(str, cell['children_ids'])) if cell['children_ids'] else 'None'})<br>
-<br>
-<b>Data Quality:</b><br>
-• Morphology Coverage: {cell['morphology_coverage']*100:.1f}%<br>
-• Data Points Found: {cell['morphology_found']}/{cell['lifespan']}<br>
-        """
-        self.cell_info_label.setText(info_text)
-
-    def plot_cell_history(self, cell):
-        """Plot complete time series for a cell"""
-        self.figure.clear()
-
-        times = cell['times']
-
-        # Create 2x2 subplot grid
-
-        # Plot 1: Trajectory
-        ax1 = self.figure.add_subplot(2, 2, 1)
-        ax1.plot(cell['x_positions'], cell['y_positions'], 'b-', alpha=0.6, linewidth=2)
-        ax1.plot(cell['x_positions'][0], cell['y_positions'][0], 'go', markersize=12, label='Start', zorder=5)
-        ax1.plot(cell['x_positions'][-1], cell['y_positions'][-1], 'ro', markersize=12, label='End', zorder=5)
-        ax1.set_title(f"Cell {cell['cell_id']} - Trajectory", fontsize=12, fontweight='bold')
-        ax1.set_xlabel("X Position (pixels)")
-        ax1.set_ylabel("Y Position (pixels)")
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
-
-        # Plot 2: Area over time
-        ax2 = self.figure.add_subplot(2, 2, 2)
-        areas = cell['area']
-        valid_idx = [i for i, a in enumerate(areas) if not np.isnan(a)]
-        if valid_idx:
-            valid_times = [times[i] for i in valid_idx]
-            valid_areas = [areas[i] for i in valid_idx]
-            ax2.plot(valid_times, valid_areas, 'b-o', markersize=4, linewidth=2)
-            ax2.set_title("Area Over Time", fontsize=12, fontweight='bold')
-            ax2.set_xlabel("Time (frames)")
-            ax2.set_ylabel("Area (pixels²)")
-            ax2.grid(True, alpha=0.3)
+    def _refresh_spotlight(self):
+        if self.selected_root_id is None:
+            self.spotlight_ids = set()
+            return
+        if self.follow_daughters_cb.isChecked():
+            self.spotlight_ids = _descendants(self.selected_root_id, self.tracks_by_id)
         else:
-            ax2.text(0.5, 0.5, 'No area data', ha='center', va='center', transform=ax2.transAxes)
+            self.spotlight_ids = {self.selected_root_id}
+        self._render_all()
 
-        # Plot 3: Length over time
-        ax3 = self.figure.add_subplot(2, 2, 3)
-        lengths = cell['length']
-        valid_idx = [i for i, l in enumerate(lengths) if not np.isnan(l)]
-        if valid_idx:
-            valid_times = [times[i] for i in valid_idx]
-            valid_lengths = [lengths[i] for i in valid_idx]
-            ax3.plot(valid_times, valid_lengths, 'g-o', markersize=4, linewidth=2)
-            ax3.set_title("Length Over Time", fontsize=12, fontweight='bold')
-            ax3.set_xlabel("Time (frames)")
-            ax3.set_ylabel("Length (pixels)")
-            ax3.grid(True, alpha=0.3)
+    def _clear_selection(self):
+        self.selected_root_id = None
+        self.spotlight_ids = set()
+        self._render_all()
+
+    # ================================================================ #
+    # Playback                                                         #
+    # ================================================================ #
+
+    def _toggle_play(self):
+        if self.is_playing:
+            self.timer.stop()
+            self.play_btn.setText("▶ Play")
+            self.is_playing = False
         else:
-            ax3.text(0.5, 0.5, 'No length data', ha='center', va='center', transform=ax3.transAxes)
+            self._apply_speed()
+            self.timer.start()
+            self.play_btn.setText("⏸ Pause")
+            self.is_playing = True
 
-        # Plot 4: Aspect Ratio over time
-        ax4 = self.figure.add_subplot(2, 2, 4)
-        aspect_ratios = cell['aspect_ratio']
-        valid_idx = [i for i, ar in enumerate(aspect_ratios) if not np.isnan(ar)]
-        if valid_idx:
-            valid_times = [times[i] for i in valid_idx]
-            valid_ratios = [aspect_ratios[i] for i in valid_idx]
-            ax4.plot(valid_times, valid_ratios, 'r-o', markersize=4, linewidth=2)
-            ax4.set_title("Aspect Ratio Over Time", fontsize=12, fontweight='bold')
-            ax4.set_xlabel("Time (frames)")
-            ax4.set_ylabel("Aspect Ratio")
-            ax4.grid(True, alpha=0.3)
+    def _on_speed_changed(self, _idx):
+        self.speed_multiplier = float(self.speed_combo.currentData())
+        if self.is_playing:
+            self._apply_speed()
 
-            # Add state thresholds
-            ax4.axhline(y=10, color='orange', linestyle='--', alpha=0.5, label='Deforming threshold')
-            ax4.axhline(y=15, color='red', linestyle='--', alpha=0.5, label='Deformed threshold')
-            ax4.legend(fontsize=8)
-        else:
-            ax4.text(0.5, 0.5, 'No aspect ratio data', ha='center', va='center', transform=ax4.transAxes)
+    def _apply_speed(self):
+        interval = max(16, int(self.BASE_TICK_MS / max(self.speed_multiplier, 0.01)))
+        self.timer.setInterval(interval)
 
-        self.figure.tight_layout()
-        self.canvas.draw()
+    def _on_tick(self):
+        nxt = self.current_t + 1
+        if nxt > self.t_max:
+            nxt = self.t_min
+        self.time_slider.setValue(nxt)
 
-    def validate_current_cell(self):
-        """Validate the currently selected cell by comparing to original data"""
-        if not self.current_cell_id:
-            return
+    def _on_slider_changed(self, value):
+        self.current_t = int(value)
+        self.time_label.setText(f"t={self.current_t}")
+        self._render_all()
 
-        cell = self.builder.get_cell(self.current_cell_id)
+    # ================================================================ #
+    # Frame + geometry access                                          #
+    # ================================================================ #
 
-        print("\n" + "="*80)
-        print(f"🔍 VALIDATING CELL {self.current_cell_id}")
-        print("="*80)
+    def _xy_in_view(self, x, y):
+        if self._crop is None:
+            return x, y
+        y0, x0, _, _ = self._crop
+        return x - x0, y - y0
 
-        # Pick 3 random timepoints to validate
-        num_checks = min(3, len(cell['times']))
-        if num_checks == 0:
-            QMessageBox.warning(self, "Validation", "No timepoints to validate!")
-            return
-
-        check_indices = np.random.choice(len(cell['times']), num_checks, replace=False)
-
-        validation_results = []
-        all_valid = True
-
-        for idx in check_indices:
-            t = cell['times'][idx]
-            x = cell['x_positions'][idx]
-            y = cell['y_positions'][idx]
-            area_from_db = cell['area'][idx]
-            length_from_db = cell['length'][idx]
-
-            print(f"\nChecking timepoint {t}:")
-            print(f"  Cell database says:")
-            print(f"    Position: ({x:.1f}, {y:.1f})")
-            print(f"    Area: {area_from_db:.1f}")
-            print(f"    Length: {length_from_db:.1f}")
-
-            # Query original metrics_service
-            metrics_df = self.metrics_service.query_optimized(time=t, cell_id=self.current_cell_id)
-
-            if not metrics_df.is_empty():
-                row = metrics_df.row(0, named=True)
-                area_from_metrics = row['area']
-                length_from_metrics = row['major_axis_length']
-
-                print(f"  Metrics service says:")
-                print(f"    Position: ({row['centroid_x']:.1f}, {row['centroid_y']:.1f})")
-                print(f"    Area: {area_from_metrics:.1f}")
-                print(f"    Length: {length_from_metrics:.1f}")
-
-                # Check if they match
-                area_match = abs(area_from_db - area_from_metrics) < 0.1 if not np.isnan(area_from_db) else False
-                length_match = abs(length_from_db - length_from_metrics) < 0.1 if not np.isnan(length_from_db) else False
-
-                if area_match and length_match:
-                    print(f"  ✅ VERIFIED")
-                    validation_results.append(f"✅ t={t}: Data matches")
-                else:
-                    print(f"  ⚠️ MISMATCH")
-                    validation_results.append(f"⚠️ t={t}: Data mismatch!")
-                    all_valid = False
-            else:
-                print(f"  ⚠️ No morphology data in metrics_service")
-                if np.isnan(area_from_db):
-                    validation_results.append(f"✅ t={t}: Correctly marked as NaN")
-                else:
-                    validation_results.append(f"⚠️ t={t}: Has data but shouldn't")
-                    all_valid = False
-
-        # Show results dialog
-        result_text = f"Validation Results for Cell {self.current_cell_id}:\n\n"
-        result_text += "\n".join(validation_results)
-        result_text += f"\n\nOverall: {'✅ All checks passed!' if all_valid else '⚠️ Some mismatches detected'}"
-
-        QMessageBox.information(self, "Validation Results", result_text)
-
-    def export_csv(self):
-        """Export cell database to CSV"""
-        from PySide6.QtWidgets import QFileDialog
-
-        file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export Cell Histories",
-            "cell_histories.csv",
-            "CSV Files (*.csv)"
-        )
-
-        if file_path:
-            try:
-                self.builder.export_to_csv(file_path)
-                QMessageBox.information(self, "Export Complete", f"Cell histories exported to:\n{file_path}")
-            except Exception as e:
-                QMessageBox.critical(self, "Export Error", f"Failed to export:\n{str(e)}")
-
-    def _expand_selection_with_lineage(self, track_ids):
-        """
-        Expand track selection to include daughter cells when parent is selected.
-        This ensures division events are fully visualized.
-
-        Args:
-            track_ids: List of initially selected track IDs
-
-        Returns:
-            tuple: (expanded_track_ids, division_events)
-                - expanded_track_ids: List including daughters
-                - division_events: Dict mapping parent_id -> [daughter1_id, daughter2_id, division_frame]
-        """
-        expanded_ids = set(track_ids)
-        division_events = {}
-
-        for track_id in track_ids:
-            # Find this track
-            for track in self.lineage_tracks:
-                if track['ID'] == track_id:
-                    # Check if this track has children (divided)
-                    children = track.get('children', [])
-                    if children and len(children) > 0:
-                        # Add daughter cells to selection
-                        expanded_ids.update(children)
-
-                        # Find division frame (last frame of parent)
-                        if 't' in track and len(track['t']) > 0:
-                            division_frame = track['t'][-1]
-                            division_events[track_id] = {
-                                'daughters': children,
-                                'frame': division_frame,
-                                'position': (track['x'][-1], track['y'][-1]) if 'x' in track and 'y' in track else None
-                            }
-                            print(f"  Division detected: Cell {track_id} → {children} at frame {division_frame}")
-                    break
-
-        return list(expanded_ids), division_events
-
-    def export_animation(self):
-        """Export animation of selected cells to GIF file"""
-        from PySide6.QtWidgets import QFileDialog
-        import cv2
-
-        # Check if we have image data
-        if self.image_data is None:
-            QMessageBox.warning(self, "No Image Data", "Image data is not available for animation.")
-            return
-
-        # Get selected cell IDs from table
-        selected_rows = self.cell_table.selectionModel().selectedRows()
-        if not selected_rows:
-            QMessageBox.warning(self, "No Selection", "Please select one or more cells to animate.")
-            return
-
-        # Get track IDs from selected rows
-        selected_track_ids = []
-        selected_display_ids = []  # For filename
-        print(f"\nSelected {len(selected_rows)} rows:")
-        for row in selected_rows:
-            row_num = row.row()
-            cell_id_item = self.cell_table.item(row_num, 0)
-            if cell_id_item:
-                # Get track ID from hidden data
-                track_id = cell_id_item.data(Qt.UserRole)
-                seg_id = cell_id_item.text()
-                print(f"  Row {row_num}: Cell {seg_id} → Track {track_id}")
-                selected_track_ids.append(track_id)
-                selected_display_ids.append(seg_id)
-
-        # Expand selection to include daughter cells for division visualization
-        expanded_track_ids, division_events = self._expand_selection_with_lineage(selected_track_ids)
-
-        if len(expanded_track_ids) > len(selected_track_ids):
-            print(f"  Expanded selection: {len(selected_track_ids)} → {len(expanded_track_ids)} cells (including daughters)")
-
-        print(f"\n🎬 Exporting animation for tracks: {expanded_track_ids}")
-
-        # Get cells and find frame range (using expanded track IDs)
-        selected_cells = []
-        min_frame = float('inf')
-        max_frame = 0
-
-        for track_id in expanded_track_ids:
-            cell = self.builder.get_cell(track_id)
-            if cell:
-                selected_cells.append(cell)
-                min_frame = min(min_frame, cell['start_time'])
-                max_frame = max(max_frame, cell['end_time'])
-
-        if not selected_cells:
-            QMessageBox.warning(self, "Error", "Could not load cell data.")
-            return
-
-        print(f"Frame range: {min_frame} to {max_frame}")
-        print(f"Total frames: {max_frame - min_frame + 1}")
-
-        # Ask user for save location
-        default_name = f"cell_animation_{'_'.join(map(str, selected_display_ids[:3]))}.gif"
-        file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export Cell Animation",
-            default_name,
-            "GIF Animation (*.gif)"
-        )
-
-        if not file_path:
-            return  # User cancelled
-
-        # Export the animation
+    def _get_raw_frame(self, t):
         try:
-            show_cells = self.show_cells_checkbox.isChecked()
-            self._export_to_video(selected_cells, expanded_track_ids, min_frame, max_frame, file_path, show_cells, division_events)
-            QMessageBox.information(self, "Export Complete", f"Animation exported to:\n{file_path}")
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            QMessageBox.critical(self, "Export Error", f"Failed to export animation:\n{str(e)}")
-
-    def _export_to_video(self, cells, track_ids, start_frame, end_frame, output_path, show_cells=True, division_events=None):
-        """Export animation frames to GIF (cropped to ROI if available, with division visualization)"""
-        import cv2
-        import imageio
-        from skimage.measure import label
-
-        if division_events is None:
-            division_events = {}
-
-        print(f"\n{'='*60}")
-        print(f"🎬 EXPORTING ANIMATION TO GIF")
-        print(f"{'='*60}")
-        print(f"Selected track IDs: {track_ids}")
-        print(f"Show cells: {show_cells}")
-        print(f"Division events: {len(division_events)}")
-
-        # Get model being used for segmentation
-        model = self.image_data.segmentation_service.models.available_models[0]
-        print(f"Using segmentation model: {model}")
-
-        # Get first frame to determine video size
-        first_seg = self.image_data.segmentation_cache.with_model(model)[(start_frame, 0, 0)]
-        full_height, full_width = first_seg.shape
-
-        # Check if ROI exists and get crop bounds
-        roi_mask = ROIHelper.get_roi_mask()
-        crop_x_min, crop_y_min, crop_x_max, crop_y_max = 0, 0, full_width, full_height
-
-        if roi_mask is not None:
-            # Find ROI bounding box
-            roi_coords = np.argwhere(roi_mask > 0)
-            if len(roi_coords) > 0:
-                crop_y_min = int(roi_coords[:, 0].min())
-                crop_y_max = int(roi_coords[:, 0].max()) + 1
-                crop_x_min = int(roi_coords[:, 1].min())
-                crop_x_max = int(roi_coords[:, 1].max()) + 1
-                print(f"🎯 ROI detected - Cropping video to ROI bounding box")
-                print(f"  ROI bounds: X[{crop_x_min}:{crop_x_max}], Y[{crop_y_min}:{crop_y_max}]")
+            data = self.image_data.data
+            if data.ndim == 5:
+                frame = np.asarray(data[t, self.position, 0])
+            elif data.ndim == 4:
+                frame = np.asarray(data[t, self.position])
+            elif data.ndim == 3:
+                frame = np.asarray(data[t])
             else:
-                print(f"⚠️ ROI mask is empty, using full frame")
+                return None
+        except Exception:
+            return None
+        if self._crop is not None:
+            y0, x0, y1, x1 = self._crop
+            frame = frame[y0:min(y1, frame.shape[0]), x0:min(x1, frame.shape[1])]
+        return frame
+
+    def _get_labeled_mask(self, t):
+        """Get the segmentation labeled mask at (t, position)."""
+        cached = self._seg_cache.get(int(t))
+        if cached is not None:
+            return cached
+        try:
+            from nd2_analyzer.data.image_data import ImageData
+            img = ImageData.get_instance()
+            model = img.segmentation_service.models.available_models[0]
+            mask = img.segmentation_cache.with_model(model)[(t, self.position, 0)]
+            if mask is not None:
+                mask = np.asarray(mask)
+                from skimage.measure import label as sk_label
+                if mask.max() <= 255 and len(np.unique(mask)) <= 100:
+                    mask = sk_label(mask > 0)
+            self._seg_cache[int(t)] = mask
+            return mask
+        except Exception:
+            return None
+
+    def _get_cell_geometries(self, t):
+        cached = self._geom_cache.get(int(t))
+        if cached is not None:
+            return cached
+        out = []
+        try:
+            df = self.metrics_service.query_optimized(
+                time=int(t), position=int(self.position)
+            )
+        except Exception:
+            df = None
+        if df is not None and hasattr(df, "is_empty") and not df.is_empty():
+            cols = set(df.columns)
+            need = {"cell_id", "centroid_x", "centroid_y",
+                    "major_axis_length", "minor_axis_length", "orientation"}
+            if need.issubset(cols):
+                for row in df.iter_rows(named=True):
+                    try:
+                        out.append({
+                            "cell_id": int(row["cell_id"]),
+                            "cx": float(row["centroid_x"]),
+                            "cy": float(row["centroid_y"]),
+                            "major": float(row["major_axis_length"]),
+                            "minor": float(row["minor_axis_length"]),
+                            "orientation": float(row["orientation"]),
+                        })
+                    except Exception:
+                        continue
+        self._geom_cache[int(t)] = out
+        return out
+
+    # ================================================================ #
+    # Rendering — main chamber                                         #
+    # ================================================================ #
+
+    def _render_all(self):
+        self._render_chamber()
+        self._render_trajectory()
+        self._render_tree()
+        self._render_stats()
+
+    def _render_chamber(self):
+        self.main_fig.clear()
+        ax = self.main_fig.add_subplot(111)
+        ax.set_facecolor("#000")
+
+        h, w = (self._image_shape or (500, 500))
+        if self._crop is not None:
+            y0, x0, y1, x1 = self._crop
+            h, w = y1 - y0, x1 - x0
+
+        # Show the raw frame as background
+        frame = self._get_raw_frame(self.current_t)
+        if frame is not None:
+            f = frame.astype(np.float32)
+            lo, hi = np.percentile(f, [1, 99])
+            if hi > lo:
+                f = np.clip((f - lo) / (hi - lo), 0, 1)
+            else:
+                f = f * 0
+            ax.imshow(f, cmap="gray", aspect="equal", origin="upper")
         else:
-            print(f"ℹ️ No ROI defined, using full frame")
+            ax.set_xlim(0, w)
+            ax.set_ylim(h, 0)
 
-        # Calculate cropped dimensions
-        width = crop_x_max - crop_x_min
-        height = crop_y_max - crop_y_min
+        # Get segmentation mask to identify which seg label matches each track
+        labeled_mask = self._get_labeled_mask(self.current_t)
 
-        # Collect frames for GIF
-        frames = []
-        duration_per_frame = 1000  # milliseconds (1 FPS - liquid slow motion for clear division viewing)
+        # If we have a spotlight cell, build a colored overlay from the seg mask
+        if self.spotlight_ids and labeled_mask is not None:
+            # Find which seg labels correspond to spotlight track IDs
+            spotlight_seg_labels = set()
+            cells_here = self.cells_per_frame.get(self.current_t, [])
+            for cid, x, y in cells_here:
+                if cid in self.spotlight_ids:
+                    seg_label = _track_to_seg_label(labeled_mask, x, y)
+                    if seg_label > 0:
+                        spotlight_seg_labels.add(seg_label)
 
-        print(f"GIF size: {width}x{height} (cropped from {full_width}x{full_height})")
-        print(f"Duration per frame: {duration_per_frame}ms (slower playback)")
-        print(f"Processing frames {start_frame} to {end_frame}...")
-
-        # Create set of selected track IDs
-        selected_track_ids = set(track_ids)
-
-        # Process each frame
-        for frame_num in range(start_frame, end_frame + 1):
-            # Get segmentation mask for this frame
-            seg_mask = self.image_data.segmentation_cache.with_model(model)[(frame_num, 0, 0)]
-
-            # Check if already labeled or binary (same logic as view_area)
-            max_value = seg_mask.max()
-            unique_values = len(np.unique(seg_mask))
-            if max_value > 255 or unique_values > 100:
-                labeled = seg_mask  # Already labeled
+            # Build overlay: spotlight cells = gold, others = blue dim
+            if self._crop is not None:
+                y0, x0, y1, x1 = self._crop
+                view_mask = labeled_mask[y0:min(y1, labeled_mask.shape[0]),
+                                         x0:min(x1, labeled_mask.shape[1])]
             else:
-                labeled = label(seg_mask)  # Binary mask, label it
+                view_mask = labeled_mask
 
-            # Crop labeled mask to ROI bounds
-            labeled_cropped = labeled[crop_y_min:crop_y_max, crop_x_min:crop_x_max]
+            overlay = np.zeros((*view_mask.shape, 4), dtype=np.float32)
 
-            # Create frame based on show_cells option
-            if show_cells:
-                # Apply colormap to get colored labels
-                colored_frame = self._apply_colormap_with_labels(labeled_cropped)
-            else:
-                # Create black background (just tracks, no cells)
-                colored_frame = np.zeros((height, width, 3), dtype=np.uint8)
+            # Dim cells (blue, low alpha)
+            all_cell_pixels = view_mask > 0
+            overlay[all_cell_pixels] = [0.29, 0.56, 0.89, 0.25]
 
-            # For each selected track ID, draw trajectory and highlight current position
-            for track_id in selected_track_ids:
-                # Find this track in lineage_tracks
-                track_data = None
-                for track in self.lineage_tracks:
-                    if track['ID'] == track_id and 't' in track and 'x' in track and 'y' in track:
-                        track_data = track
-                        break
+            # Spotlight cells (gold, high alpha)
+            for sl in spotlight_seg_labels:
+                spot_pixels = view_mask == sl
+                overlay[spot_pixels] = [1.0, 0.84, 0.0, 0.55]
 
-                if not track_data:
+            ax.imshow(overlay, aspect="equal", origin="upper")
+
+        # Draw trajectory trail for spotlight cells
+        if self.spotlight_ids:
+            for cid in self.spotlight_ids:
+                tr = self.tracks_by_id.get(cid)
+                if not tr:
                     continue
+                trail_x, trail_y = [], []
+                for x, y, t in zip(tr.get("x", []), tr.get("y", []),
+                                   tr.get("t", [])):
+                    if int(t) <= self.current_t:
+                        vx, vy = self._xy_in_view(x, y)
+                        trail_x.append(vx)
+                        trail_y.append(vy)
+                if len(trail_x) >= 2:
+                    ax.plot(trail_x, trail_y, "-", color="#ffd54a",
+                            linewidth=2, alpha=0.8, zorder=10)
+                if trail_x:
+                    ax.plot(trail_x[-1], trail_y[-1], "o", color="#ffd54a",
+                            markersize=8, zorder=11, markeredgecolor="#ff8c00",
+                            markeredgewidth=1.5)
 
-                # Collect all positions from start_frame up to current frame_num
-                # Adjust coordinates by crop offset
-                trajectory_points = []
-                current_position = None
-                start_position = None
+        # Division popup
+        div_text = self._division_event_here()
+        if div_text:
+            ax.text(0.02, 0.98, div_text, transform=ax.transAxes,
+                    color="#ffd54a", fontsize=11, fontweight="bold", va="top",
+                    bbox=dict(facecolor="#000", alpha=0.75, edgecolor="#ffd54a"))
 
-                for i, t in enumerate(track_data['t']):
-                    if start_frame <= t <= frame_num:
-                        # Original coordinates
-                        x_orig = int(track_data['x'][i])
-                        y_orig = int(track_data['y'][i])
-                        # Adjust for crop
-                        point = (x_orig - crop_x_min, y_orig - crop_y_min)
-                        trajectory_points.append(point)
+        ax.set_title(f"Chamber @ t={self.current_t}  |  Position {self.position}",
+                     color="#ddd", fontsize=10)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        self.main_fig.tight_layout()
+        self.main_canvas.draw_idle()
 
-                        if start_position is None:
-                            start_position = point
+    def _division_event_here(self):
+        if not self.spotlight_ids:
+            return None
+        for cid in self.spotlight_ids:
+            tr = self.tracks_by_id.get(cid)
+            if not tr:
+                continue
+            ts = tr.get("t", [])
+            children = tr.get("children") or []
+            if ts and children and int(ts[-1]) == self.current_t:
+                return f"DIVIDED: cell {cid} -> {list(children)}"
+        return None
 
-                        if t == frame_num:
-                            current_position = point
+    # ================================================================ #
+    # Rendering — trajectory panel                                     #
+    # ================================================================ #
 
-                # Adjust visualization based on show_cells mode
-                if show_cells:
-                    # Full mode: thicker lines, larger markers
-                    line_thickness = 3
-                    marker_size = 8
-                    marker_outline = 2
-                else:
-                    # Minimalist mode: thinner lines, smaller markers
-                    line_thickness = 1
-                    marker_size = 3
-                    marker_outline = 1
+    def _render_trajectory(self):
+        self.traj_fig.clear()
+        ax = self.traj_fig.add_subplot(111)
+        ax.set_facecolor("#111")
 
-                # Draw trajectory line if we have points
-                if len(trajectory_points) > 1:
-                    # Draw the trajectory line (thickness varies by mode)
-                    for i in range(len(trajectory_points) - 1):
-                        cv2.line(colored_frame, trajectory_points[i], trajectory_points[i + 1],
-                                (255, 255, 255), line_thickness, cv2.LINE_AA)
+        if self.selected_root_id is None:
+            ax.text(0.5, 0.5, "Select a cell", color="#888",
+                    ha="center", va="center", transform=ax.transAxes)
+            self.traj_canvas.draw_idle()
+            return
 
-                # Draw start marker (green circle)
-                if start_position:
-                    cv2.circle(colored_frame, start_position, marker_size, (0, 255, 0), -1)
-                    if show_cells:
-                        cv2.circle(colored_frame, start_position, marker_size, (255, 255, 255), marker_outline)
+        # Draw ALL cells in this frame as dim dots for context
+        cells_here = self.cells_per_frame.get(self.current_t, [])
+        if cells_here:
+            all_x = [x for _, x, _ in cells_here]
+            all_y = [y for _, _, y in cells_here]
+            ax.scatter(all_x, all_y, s=4, c="#333", alpha=0.4, linewidths=0, zorder=1)
 
-                # Draw current position marker and cell representation
-                if current_position:
-                    x, y = current_position
+        # Draw spotlight cell trajectories
+        for cid in self.spotlight_ids:
+            tr = self.tracks_by_id.get(cid)
+            if not tr:
+                continue
+            xs, ys = [], []
+            for x, y, t in zip(tr.get("x", []), tr.get("y", []),
+                               tr.get("t", [])):
+                if int(t) <= self.current_t:
+                    xs.append(x)
+                    ys.append(y)
 
-                    # In minimalist mode, draw a small rounded shape to represent the cell
-                    if not show_cells:
-                        # Draw small filled circle representing cell body (light gray)
-                        cell_body_radius = 8
-                        cv2.circle(colored_frame, current_position, cell_body_radius, (80, 80, 80), -1)
-                        # Draw outline
-                        cv2.circle(colored_frame, current_position, cell_body_radius, (150, 150, 150), 1)
+            if not xs:
+                continue
 
-                    # Draw current position marker (red circle)
-                    cv2.circle(colored_frame, current_position, marker_size, (0, 0, 255), -1)
-                    if show_cells:
-                        cv2.circle(colored_frame, current_position, marker_size, (255, 255, 255), marker_outline)
+            color = "#ffd54a" if cid == self.selected_root_id else "#5de1ff"
+            ax.plot(xs, ys, "-", color=color, linewidth=1.5, alpha=0.8, zorder=3)
+            ax.scatter([xs[0]], [ys[0]], s=40, c="#2ecc71", zorder=4)
+            ax.scatter([xs[-1]], [ys[-1]], s=60, c=color, zorder=5,
+                       edgecolors="#000", linewidths=1)
+            ax.annotate(str(cid), (xs[-1], ys[-1]), xytext=(6, -4),
+                        textcoords="offset points", color=color,
+                        fontsize=8, fontweight="bold", zorder=6)
 
-                    # Get hierarchical lineage name for this track
-                    if hasattr(self, 'track_to_lineage_name') and track_id in self.track_to_lineage_name:
-                        label_text = self.track_to_lineage_name[track_id]
-                    elif hasattr(self, 'track_to_seg') and track_id in self.track_to_seg:
-                        # Fallback to segmentation ID
-                        label_text = str(self.track_to_seg[track_id])
-                    else:
-                        # Last resort: track ID
-                        label_text = f"T{track_id}"
-                    label_pos = (x + 12, y - 12)  # Offset from marker
+        if self._image_shape:
+            ih, iw = self._image_shape
+            ax.set_xlim(0, iw)
+            ax.set_ylim(ih, 0)
 
-                    # Draw text with background for visibility
-                    font = cv2.FONT_HERSHEY_SIMPLEX
-                    # Smaller font in minimalist mode
-                    if show_cells:
-                        font_scale = 0.5
-                        thickness = 1
-                    else:
-                        font_scale = 0.4
-                        thickness = 1
+        n_desc = len(self.spotlight_ids) - 1
+        title = f"Trajectory — cell {self.selected_root_id}"
+        if n_desc > 0:
+            title += f" + {n_desc} descendants"
+        ax.set_title(title, color="#ddd", fontsize=10)
+        ax.tick_params(colors="#888", labelsize=7)
+        for s in ("top", "right", "bottom", "left"):
+            ax.spines[s].set_color("#444")
+        self.traj_fig.tight_layout()
+        self.traj_canvas.draw_idle()
 
-                    # Get text size for background
-                    (text_width, text_height), baseline = cv2.getTextSize(label_text, font, font_scale, thickness)
+    # ================================================================ #
+    # Rendering — lineage tree                                         #
+    # ================================================================ #
 
-                    # Draw black background rectangle
-                    bg_x1 = label_pos[0] - 2
-                    bg_y1 = label_pos[1] - text_height - 2
-                    bg_x2 = label_pos[0] + text_width + 2
-                    bg_y2 = label_pos[1] + 2
-                    cv2.rectangle(colored_frame, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 0), -1)
+    def _render_tree(self):
+        self.tree_fig.clear()
+        ax = self.tree_fig.add_subplot(111)
+        ax.set_facecolor("#111")
 
-                    # Draw white text on top
-                    cv2.putText(colored_frame, label_text, label_pos,
-                              font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+        if self.selected_root_id is None:
+            ax.text(0.5, 0.5, "Select a cell", color="#888",
+                    ha="center", va="center", transform=ax.transAxes)
+            self.tree_canvas.draw_idle()
+            return
 
-            # Draw division markers for cells that divide at this frame
-            for parent_id, div_info in division_events.items():
-                if div_info['frame'] == frame_num and div_info['position'] is not None:
-                    # Get division position with crop offset applied
-                    div_x_orig, div_y_orig = div_info['position']
-                    div_x = int(div_x_orig) - crop_x_min
-                    div_y = int(div_y_orig) - crop_y_min
+        # Collect all family members that are ALIVE up to current_t
+        family_alive = set()
+        edges_alive = []
+        for cid in self.spotlight_ids:
+            tr = self.tracks_by_id.get(cid)
+            if not tr:
+                continue
+            ts = tr.get("t", [])
+            if not ts:
+                continue
+            birth = int(min(ts))
+            if birth <= self.current_t:
+                family_alive.add(cid)
+                parent = tr.get("parent")
+                if parent is not None and int(parent) in family_alive:
+                    edges_alive.append((int(parent), cid))
 
-                    # Draw gold star at division point
-                    star_size = 15 if show_cells else 12
-                    cv2.drawMarker(colored_frame, (div_x, div_y),
-                                  (0, 215, 255), cv2.MARKER_STAR,
-                                  markerSize=star_size, thickness=2)
+        if not family_alive:
+            ax.text(0.5, 0.5, "Cell not yet born", color="#888",
+                    ha="center", va="center", transform=ax.transAxes)
+            self.tree_canvas.draw_idle()
+            return
 
-                    # Optional: Add small "DIV" text near division marker
-                    if show_cells:
-                        cv2.putText(colored_frame, "DIV", (div_x + 10, div_y - 10),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 215, 255), 1, cv2.LINE_AA)
+        # Layout: simple top-down tree using BFS layers
+        positions = {}
+        layers: dict[int, list[int]] = {}
 
-            # Add frame number
-            cv2.putText(colored_frame, f"Frame: {frame_num}", (10, 30),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA)
+        def get_generation(cid):
+            gen = 0
+            visited = set()
+            cur = cid
+            while cur not in visited:
+                visited.add(cur)
+                tr = self.tracks_by_id.get(cur)
+                if not tr or tr.get("parent") is None:
+                    break
+                cur = int(tr["parent"])
+                gen += 1
+            return gen
 
-            # Convert BGR to RGB for GIF (cv2 uses BGR, imageio expects RGB)
-            colored_frame_rgb = cv2.cvtColor(colored_frame, cv2.COLOR_BGR2RGB)
-            frames.append(colored_frame_rgb)
+        for cid in family_alive:
+            gen = get_generation(cid)
+            layers.setdefault(gen, []).append(cid)
 
-            if (frame_num - start_frame) % 10 == 0:
-                print(f"  Processed frame {frame_num}/{end_frame}")
+        max_gen = max(layers.keys()) if layers else 0
+        for gen, members in layers.items():
+            members.sort()
+            n = len(members)
+            for i, cid in enumerate(members):
+                x = (i + 0.5) / max(n, 1)
+                y = 1.0 - gen / max(max_gen + 1, 1)
+                positions[cid] = (x, y)
 
-        # Save as GIF with slower playback
-        print(f"💾 Saving GIF with {len(frames)} frames...")
-        imageio.mimsave(output_path, frames, duration=duration_per_frame, loop=0)
-        print(f"✅ GIF exported successfully!")
-        print(f"{'='*60}\n")
+        # Draw edges
+        for parent, child in edges_alive:
+            if parent in positions and child in positions:
+                px, py = positions[parent]
+                cx, cy = positions[child]
+                ax.plot([px, cx], [py, cy], "-", color="#555", linewidth=1.5, zorder=1)
 
-    def _apply_colormap_with_labels(self, segmented):
-        """Apply distinct colors and add cell ID labels (same as segmentation_service)"""
-        import numpy as np
-        import matplotlib.colors as mcolors
-        import cv2
-        from skimage.measure import regionprops
+        # Draw nodes
+        for cid, (x, y) in positions.items():
+            tr = self.tracks_by_id.get(cid)
+            ts = tr.get("t", []) if tr else []
+            is_alive_now = self.current_t in [int(tt) for tt in ts]
+            has_kids = bool(tr.get("children")) if tr else False
 
-        labels = segmented
-        n_labels = labels.max()
+            if is_alive_now:
+                color = "#ffd54a" if cid == self.selected_root_id else "#5de1ff"
+                size = 200
+            elif has_kids and int(max(ts)) <= self.current_t:
+                color = "#e74c3c"
+                size = 120
+            else:
+                color = "#888"
+                size = 80
 
-        # Generate random hues with fixed high saturation and value for vivid colors
-        np.random.seed(42)  # Same seed as segmentation_service for consistency
-        hues = np.random.permutation(n_labels) / n_labels
+            ax.scatter([x], [y], s=size, c=color, zorder=3, edgecolors="#000",
+                       linewidths=1)
+            ax.annotate(str(cid), (x, y), ha="center", va="center",
+                        color="#000" if is_alive_now else "#ddd",
+                        fontsize=7, fontweight="bold", zorder=4)
 
-        # Create color lookup table
-        lut = np.zeros((n_labels + 1, 3))
-        lut[0] = [0, 0, 0]  # Background is black
+        ax.set_xlim(-0.1, 1.1)
+        ax.set_ylim(-0.1, 1.1)
+        ax.set_title(f"Lineage tree — cell {self.selected_root_id}", color="#ddd",
+                     fontsize=10)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        for s in ("top", "right", "bottom", "left"):
+            ax.spines[s].set_color("#333")
+        self.tree_fig.tight_layout()
+        self.tree_canvas.draw_idle()
 
-        for i in range(1, n_labels + 1):
-            h = hues[i - 1]
-            s = 0.8 + 0.2 * np.random.rand()
-            v = 0.8 + 0.2 * np.random.rand()
-            lut[i] = mcolors.hsv_to_rgb([h, s, v])
+    # ================================================================ #
+    # Stats ticker                                                     #
+    # ================================================================ #
 
-        # Map labels to colors
-        colored = lut[labels]
-        colored = (colored * 255).astype(np.uint8)
+    def _render_stats(self):
+        if self.selected_root_id is None:
+            self.stats_label.setText(
+                f"t={self.current_t}  |  Click a cell or pick from the list."
+            )
+            return
 
-        # Add cell ID text labels
-        regions = regionprops(labels)
-        for region in regions:
-            cell_id = region.label
-            centroid_y, centroid_x = region.centroid
-            x, y = int(centroid_x), int(centroid_y)
+        parts = [f"t={self.current_t:>4}"]
+        parts.append(f"selected: {self.selected_root_id}")
+        parts.append(f"family: {sorted(self.spotlight_ids)}")
 
-            # Add white text with black outline
-            text = str(cell_id)
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 0.4
-            thickness = 1
+        tr = self.tracks_by_id.get(self.selected_root_id)
+        if tr:
+            ts = [int(tt) for tt in tr.get("t", [])]
+            if self.current_t in ts:
+                i = ts.index(self.current_t)
+                x = float(tr["x"][i])
+                y = float(tr["y"][i])
+                parts.append(f"pos=({x:.0f},{y:.0f})")
+                if i > 0:
+                    dx = float(tr["x"][i]) - float(tr["x"][i - 1])
+                    dy = float(tr["y"][i]) - float(tr["y"][i - 1])
+                    speed = np.hypot(dx, dy)
+                    parts.append(f"speed={speed:.1f} px/frame")
 
-            (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, thickness)
-            text_x = x - text_width // 2
-            text_y = y + text_height // 2
+            # morphology from metrics
+            try:
+                df = self.metrics_service.query_optimized(
+                    time=self.current_t, position=self.position
+                )
+                if df is not None and not df.is_empty():
+                    for row in df.iter_rows(named=True):
+                        if int(row.get("cell_id", -1)) == self.selected_root_id:
+                            if "major_axis_length" in row:
+                                parts.append(f"length={row['major_axis_length']:.1f}")
+                            if "area" in row:
+                                parts.append(f"area={row['area']:.0f}")
+                            break
+            except Exception:
+                pass
 
-            # Black outline
-            cv2.putText(colored, text, (text_x, text_y), font, font_scale, (0, 0, 0), thickness + 1, cv2.LINE_AA)
-            # White text on top
-            cv2.putText(colored, text, (text_x, text_y), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+        self.stats_label.setText("   |   ".join(parts))
 
-        return colored
+    # ================================================================ #
+    # GIF export                                                       #
+    # ================================================================ #
+
+    def _export_gif(self):
+        if self.selected_root_id is None:
+            QMessageBox.warning(self, "No selection", "Select a cell first.")
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Cell Animation",
+            f"cell_{self.selected_root_id}.gif",
+            "GIF (*.gif)"
+        )
+        if not path:
+            return
+
+        try:
+            import imageio
+            frames = []
+            for t in range(self.t_min, self.t_max + 1):
+                self.current_t = t
+                self._render_chamber()
+                self.main_canvas.draw()
+                buf = self.main_canvas.buffer_rgba()
+                img = np.asarray(buf)[:, :, :3].copy()
+                frames.append(img)
+
+            imageio.mimsave(path, frames, duration=int(self.BASE_TICK_MS), loop=0)
+            QMessageBox.information(self, "Done", f"Exported {len(frames)} frames to:\n{path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Export failed", str(e))
+        finally:
+            self.time_slider.setValue(self.t_min)
