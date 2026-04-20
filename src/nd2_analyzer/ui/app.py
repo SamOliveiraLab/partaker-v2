@@ -184,8 +184,15 @@ class App(QMainWindow):
         import os
         import re
         file_map = {}
-        batch_pattern = re.compile(r"^pos(?P<p>\d+)_t(?P<t>\d+)_c(?P<c>\d+)\.(tif|tiff)$", re.IGNORECASE)
-        stacked_pattern = re.compile(r"^pos(?P<p>\d+)_c(?P<c>\d+)\.(tif|tiff)$", re.IGNORECASE)
+        # Accept both "..._c2.tif" and "..._2.tif" channel suffixes.
+        batch_pattern = re.compile(
+            r"^pos(?P<p>\d+)_t(?P<t>\d+)_(?:c)?(?P<c>\d+)\.(tif|tiff)$",
+            re.IGNORECASE,
+        )
+        stacked_pattern = re.compile(
+            r"^pos(?P<p>\d+)_(?:c)?(?P<c>\d+)\.(tif|tiff)$",
+            re.IGNORECASE,
+        )
 
         # Check if any of the paths match the batch pattern, reconstructing the file_map
         for full_path in paths:

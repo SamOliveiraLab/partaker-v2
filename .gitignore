@@ -19,6 +19,7 @@ partaker_config.json
 build/
 
 dist/
+temp_*.dat
 
 datasets/
 

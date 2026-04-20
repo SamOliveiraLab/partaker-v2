@@ -173,31 +173,6 @@ class TrackingWidget(QWidget):
         self.motility_button.setEnabled(False)
         cell_buttons_row.addWidget(self.motility_button)
 
-        self.animated_view_button = QPushButton("🎬 Animated Cell View")
-        self.animated_view_button.clicked.connect(self.open_animated_cell_view)
-        self.animated_view_button.setEnabled(False)
-        self.animated_view_button.setStyleSheet("""
-            QPushButton {
-                background-color: #8E44AD;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 6px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #7D3C98;
-            }
-            QPushButton:pressed {
-                background-color: #6C3483;
-            }
-            QPushButton:disabled {
-                background-color: #CCCCCC;
-                color: #666666;
-            }
-        """)
-        cell_buttons_row.addWidget(self.animated_view_button)
-
         cell_buttons_row.addStretch()
         cell_layout.addLayout(cell_buttons_row)
 
@@ -232,7 +207,6 @@ class TrackingWidget(QWidget):
         self.lineage_button.setEnabled(False)
         self.motility_button.setEnabled(False)
         self.cell_view_button.setEnabled(False)
-        self.animated_view_button.setEnabled(False)
         self.export_video_button.setEnabled(False)
 
         # Determine if image has channels
@@ -303,7 +277,6 @@ class TrackingWidget(QWidget):
         self.lineage_button.setEnabled(has_tracks)
         self.motility_button.setEnabled(has_tracks)
         self.cell_view_button.setEnabled(has_tracks)
-        self.animated_view_button.setEnabled(has_tracks)
         self.export_video_button.setEnabled(has_tracks)
 
         # Let the rest of the app know which tracks are active for this p.
@@ -401,7 +374,6 @@ class TrackingWidget(QWidget):
                 self.lineage_button.setEnabled(True)
                 self.motility_button.setEnabled(True)
                 self.cell_view_button.setEnabled(True)
-                self.animated_view_button.setEnabled(True)
                 self.export_video_button.setEnabled(True)
 
                 self.visualize_tracks()
@@ -939,8 +911,17 @@ class TrackingWidget(QWidget):
 
         # Import the dialog
         from nd2_analyzer.ui.widgets.cell_view_dialog import CellViewDialog
+        from nd2_analyzer.data.appstate import ApplicationState
 
-        selected_p = self.position_combo.currentData()
+        # Pick the position from the main view area's slider
+        # (ApplicationState.view_index = (t, p, c)). Fall back to the
+        # tracking tab's position combo only if the app slider is unset.
+        selected_p = None
+        appstate = ApplicationState.get_instance()
+        if appstate and appstate.view_index:
+            selected_p = int(appstate.view_index[1])
+        if selected_p is None:
+            selected_p = self.position_combo.currentData()
         if selected_p is None:
             selected_p = 0
 
@@ -948,39 +929,7 @@ class TrackingWidget(QWidget):
             self.lineage_tracks,
             self.metrics_service,
             self.image_data,
-            position=selected_p,
-            parent=self,
-        )
-        dialog.exec()
-
-    def open_animated_cell_view(self):
-        """Open the Animated Cell View dialog — click a cell, watch its life.
-
-        Approach-2 (Cell View) visual: cartoon playback of the chamber
-        over time with spotlight on the clicked cell (and its daughters
-        after division), plus a trajectory panel and morphology filmstrip
-        that draw themselves as time advances.
-        """
-        if not self.lineage_tracks:
-            QMessageBox.warning(self, "Error", "No tracking data available.")
-            return
-        if self.image_data is None:
-            QMessageBox.warning(self, "Error", "No image data available.")
-            return
-
-        from nd2_analyzer.ui.widgets.animated_cell_view_dialog import (
-            AnimatedCellViewDialog,
-        )
-
-        position = self.position_combo.currentData()
-        if position is None:
-            position = 0
-
-        dialog = AnimatedCellViewDialog(
-            lineage_tracks=self.lineage_tracks,
-            image_data=self.image_data,
-            metrics_service=self.metrics_service,
-            position=int(position),
+            position=int(selected_p),
             parent=self,
         )
         dialog.exec()

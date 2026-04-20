@@ -230,8 +230,9 @@ class ImageData:
         channels = sorted({k[2] for k in file_map})
 
         if mode == "batch_tiff":
-            max_t = max(k[1] for k in file_map if k[1] is not None)
-            times = list(range(max_t + 1))
+            # Use only observed timepoints from filenames instead of forcing 0..max_t.
+            # This supports sparse time series (e.g. 0, 24, 48, 96).
+            times = sorted({k[1] for k in file_map if k[1] is not None})
         else:
             # Get the number of frames from the first file
             first_path = next(v for v in file_map.values() if v is not None)
@@ -267,6 +268,8 @@ class ImageData:
 
         total = len(positions) * len(channels) * len(times)
         current = 0
+        missing_frames = []
+        missing_stacks = []
 
         import uuid
         filename = f"temp_{uuid.uuid4().hex}.dat"
@@ -284,10 +287,9 @@ class ImageData:
                     for ti, t in enumerate(times):
                         path = file_map.get((p, t, c))
                         if path is None:
-                            print(f"Warning: missing frame p={p}, t={t}, c={c} — filled with zeros")
+                            missing_frames.append((p, t, c))
                         else:
                             frame = _to_2d(tifffile.imread(path))
-                            print(f"Loaded p={p}, t={t}, c={c} → min={frame.min()}, max={frame.max()}, stored at data[{ti},{pi},{ci}]")
                             data[ti, pi, ci] = frame
                         current += 1
                         if progress_callback:
@@ -297,7 +299,7 @@ class ImageData:
                 else:  # stacked_tiff
                     path = file_map.get((p, None, c))
                     if path is None:
-                        print(f"Warning: missing stack p={p}, c={c} — filled with zeros")
+                        missing_stacks.append((p, c))
                         current += T
                         if progress_callback:
                             progress_callback(min(int((current / total) * 100), 100))
@@ -311,6 +313,24 @@ class ImageData:
                             if progress_callback:
                                 progress = int((current / total) * 100)
                                 progress_callback(progress)
+
+        if missing_frames:
+            sample = ", ".join(
+                [f"(p={p}, t={t}, c={c})" for p, t, c in missing_frames[:8]]
+            )
+            suffix = " ..." if len(missing_frames) > 8 else ""
+            print(
+                f"Warning: {len(missing_frames)} missing frame(s) were filled with zeros. "
+                f"Examples: {sample}{suffix}"
+            )
+
+        if missing_stacks:
+            sample = ", ".join([f"(p={p}, c={c})" for p, c in missing_stacks[:8]])
+            suffix = " ..." if len(missing_stacks) > 8 else ""
+            print(
+                f"Warning: {len(missing_stacks)} missing stack(s) were filled with zeros. "
+                f"Examples: {sample}{suffix}"
+            )
 
         # Convert to a dask array for lazy loading
         dask_arr = da.from_array(data, chunks=(1, 1, 1, Y, X))
