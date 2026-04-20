@@ -463,7 +463,18 @@ def preprocess_image(image):
     Returns:
         np.ndarray: Preprocessed image.
     """
-    normalized_frame = (image - np.min(image)) / (np.max(image) - np.min(image))
+    image = np.asarray(image, dtype=np.float32)
+    min_val = np.min(image)
+    max_val = np.max(image)
+    denom = max_val - min_val
+    if denom <= 0 or not np.isfinite(denom):
+        # Constant/invalid frames (common for missing-data placeholders) have no signal.
+        return np.zeros_like(image, dtype=np.float32)
+
+    normalized_frame = (image - min_val) / denom
+    normalized_frame = np.nan_to_num(
+        normalized_frame, nan=0.0, posinf=0.0, neginf=0.0
+    )
 
     denoised_frame = gaussian_filter(normalized_frame, sigma=1)
 

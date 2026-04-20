@@ -203,15 +203,21 @@ class MetricsService:
                     # Select the region corresponding to the cell in the frames
                     mcherry_fluo = _frame.mcherry[_frame.labeled_phc == cell_id].mean()
                     yfp_fluo = _frame.yfp[_frame.labeled_phc == cell_id].mean()
-                    if back_fluo_mcherry != -1 and back_fluo_yfp != -1:
-                        if (mcherry_fluo / back_fluo_mcherry) > (
-                                yfp_fluo / back_fluo_yfp
-                        ):
+                    if (
+                        back_fluo_mcherry != -1
+                        and back_fluo_yfp != -1
+                        and back_fluo_mcherry > 0
+                        and back_fluo_yfp > 0
+                    ):
+                        if (mcherry_fluo / back_fluo_mcherry) > (yfp_fluo / back_fluo_yfp):
                             fluorescence_channel = 1
                             fluorescence_level = mcherry_fluo
                         else:
                             fluorescence_channel = 2
                             fluorescence_level = yfp_fluo
+                    else:
+                        fluorescence_channel = -1
+                        fluorescence_level = 0.0
                 else:
                     fluorescence_channel = -1
                     fluorescence_level = 0.0
