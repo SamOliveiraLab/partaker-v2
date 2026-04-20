@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 
@@ -208,6 +209,61 @@ class App(QMainWindow):
                 p, c = map(int, (m2["p"], m2["c"]))
                 file_map[(p, None, c)] = full_path
         return file_map
+
+    @staticmethod
+    def _reconstruct_tiff_file_map(raw_map):
+        """Convert serialized tiff_file_map keys back to tuple keys."""
+        file_map = {}
+        for key_str, path in raw_map.items():
+            parts = key_str.split(",")
+            p = int(parts[0])
+            t = int(parts[1]) if parts[1] != "None" else None
+            c = int(parts[2])
+            file_map[(p, t, c)] = path
+        return file_map
+
+    @staticmethod
+    def _remap_tiff_file_map_by_filename(file_map, new_root):
+        """
+        Remap TIFF paths by matching filenames under a new root directory.
+        Raises FileNotFoundError if any entry cannot be matched uniquely.
+        """
+        filename_index = {}
+        for root, _, files in os.walk(new_root):
+            for name in files:
+                if not name.lower().endswith((".tif", ".tiff")):
+                    continue
+                key = name.lower()
+                full_path = os.path.join(root, name)
+                filename_index.setdefault(key, []).append(full_path)
+
+        remapped = {}
+        unresolved = []
+        ambiguous = []
+        for key, old_path in file_map.items():
+            matches = filename_index.get(os.path.basename(old_path).lower(), [])
+            if len(matches) == 1:
+                remapped[key] = matches[0]
+            elif len(matches) == 0:
+                unresolved.append(old_path)
+            else:
+                ambiguous.append((old_path, matches))
+
+        if unresolved:
+            preview = ", ".join(os.path.basename(p) for p in unresolved[:5])
+            raise FileNotFoundError(
+                f"Could not find {len(unresolved)} TIFF file(s) in the selected folder "
+                f"(examples: {preview})."
+            )
+
+        if ambiguous:
+            preview = ", ".join(os.path.basename(p[0]) for p in ambiguous[:5])
+            raise FileNotFoundError(
+                f"Found duplicate TIFF filenames for {len(ambiguous)} file(s) "
+                f"(examples: {preview}). Please select a more specific folder."
+            )
+
+        return remapped
 
     def on_image_request(self, time, position, channel):
         """Handle requests for raw image data"""
@@ -552,8 +608,39 @@ class App(QMainWindow):
                 experiment, roi_mask, registration_offsets, crop_coordinates = Experiment.load(folder_path)
                 self.appstate.experiment = experiment
 
-                # Load image data
-                image_data = ImageData.load_from_disk(folder_path)
+                # Load image data (with TIFF relink fallback for moved datasets)
+                image_data = None
+                meta_path = os.path.join(folder_path, "image_data.json")
+                if os.path.exists(meta_path):
+                    with open(meta_path, "r") as f:
+                        meta_json = json.load(f)
+                    tiff_file_map_raw = meta_json.get("tiff_file_map")
+                    tiff_mode = meta_json.get("tiff_mode")
+
+                    if tiff_file_map_raw and tiff_mode:
+                        file_map = self._reconstruct_tiff_file_map(tiff_file_map_raw)
+                        all_paths_exist = all(
+                            path is not None and os.path.exists(path)
+                            for path in file_map.values()
+                        )
+
+                        if not all_paths_exist:
+                            new_root = QFileDialog.getExistingDirectory(
+                                self,
+                                "Select tiff folder",
+                                "",
+                                QFileDialog.ShowDirsOnly,
+                            )
+                            if not new_root:
+                                raise FileNotFoundError(
+                                    "TIFF paths in this project are missing and no replacement folder was selected."
+                                )
+                            file_map = self._remap_tiff_file_map_by_filename(file_map, new_root)
+
+                        image_data = ImageData.load_tiff_directory(file_map, tiff_mode)
+
+                if image_data is None:
+                    image_data = ImageData.load_from_disk(folder_path)
 
                 # Restore registration offsets if they exist
                 if registration_offsets is not None:
