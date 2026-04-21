@@ -188,13 +188,19 @@ class CellHistoryBuilder:
         """
         # Initialize arrays for morphology time series
         areas = []
+        perimeters = []
         lengths = []
         widths = []
         aspect_ratios = []
         circularities = []
+        solidities = []
+        equivalent_diameters = []
         morphology_classes = []
         orientations = []
         eccentricities = []
+        fluo_channels = []
+        fluo_levels = []
+        bboxes = []
 
         # Track which timepoints had morphology data
         morphology_found = 0
@@ -218,26 +224,42 @@ class CellHistoryBuilder:
                 row = metrics_df.row(0, named=True)
 
                 areas.append(row.get('area', 0))
+                perimeters.append(row.get('perimeter', 0))
                 lengths.append(row.get('major_axis_length', 0))
                 widths.append(row.get('minor_axis_length', 0))
                 aspect_ratios.append(row.get('aspect_ratio', 1.0))
                 circularities.append(row.get('circularity', 0))
+                solidities.append(row.get('solidity', 0))
+                equivalent_diameters.append(row.get('equivalent_diameter', 0))
                 morphology_classes.append(row.get('morphology_class', 'unknown'))
                 orientations.append(row.get('orientation', 0))
                 eccentricities.append(row.get('eccentricity', 0))
+                fluo_channels.append(row.get('fluorescence_channel', -1))
+                fluo_levels.append(row.get('fluo_level', 0.0))
+                y1 = row.get('y1', 0)
+                x1 = row.get('x1', 0)
+                y2 = row.get('y2', 0)
+                x2 = row.get('x2', 0)
+                bboxes.append(f"{y1};{x1};{y2};{x2}")
             else:
                 # No morphology data found for this timepoint
                 morphology_missing += 1
 
                 # Fill with NaN/default values
                 areas.append(np.nan)
+                perimeters.append(np.nan)
                 lengths.append(np.nan)
                 widths.append(np.nan)
                 aspect_ratios.append(np.nan)
                 circularities.append(np.nan)
+                solidities.append(np.nan)
+                equivalent_diameters.append(np.nan)
                 morphology_classes.append('unknown')
                 orientations.append(np.nan)
                 eccentricities.append(np.nan)
+                fluo_channels.append(-1)
+                fluo_levels.append(0.0)
+                bboxes.append('')
 
         # Check if we got enough morphology data
         morphology_coverage = morphology_found / len(times) if times else 0
@@ -283,13 +305,19 @@ class CellHistoryBuilder:
 
             # Morphology time series (shape over time)
             'area': areas,
+            'perimeter': perimeters,
             'length': lengths,  # major_axis_length
             'width': widths,    # minor_axis_length
             'aspect_ratio': aspect_ratios,
             'circularity': circularities,
+            'solidity': solidities,
+            'equivalent_diameter': equivalent_diameters,
             'morphology_class': morphology_classes,
             'orientation': orientations,
             'eccentricity': eccentricities,
+            'fluorescence_channel': fluo_channels,
+            'fluo_level': fluo_levels,
+            'bbox': bboxes,
 
             # Movement metrics
             'total_displacement': total_displacement,
@@ -423,8 +451,19 @@ class CellHistoryBuilder:
                 'x_positions': ','.join(map(str, cell_data['x_positions'])),
                 'y_positions': ','.join(map(str, cell_data['y_positions'])),
                 'areas': ','.join(map(str, cell_data['area'])),
+                'perimeters': ','.join(map(str, cell_data['perimeter'])),
                 'lengths': ','.join(map(str, cell_data['length'])),
                 'widths': ','.join(map(str, cell_data['width'])),
+                'aspect_ratios': ','.join(map(str, cell_data['aspect_ratio'])),
+                'circularities': ','.join(map(str, cell_data['circularity'])),
+                'solidities': ','.join(map(str, cell_data['solidity'])),
+                'equivalent_diameters': ','.join(map(str, cell_data['equivalent_diameter'])),
+                'morphology_classes': ','.join(map(str, cell_data['morphology_class'])),
+                'orientations': ','.join(map(str, cell_data['orientation'])),
+                'eccentricities': ','.join(map(str, cell_data['eccentricity'])),
+                'fluorescence_channels': ','.join(map(str, cell_data['fluorescence_channel'])),
+                'fluo_levels': ','.join(map(str, cell_data['fluo_level'])),
+                'bboxes': ','.join(map(str, cell_data['bbox'])),
             }
             export_data.append(row)
 
