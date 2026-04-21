@@ -399,6 +399,12 @@ class CellViewDialog(QDialog):
                 seg = np.asarray(seg)
                 if seg.max() <= 255 and len(np.unique(seg)) <= 100:
                     seg = sk_label(seg > 0)
+
+                from nd2_analyzer.analysis.roi_helper import ROIHelper
+                roi_mask = ROIHelper.get_roi_mask()
+                if roi_mask is not None and roi_mask.shape == seg.shape:
+                    seg = seg * roi_mask.astype(seg.dtype)
+
             self._seg_cache[int(t)] = seg
             return seg
         except Exception:
@@ -435,6 +441,12 @@ class CellViewDialog(QDialog):
             if seg is None or raw is None:
                 return None
             seg = np.asarray(seg)
+
+            from nd2_analyzer.analysis.roi_helper import ROIHelper
+            roi_mask = ROIHelper.get_roi_mask()
+            if roi_mask is not None and roi_mask.shape == seg.shape:
+                seg = seg * roi_mask.astype(seg.dtype)
+
             colored = seg_service._apply_colormap(seg)
             if colored.dtype != np.uint8:
                 colored = (colored * 255).astype(np.uint8)

@@ -381,8 +381,35 @@ class ImageData:
         with open(base_dir / "image_data.json", "w") as f:
             json.dump(container_data, f)
 
+    @staticmethod
+    def _relink_paths(paths, search_dirs):
+        """Try to resolve missing file paths by looking in search_dirs."""
+        if isinstance(paths, str):
+            paths_list = [paths]
+            was_str = True
+        else:
+            paths_list = list(paths)
+            was_str = False
+
+        resolved = []
+        for p in paths_list:
+            if os.path.exists(p):
+                resolved.append(p)
+                continue
+            basename = os.path.basename(p)
+            found = False
+            for d in search_dirs:
+                candidate = os.path.join(d, basename)
+                if os.path.exists(candidate):
+                    resolved.append(candidate)
+                    found = True
+                    break
+            if not found:
+                return None
+        return resolved[0] if was_str else resolved
+
     @classmethod
-    def load_from_disk(cls, filename):
+    def load_from_disk(cls, filename, relink_root=None):
         """Load imagedata from path"""
         base_dir = Path(filename)
 
@@ -400,6 +427,15 @@ class ImageData:
                     isinstance(image_filename, list)
                     and all(os.path.exists(_fname) for _fname in image_filename)
                 )
+
+                if not files_ok:
+                    search_dirs = [str(base_dir)]
+                    if relink_root:
+                        search_dirs.append(relink_root)
+                    relinked = cls._relink_paths(image_filename, search_dirs)
+                    if relinked is not None:
+                        image_filename = relinked
+                        files_ok = True
 
                 if files_ok:
                     # Check if this was a TIFF directory import

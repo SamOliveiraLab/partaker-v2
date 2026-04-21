@@ -240,12 +240,46 @@ class Experiment:
             print(f"Saved registration offsets to {reg_path}")
 
     @classmethod
-    def load(cls, folder_path: str):
+    def remap_missing_files(cls, image_files: List[str], folder_path: str,
+                            new_root: Optional[str] = None) -> List[str]:
+        """Remap image file paths that no longer exist.
+
+        Tries, in order: original path, same filename in folder_path,
+        same filename in new_root. Raises FileNotFoundError if unresolved.
+        """
+        remapped: List[str] = []
+        for path in image_files:
+            if os.path.exists(path):
+                remapped.append(path)
+                continue
+
+            basename = os.path.basename(path)
+
+            candidate = os.path.join(folder_path, basename)
+            if os.path.exists(candidate):
+                remapped.append(candidate)
+                continue
+
+            if new_root:
+                candidate = os.path.join(new_root, basename)
+                if os.path.exists(candidate):
+                    remapped.append(candidate)
+                    continue
+
+            raise FileNotFoundError(
+                f"Cannot locate {basename} (originally {path}). "
+                "Please select the folder containing the raw data files."
+            )
+        return remapped
+
+    @classmethod
+    def load(cls, folder_path: str, relink_root: Optional[str] = None):
         """
         Load experiment configuration from a JSON file, along with ROI and registration data.
 
         Args:
             folder_path: Path to the configuration file
+            relink_root: Optional directory to search when original image paths are missing
 
         Returns:
             tuple: (Experiment instance, roi_mask, registration_offsets, crop_coordinates)
@@ -257,9 +291,13 @@ class Experiment:
         with open(file_path, "r") as f:
             config = json.load(f)
 
+        resolved_files = cls.remap_missing_files(
+            config["image_files"], folder_path, relink_root
+        )
+
         experiment = cls(
             name=config["name"],
-            image_files=config["image_files"],
+            image_files=resolved_files,
             interval=config["interval"],
             fluorescence_factor=config.get("fluorescence_factor", 3.0),
             epsilon=config.get("epsilon", 0.1),
