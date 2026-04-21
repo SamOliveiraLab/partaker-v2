@@ -29,6 +29,7 @@ import matplotlib.cm as cm
 
 from nd2_analyzer.analysis.metrics_service import MetricsService
 from nd2_analyzer.ui.widgets.environment_view_tab import EnvironmentViewTab
+from nd2_analyzer.ui.widgets.digital_twin_tab import DigitalTwinTab
 
 
 class TrackingWidget(QWidget):
@@ -186,6 +187,10 @@ class TrackingWidget(QWidget):
         self.env_view_tab = EnvironmentViewTab()
         self.view_tabs.addTab(self.env_view_tab, "Environment View")
 
+        # Digital Twin tab --------------------------------------------- #
+        self.dt_tab = DigitalTwinTab()
+        self.view_tabs.addTab(self.dt_tab, "Digital Twin")
+
         layout.addWidget(self.view_tabs)
 
         # Progress bar
@@ -255,6 +260,13 @@ class TrackingWidget(QWidget):
             return
         env.set_tracks(self.lineage_tracks, self._current_image_shape())
 
+    def _refresh_dt_tab(self):
+        """Push the currently-active tracks into the Digital Twin tab."""
+        dt = getattr(self, "dt_tab", None)
+        if dt is None:
+            return
+        dt.set_tracking_data(self.lineage_tracks, self.metrics_service)
+
     def _on_position_changed(self, _index=None):
         """Swap the active tracks/UI when the position selector changes.
 
@@ -278,6 +290,7 @@ class TrackingWidget(QWidget):
         self.motility_button.setEnabled(has_tracks)
         self.cell_view_button.setEnabled(has_tracks)
         self.export_video_button.setEnabled(has_tracks)
+        self._refresh_dt_tab()
 
         # Let the rest of the app know which tracks are active for this p.
         pub.sendMessage(
@@ -378,6 +391,7 @@ class TrackingWidget(QWidget):
 
                 self.visualize_tracks()
                 self._refresh_env_view()
+                self._refresh_dt_tab()
 
                 QMessageBox.information(
                     self,
@@ -621,6 +635,7 @@ class TrackingWidget(QWidget):
             # Visualize tracks
             self.visualize_tracks()
             self._refresh_env_view()
+            self._refresh_dt_tab()
 
             # Show success message with detailed stats
             total_tracks = len(all_tracks)
