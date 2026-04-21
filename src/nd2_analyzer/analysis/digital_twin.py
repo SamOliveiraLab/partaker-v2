@@ -549,6 +549,8 @@ class ComparisonFigureGenerator:
         self._pub_style()
 
         paths = []
+        self.log("[Figures] Generating side-by-side validation figure...")
+        paths.append(self._plot_side_by_side())
         self.log("[Figures] Generating population growth...")
         paths.append(self._plot_population_growth())
         self.log("[Figures] Generating size distributions...")
@@ -572,6 +574,292 @@ class ComparisonFigureGenerator:
         import matplotlib.pyplot as plt
         plt.close(fig)
         return path
+
+    def _plot_side_by_side(self) -> Optional[str]:
+        """Generate the main DARPA figure: Observed vs Predicted side-by-side."""
+        plt = self._pub_style()
+
+        tracking_path = os.path.join(self.output_dir, "tracking_data.json")
+        has_tracking = os.path.exists(tracking_path)
+        tracks = []
+        if has_tracking:
+            with open(tracking_path) as f:
+                tracks = json.load(f)
+            self.log(f"[Side-by-side] Loaded {len(tracks)} observed tracks")
+
+        fig = plt.figure(figsize=(18, 22), facecolor='white')
+        fig.suptitle('DIGITAL TWIN VALIDATION',
+                     fontsize=20, fontweight='bold', y=0.97, color='#1a1a2e')
+        fig.text(0.5, 0.955,
+                 'Observed (PARTAKER)  vs  Predicted (Viva-munk Calibrated Simulation)',
+                 ha='center', fontsize=12, color='#666', style='italic')
+
+        fig.text(0.28, 0.935, 'OBSERVED  (PARTAKER)', fontsize=14, fontweight='bold',
+                 ha='center', color=self.C_OBS,
+                 bbox=dict(boxstyle='round,pad=0.4', facecolor='#EBF5FB',
+                           edgecolor=self.C_OBS, linewidth=2))
+        fig.text(0.72, 0.935, 'PREDICTED  (Digital Twin)', fontsize=14, fontweight='bold',
+                 ha='center', color=self.C_SIM,
+                 bbox=dict(boxstyle='round,pad=0.4', facecolor='#F5EBF5',
+                           edgecolor=self.C_SIM, linewidth=2))
+
+        gs = fig.add_gridspec(4, 2, hspace=0.32, wspace=0.25,
+                              top=0.91, bottom=0.03, left=0.07, right=0.95)
+
+        # --- Row 1: Spatial density ---
+        ax1L = fig.add_subplot(gs[0, 0])
+        ax1R = fig.add_subplot(gs[0, 1])
+        ax1L.set_facecolor('#EBF5FB')
+        ax1R.set_facecolor('#F5EBF5')
+
+        sim_grid = self._sim_density_grid(20, 20)
+        if has_tracking and tracks:
+            obs_grid = self._obs_density_grid(tracks, 20, 20)
+            ax1L.imshow(obs_grid, cmap='YlOrRd', aspect='auto', origin='lower')
+            ax1L.set_title('Spatial Density — Observed', fontsize=12,
+                           fontweight='bold', color=self.C_OBS)
+        else:
+            ax1L.text(0.5, 0.5, 'Run tracking to populate',
+                      transform=ax1L.transAxes, ha='center', va='center',
+                      fontsize=12, color='#999', style='italic')
+            ax1L.set_title('Spatial Density — Observed (pending)',
+                           fontsize=12, fontweight='bold', color='#999')
+
+        ax1R.imshow(sim_grid, cmap='YlOrRd', aspect='auto', origin='lower')
+        ax1R.set_title('Spatial Density — Predicted', fontsize=12,
+                       fontweight='bold', color=self.C_SIM)
+        for ax in (ax1L, ax1R):
+            ax.set_xlabel('x'); ax.set_ylabel('y')
+
+        # --- Row 2: Trajectories ---
+        ax2L = fig.add_subplot(gs[1, 0])
+        ax2R = fig.add_subplot(gs[1, 1])
+        ax2L.set_facecolor('#EBF5FB')
+        ax2R.set_facecolor('#F5EBF5')
+
+        if has_tracking and tracks:
+            self._draw_obs_trajectories(ax2L, tracks, max_tracks=20)
+            ax2L.set_title('Cell Trajectories — Observed', fontsize=12,
+                           fontweight='bold', color=self.C_OBS)
+        else:
+            ax2L.text(0.5, 0.5, 'Run tracking to populate',
+                      transform=ax2L.transAxes, ha='center', va='center',
+                      fontsize=12, color='#999', style='italic')
+            ax2L.set_title('Cell Trajectories — Observed (pending)',
+                           fontsize=12, fontweight='bold', color='#999')
+
+        self._draw_sim_trajectories(ax2R, max_tracks=20)
+        ax2R.set_title('Particle Trajectories — Predicted', fontsize=12,
+                       fontweight='bold', color=self.C_SIM)
+
+        # --- Row 3: Single cell growth ---
+        ax3L = fig.add_subplot(gs[2, 0])
+        ax3R = fig.add_subplot(gs[2, 1])
+        ax3L.set_facecolor('#EBF5FB')
+        ax3R.set_facecolor('#F5EBF5')
+
+        if self.cell_database:
+            cells = list(self.cell_database.values())
+            longest = sorted(cells, key=lambda c: c['lifespan'], reverse=True)[:6]
+            cmap = plt.cm.get_cmap('Set2', 8)
+            dt_s = self.real.get('time_interval_s', 300)
+            for i, cell in enumerate(longest):
+                areas = np.array(cell['area'], dtype=float)
+                valid = ~np.isnan(areas)
+                t_min = np.arange(len(areas))[valid] * dt_s / 60.0
+                ax3L.plot(t_min, areas[valid], '-o', color=cmap(i), linewidth=1.5,
+                          markersize=2, alpha=0.85, label=f"Cell {cell['cell_id']}")
+            ax3L.legend(fontsize=7, ncol=2, frameon=True)
+            ax3L.set_title('Single Cell Growth — Observed', fontsize=12,
+                           fontweight='bold', color=self.C_OBS)
+        elif has_tracking and tracks:
+            longest_t = sorted(tracks, key=lambda t: len(t.get('area', [])), reverse=True)[:6]
+            cmap = plt.cm.get_cmap('Set2', 8)
+            for i, tr in enumerate(longest_t):
+                areas = tr.get('area', [])
+                if not areas:
+                    continue
+                t_min = np.arange(len(areas)) * self.real.get('time_interval_s', 300) / 60.0
+                ax3L.plot(t_min, areas, '-o', color=cmap(i), linewidth=1.5,
+                          markersize=2, alpha=0.85, label=f"Cell {tr.get('ID', i)}")
+            ax3L.legend(fontsize=7, ncol=2, frameon=True)
+            ax3L.set_title('Single Cell Growth — Observed', fontsize=12,
+                           fontweight='bold', color=self.C_OBS)
+        else:
+            ax3L.text(0.5, 0.5, 'Run tracking to populate',
+                      transform=ax3L.transAxes, ha='center', va='center',
+                      fontsize=12, color='#999', style='italic')
+            ax3L.set_title('Single Cell Growth — Observed (pending)',
+                           fontsize=12, fontweight='bold', color='#999')
+        ax3L.set_xlabel('Time (min)'); ax3L.set_ylabel('Cell area (px²)')
+        td_obs = self.real.get('doubling_time_min', 0)
+        if td_obs > 0:
+            ax3L.text(0.95, 0.05, f'$T_d$ = {td_obs:.1f} min',
+                      transform=ax3L.transAxes, ha='right', fontsize=11,
+                      fontweight='bold', color=self.C_OBS,
+                      bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+
+        cell_traces = {}
+        for step in self.sim['timesteps']:
+            t = step['time'] / 60.0
+            for cell in step['cells']:
+                cid = cell['id']
+                if cid not in cell_traces:
+                    cell_traces[cid] = {'times': [], 'lengths': []}
+                cell_traces[cid]['times'].append(t)
+                cell_traces[cid]['lengths'].append(cell['length'])
+        longest_sim = sorted(cell_traces.items(),
+                             key=lambda x: len(x[1]['times']), reverse=True)[:6]
+        cmap_s = plt.cm.get_cmap('Dark2', 8)
+        for i, (cid, trace) in enumerate(longest_sim):
+            short_id = cid.split('_')[1][:6] if '_' in cid else cid[:6]
+            ax3R.plot(trace['times'], trace['lengths'], '-', color=cmap_s(i),
+                      linewidth=1.5, alpha=0.85, label=short_id)
+        ax3R.legend(fontsize=7, ncol=2, frameon=True)
+        ax3R.set_xlabel('Time (min)'); ax3R.set_ylabel('Cell length (µm)')
+        ax3R.set_title('Simulated Cell Growth — Predicted', fontsize=12,
+                       fontweight='bold', color=self.C_SIM)
+        td_sim = self._estimate_sim_doubling_time()
+        if td_sim > 0:
+            ax3R.text(0.95, 0.05, f'$T_d$ = {td_sim:.1f} min',
+                      transform=ax3R.transAxes, ha='right', fontsize=11,
+                      fontweight='bold', color=self.C_SIM,
+                      bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+
+        for ax in (ax3L, ax3R):
+            ax.grid(True, alpha=0.3, color=self.C_GRID)
+
+        # --- Row 4: Population growth + quantitative comparison ---
+        ax4L = fig.add_subplot(gs[3, 0])
+        ax4R = fig.add_subplot(gs[3, 1])
+        ax4L.set_facecolor('#EBF5FB')
+        ax4R.set_facecolor('#F5EBF5')
+
+        sim_times = [s['time'] / 3600.0 for s in self.sim['timesteps']]
+        sim_counts = [s['n_cells'] for s in self.sim['timesteps']]
+        ax4L.plot(sim_times, sim_counts, color=self.C_SIM, linewidth=2.2,
+                  label='Calibrated DT')
+        ax4L.fill_between(sim_times, 0, sim_counts, color=self.C_SIM, alpha=0.1)
+        if self.default_sim:
+            def_times = [s['time'] / 3600.0 for s in self.default_sim['timesteps']]
+            def_counts = [s['n_cells'] for s in self.default_sim['timesteps']]
+            ax4L.plot(def_times, def_counts, '--', color=self.C_DEF, linewidth=1.8,
+                      label='Default E. coli')
+        doubling_h = self.real.get('doubling_time_s', 2400) / 3600.0
+        if doubling_h > 0:
+            th_t = np.linspace(0, max(sim_times), 200)
+            th_c = np.exp(np.log(2) / doubling_h * th_t)
+            ax4L.plot(th_t, th_c, ':', color=self.C_OBS, linewidth=1.5,
+                      label=f'Observed $T_d$={doubling_h*60:.0f}min')
+        ax4L.set_xlabel('Time (h)'); ax4L.set_ylabel('Cell count')
+        ax4L.set_title('Population Growth Comparison', fontsize=12, fontweight='bold')
+        ax4L.legend(fontsize=9, frameon=True)
+        ax4L.grid(True, alpha=0.3, color=self.C_GRID)
+        ax4L.set_xlim(left=0); ax4L.set_ylim(bottom=0)
+
+        # Quantitative table
+        ax4R.axis('off')
+        ax4R.set_title('Quantitative Summary', fontsize=12, fontweight='bold')
+        real_rate = self.real.get('growth_rate_mean', 0) * 3600
+        sim_rates = self._compute_sim_growth_rates()
+        sim_rate = np.mean(sim_rates) * 3600 if sim_rates else 0
+        real_len = self.real.get('cell_length_mean_px', 0) * 0.065
+        sim_lengths = [c['length'] for s in self.sim['timesteps']
+                       for c in s['cells'] if c.get('length', 0) > 0]
+        table_data = [
+            ['Growth rate (h⁻¹)', f'{real_rate:.3f}', f'{sim_rate:.3f}'],
+            ['Doubling time (min)', f'{td_obs:.1f}', f'{td_sim:.1f}'],
+            ['Cell length (µm)', f'{real_len:.2f}',
+             f'{np.mean(sim_lengths):.2f}' if sim_lengths else '—'],
+            ['Cells analyzed', f'{self.real.get("n_cells", 0)}',
+             f'{self.sim.get("final_cell_count", 0)}'],
+            ['Dividing cells', f'{self.real.get("n_dividing_cells", 0)}', '—'],
+        ]
+        table = ax4R.table(cellText=table_data,
+                           colLabels=['Parameter', 'Observed', 'Predicted'],
+                           loc='center', cellLoc='center')
+        table.auto_set_font_size(False)
+        table.set_fontsize(11)
+        table.scale(1.0, 1.8)
+        for i in range(3):
+            table[0, i].set_facecolor('#2C3E50')
+            table[0, i].set_text_props(color='white', fontweight='bold')
+        for row in range(1, len(table_data) + 1):
+            table[row, 0].set_facecolor('#F8F9FA')
+            table[row, 1].set_facecolor('#EBF5FB')
+            table[row, 2].set_facecolor('#F5EBF5')
+            for col in range(3):
+                table[row, col].set_edgecolor('#DEE2E6')
+
+        return self._save(fig, 'fig_side_by_side_validation.png')
+
+    def _sim_density_grid(self, nx: int, ny: int) -> np.ndarray:
+        grid = np.zeros((ny, nx))
+        for step in self.sim['timesteps']:
+            for cell in step['cells']:
+                loc = cell.get('location', [0, 0])
+                xi = min(int(loc[0] / (self.sim['config']['env_size'] / nx)), nx - 1)
+                yi = min(int(loc[1] / (self.sim['config']['env_size'] / ny)), ny - 1)
+                xi = max(0, xi); yi = max(0, yi)
+                grid[yi, xi] += 1
+        return grid
+
+    def _obs_density_grid(self, tracks: List[Dict], nx: int, ny: int) -> np.ndarray:
+        all_x, all_y = [], []
+        for tr in tracks:
+            all_x.extend(tr.get('x', []))
+            all_y.extend(tr.get('y', []))
+        if not all_x:
+            return np.zeros((ny, nx))
+        all_x, all_y = np.array(all_x), np.array(all_y)
+        grid, _, _ = np.histogram2d(all_x, all_y, bins=[nx, ny])
+        return grid.T
+
+    def _draw_obs_trajectories(self, ax, tracks: List[Dict], max_tracks: int = 20):
+        longest = sorted(tracks, key=lambda t: len(t.get('x', [])), reverse=True)[:max_tracks]
+        cmap = __import__('matplotlib').cm.plasma
+        for tr in longest:
+            xs, ys = tr.get('x', []), tr.get('y', [])
+            if len(xs) < 3:
+                continue
+            xs, ys = np.array(xs, dtype=float), np.array(ys, dtype=float)
+            dx = np.diff(xs); dy = np.diff(ys)
+            speed = np.sqrt(dx**2 + dy**2)
+            norm = speed / (speed.max() + 1e-9)
+            for j in range(len(xs) - 1):
+                ax.plot([xs[j], xs[j+1]], [ys[j], ys[j+1]],
+                        color=cmap(norm[j]), linewidth=1.2, alpha=0.8)
+        if longest:
+            xs0 = [tr['x'][0] for tr in longest if tr.get('x')]
+            ys0 = [tr['y'][0] for tr in longest if tr.get('y')]
+            ax.set_xlim(min(xs0) - 50, max(xs0) + 200)
+            ax.set_ylim(min(ys0) - 50, max(ys0) + 200)
+        ax.set_xlabel('x (px)'); ax.set_ylabel('y (px)')
+
+    def _draw_sim_trajectories(self, ax, max_tracks: int = 20):
+        cell_paths = {}
+        for step in self.sim['timesteps']:
+            for cell in step['cells']:
+                cid = cell['id']
+                loc = cell.get('location', [0, 0])
+                if cid not in cell_paths:
+                    cell_paths[cid] = {'x': [], 'y': []}
+                cell_paths[cid]['x'].append(loc[0])
+                cell_paths[cid]['y'].append(loc[1])
+        longest = sorted(cell_paths.items(),
+                         key=lambda x: len(x[1]['x']), reverse=True)[:max_tracks]
+        cmap = __import__('matplotlib').cm.plasma
+        for cid, path in longest:
+            xs, ys = np.array(path['x']), np.array(path['y'])
+            if len(xs) < 3:
+                continue
+            dx = np.diff(xs); dy = np.diff(ys)
+            speed = np.sqrt(dx**2 + dy**2)
+            norm = speed / (speed.max() + 1e-9)
+            for j in range(len(xs) - 1):
+                ax.plot([xs[j], xs[j+1]], [ys[j], ys[j+1]],
+                        color=cmap(norm[j]), linewidth=1.2, alpha=0.8)
+        ax.set_xlabel('x (µm)'); ax.set_ylabel('y (µm)')
 
     def _plot_population_growth(self) -> str:
         plt = self._pub_style()

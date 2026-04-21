@@ -38,20 +38,66 @@ class CellHistoryBuilder:
             Service containing morphology metrics (frame-organized)
         """
         print("\n" + "="*80)
-        print("🔄 CELL HISTORY BUILDER - Initializing")
+        print("CELL HISTORY BUILDER - Initializing")
         print("="*80)
 
-        self.lineage_tracks = lineage_tracks
         self.metrics_service = metrics_service
         self.cell_database = {}
 
-        print(f"✓ Received {len(lineage_tracks)} cell tracks")
-        print(f"✓ Metrics service connected")
+        self.focus_loss_intervals = []
+        self.time_interval_hours = 0.0833
+        try:
+            from nd2_analyzer.data.appstate import ApplicationState
+            appstate = ApplicationState.get_instance()
+            if appstate and appstate.experiment:
+                self.focus_loss_intervals = appstate.experiment.focus_loss_intervals or []
+                self.time_interval_hours = appstate.experiment.time_interval_hours or 0.0833
+        except Exception:
+            pass
+
+        if self.focus_loss_intervals:
+            print(f"  Focus loss intervals: {self.focus_loss_intervals}")
+            filtered = []
+            for track in lineage_tracks:
+                ft = self._filter_focus_loss(track)
+                if ft is not None:
+                    filtered.append(ft)
+            print(f"  Focus loss filtering: {len(lineage_tracks)} -> {len(filtered)} tracks")
+            self.lineage_tracks = filtered
+        else:
+            self.lineage_tracks = lineage_tracks
+
+        print(f"  Received {len(self.lineage_tracks)} cell tracks")
+        print(f"  Metrics service connected")
 
         # Calculate some statistics
         total_timepoints = sum(len(track.get('t', track.get('x', []))) for track in lineage_tracks)
         print(f"✓ Total track-timepoints to process: {total_timepoints}")
         print()
+
+    def _filter_focus_loss(self, track: Dict) -> Optional[Dict]:
+        """Remove frames that fall within focus loss intervals."""
+        times = track.get('t', [])
+        x = track.get('x', [])
+        y = track.get('y', [])
+        if not times:
+            return None
+
+        valid = []
+        for i, frame in enumerate(times):
+            time_h = frame * self.time_interval_hours
+            if all(not (start <= time_h < end)
+                   for start, end in self.focus_loss_intervals):
+                valid.append(i)
+
+        if len(valid) < 2:
+            return None
+
+        filtered = dict(track)
+        filtered['t'] = [times[i] for i in valid]
+        filtered['x'] = [x[i] for i in valid] if len(x) > max(valid) else x
+        filtered['y'] = [y[i] for i in valid] if len(y) > max(valid) else y
+        return filtered
 
     def build(self, min_track_length: int = 5) -> Dict:
         """

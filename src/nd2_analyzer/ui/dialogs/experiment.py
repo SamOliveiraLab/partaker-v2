@@ -349,29 +349,37 @@ class ExperimentDialog(QDialog):
         # Update conversion helper initially
         self._update_focus_conversion_helper()
 
-        # Focus loss input
+        # Focus loss input — frame-based (auto-converts to hours)
         focus_input_layout = QHBoxLayout()
 
-        self.focus_start_spinbox = QDoubleSpinBox()
-        self.focus_start_spinbox.setRange(0, 1000)
-        self.focus_start_spinbox.setDecimals(2)
-        self.focus_start_spinbox.setSuffix(" h")
+        self.focus_start_frame_spin = QSpinBox()
+        self.focus_start_frame_spin.setRange(0, 100000)
+        self.focus_start_frame_spin.setPrefix("Frame ")
 
-        self.focus_end_spinbox = QDoubleSpinBox()
-        self.focus_end_spinbox.setRange(0, 1000)
-        self.focus_end_spinbox.setDecimals(2)
-        self.focus_end_spinbox.setSuffix(" h")
+        self.focus_end_frame_spin = QSpinBox()
+        self.focus_end_frame_spin.setRange(0, 100000)
+        self.focus_end_frame_spin.setPrefix("Frame ")
 
         self.add_focus_loss_button = QPushButton("Add Focus Loss")
         self.add_focus_loss_button.clicked.connect(self.add_focus_loss_interval)
 
         focus_input_layout.addWidget(QLabel("Lost focus from"))
-        focus_input_layout.addWidget(self.focus_start_spinbox)
+        focus_input_layout.addWidget(self.focus_start_frame_spin)
         focus_input_layout.addWidget(QLabel("to"))
-        focus_input_layout.addWidget(self.focus_end_spinbox)
+        focus_input_layout.addWidget(self.focus_end_frame_spin)
         focus_input_layout.addWidget(self.add_focus_loss_button)
 
         focus_layout.addLayout(focus_input_layout)
+
+        # Keep hidden hour spinboxes for backward compat with internal storage
+        self.focus_start_spinbox = QDoubleSpinBox()
+        self.focus_start_spinbox.setRange(0, 1000)
+        self.focus_start_spinbox.setDecimals(4)
+        self.focus_start_spinbox.hide()
+        self.focus_end_spinbox = QDoubleSpinBox()
+        self.focus_end_spinbox.setRange(0, 1000)
+        self.focus_end_spinbox.setDecimals(4)
+        self.focus_end_spinbox.hide()
 
         # Focus loss list
         self.focus_loss_list_widget = QListWidget()
@@ -698,23 +706,28 @@ class ExperimentDialog(QDialog):
             self.components_list_widget.takeItem(row)
 
     def add_focus_loss_interval(self):
-        """Add a focus loss interval"""
-        start = self.focus_start_spinbox.value()
-        end = self.focus_end_spinbox.value()
+        """Add a focus loss interval (input as frames, stored as hours)."""
+        start_frame = self.focus_start_frame_spin.value()
+        end_frame = self.focus_end_frame_spin.value()
 
-        if start >= end:
-            QMessageBox.warning(self, "Input Error", "Start time must be less than end time.")
+        if start_frame >= end_frame:
+            QMessageBox.warning(self, "Input Error", "Start frame must be less than end frame.")
             return
 
+        phc_interval = self.time_step_spinbox.value()
+        fluorescence_factor = self.fluorescence_factor_spinbox.value()
+        time_interval_hours = (phc_interval * fluorescence_factor) / 3600.0
+
+        start = start_frame * time_interval_hours
+        end = (end_frame + 1) * time_interval_hours
+
         self.focus_loss_intervals.append((start, end))
-        # Keep sorted by start time
         self.focus_loss_intervals.sort(key=lambda x: x[0])
 
-        # Refresh the list widget
         self._refresh_focus_loss_list()
 
-        self.focus_start_spinbox.setValue(0.0)
-        self.focus_end_spinbox.setValue(0.0)
+        self.focus_start_frame_spin.setValue(0)
+        self.focus_end_frame_spin.setValue(0)
 
     def remove_focus_loss_interval(self):
         """Remove selected focus loss interval"""
@@ -724,10 +737,15 @@ class ExperimentDialog(QDialog):
 
         for item in selected_items:
             text = item.text()
-            # Parse "Lost focus: 10.50h - 15.25h"
-            interval_text = text.split(":", 1)[1].strip()
-            start = float(interval_text.split("-")[0].replace("h", "").strip())
-            end = float(interval_text.split("-")[1].replace("h", "").strip())
+            # Parse "Frames 79-109  (6.58h - 9.08h)" or legacy "Lost focus: 6.58h - 9.08h"
+            if "(" in text:
+                hour_part = text.split("(")[1].rstrip(")")
+            elif ":" in text:
+                hour_part = text.split(":", 1)[1].strip()
+            else:
+                continue
+            start = float(hour_part.split("-")[0].replace("h", "").strip())
+            end = float(hour_part.split("-")[1].replace("h", "").strip())
 
             try:
                 self.focus_loss_intervals.remove((start, end))
@@ -739,8 +757,18 @@ class ExperimentDialog(QDialog):
     def _refresh_focus_loss_list(self):
         """Refresh the focus loss list widget"""
         self.focus_loss_list_widget.clear()
+        phc_interval = self.time_step_spinbox.value()
+        fluorescence_factor = self.fluorescence_factor_spinbox.value()
+        time_interval_hours = (phc_interval * fluorescence_factor) / 3600.0
+
         for start, end in self.focus_loss_intervals:
-            self.focus_loss_list_widget.addItem(f"Lost focus: {start:.2f}h - {end:.2f}h")
+            if time_interval_hours > 0:
+                f_start = int(round(start / time_interval_hours))
+                f_end = int(round(end / time_interval_hours))
+                self.focus_loss_list_widget.addItem(
+                    f"Frames {f_start}-{f_end}  ({start:.2f}h - {end:.2f}h)")
+            else:
+                self.focus_loss_list_widget.addItem(f"Lost focus: {start:.2f}h - {end:.2f}h")
 
     def _update_focus_conversion_helper(self):
         """Update the focus loss conversion helper text based on current time settings"""

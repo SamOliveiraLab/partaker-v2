@@ -37,6 +37,20 @@ class LineageVisualization:
         # Clear the existing figure
         canvas.figure.clear()
 
+        # Filter out focus loss frames from tracks
+        try:
+            from nd2_analyzer.data.appstate import ApplicationState
+            appstate = ApplicationState.get_instance()
+            if appstate and appstate.experiment and appstate.experiment.focus_loss_intervals:
+                filtered = []
+                for track in tracks:
+                    ft = appstate.experiment.filter_track_frames(track)
+                    if ft and len(ft.get("t", ft.get("x", []))) >= 2:
+                        filtered.append(ft)
+                tracks = filtered
+        except Exception:
+            pass
+
         import networkx as nx
 
         # Create directed graph

@@ -267,6 +267,43 @@ class TrackingWidget(QWidget):
             return
         dt.set_tracking_data(self.lineage_tracks, self.metrics_service)
 
+    def _export_tracking_data(self):
+        """Auto-export tracking data to JSON for Digital Twin offline use."""
+        if not self.lineage_tracks:
+            return
+        try:
+            from pathlib import Path
+            out_dir = Path(__file__).resolve().parents[4] / "digital_twin_output"
+            out_dir.mkdir(exist_ok=True)
+            out_path = out_dir / "tracking_data.json"
+
+            export = []
+            for track in self.lineage_tracks:
+                t = {}
+                for key in ("ID", "t", "x", "y", "parent", "children",
+                            "morphology", "area", "major_axis_length",
+                            "minor_axis_length", "orientation"):
+                    val = track.get(key)
+                    if val is not None:
+                        if isinstance(val, np.ndarray):
+                            t[key] = val.tolist()
+                        elif isinstance(val, list):
+                            t[key] = [
+                                float(v) if isinstance(v, (np.floating, np.integer)) else v
+                                for v in val
+                            ]
+                        elif isinstance(val, (np.floating, np.integer)):
+                            t[key] = float(val)
+                        else:
+                            t[key] = val
+                export.append(t)
+
+            with open(out_path, "w") as f:
+                json.dump(export, f)
+            print(f"[DT Export] Saved {len(export)} tracks to {out_path}")
+        except Exception as e:
+            print(f"[DT Export] Warning: failed to export tracking data: {e}")
+
     def _on_position_changed(self, _index=None):
         """Swap the active tracks/UI when the position selector changes.
 
@@ -458,15 +495,34 @@ class TrackingWidget(QWidget):
         print(f"  Channel: {selected_channel}")
 
         try:
+            # Get focus loss intervals to skip bad frames during tracking
+            focus_loss_intervals = []
+            time_interval_hours = 0.0833
+            try:
+                from nd2_analyzer.data.appstate import ApplicationState
+                _appstate = ApplicationState.get_instance()
+                if _appstate and _appstate.experiment:
+                    focus_loss_intervals = _appstate.experiment.focus_loss_intervals or []
+                    time_interval_hours = _appstate.experiment.time_interval_hours or 0.0833
+            except Exception:
+                pass
+
             # First, find all frames that actually have segmentation data
             available_frames = []
+            skipped_focus = 0
             for p in selected_positions:
                 for t in range(time_start, time_end + 1):
+                    t_hours = t * time_interval_hours
+                    if any(start <= t_hours < end for start, end in focus_loss_intervals):
+                        skipped_focus += 1
+                        continue
                     metrics_df = self.metrics_service.query_optimized(
                         time=t, position=p
                     )
                     if not metrics_df.is_empty():
                         available_frames.append((t, p))
+            if skipped_focus > 0:
+                print(f"  Skipped {skipped_focus} focus-loss frames during tracking")
 
             if not available_frames:
                 QMessageBox.warning(
@@ -600,6 +656,13 @@ class TrackingWidget(QWidget):
             # Tracking finished; dismiss the progress dialog before we draw.
             progress.close()
 
+            # Filter tracks by ROI (if defined)
+            from nd2_analyzer.analysis.roi_helper import ROIHelper
+            if ROIHelper.has_roi():
+                pre_roi = len(all_tracks)
+                all_tracks = ROIHelper.filter_tracks_by_roi(all_tracks)
+                print(f"  ROI filtering: {pre_roi} -> {len(all_tracks)} tracks")
+
             self.lineage_tracks = all_tracks
 
             # Filter tracks by length for display
@@ -631,6 +694,9 @@ class TrackingWidget(QWidget):
             pub.sendMessage(
                 "tracking_data_available", lineage_tracks=self.lineage_tracks
             )
+
+            # Auto-export tracking data for Digital Twin pipeline
+            self._export_tracking_data()
 
             # Visualize tracks
             self.visualize_tracks()

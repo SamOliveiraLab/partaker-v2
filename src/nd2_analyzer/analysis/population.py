@@ -175,12 +175,18 @@ def calculate_population_statistics(df: pl.DataFrame, config: FluoAnalysisConfig
 import numpy as np
 from typing import Dict, List, Tuple
 
-# Define component activation intervals (customize these time ranges)
-component_intervals = {
-    'aTc': [(0, 19.25)],
-    'IPTG': [(19.25, 30.42)],
-    'M9': [(30.42, 100)]
-}
+def _get_component_intervals():
+    """Read component intervals from experiment settings, fall back to empty."""
+    try:
+        from nd2_analyzer.data.appstate import ApplicationState
+        appstate = ApplicationState.get_instance()
+        if appstate and appstate.experiment and appstate.experiment.component_intervals:
+            return dict(appstate.experiment.component_intervals)
+    except Exception:
+        pass
+    return {}
+
+component_intervals = _get_component_intervals()
 
 def generate_component_step_functions(component_intervals: Dict[str, List[Tuple[float, float]]], t: np.ndarray) -> Dict[str, np.ndarray]:
     """
