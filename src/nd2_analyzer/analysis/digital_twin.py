@@ -67,6 +67,20 @@ class ParameterExtractor:
         self.log("[Extract] Extracting motility statistics...")
         self._extract_movement(cells)
 
+        params_path = os.path.join(DT_OUTPUT_DIR, "extracted_params.json")
+        os.makedirs(DT_OUTPUT_DIR, exist_ok=True)
+        serializable = {}
+        for k, v in self.params.items():
+            if isinstance(v, np.ndarray):
+                serializable[k] = v.tolist()
+            elif isinstance(v, (np.floating, np.integer)):
+                serializable[k] = float(v)
+            else:
+                serializable[k] = v
+        with open(params_path, 'w') as f:
+            json.dump(serializable, f, indent=2)
+        self.log(f"[Extract] Params saved to {params_path}")
+
         return self.params
 
     def _extract_growth_rates(self, cells: List[Dict]):
@@ -476,7 +490,15 @@ print(f"Default GIF saved: {{gif_path}}")
 
 
 class ComparisonFigureGenerator:
-    """Generates comparison figures: simulated vs observed."""
+    """Generates publication-quality comparison figures: simulated vs observed."""
+
+    # --- Publication palette ---
+    C_OBS = '#2E86AB'
+    C_SIM = '#A23B72'
+    C_DEF = '#F18F01'
+    C_THEORY = '#C73E1D'
+    C_BG = '#FAFAFA'
+    C_GRID = '#E0E0E0'
 
     def __init__(self, real_params: Dict, sim_results: Dict,
                  default_sim_results: Optional[Dict] = None,
@@ -490,11 +512,41 @@ class ComparisonFigureGenerator:
         self.output_dir = DT_OUTPUT_DIR
         os.makedirs(self.output_dir, exist_ok=True)
 
-    def generate_all(self) -> List[str]:
-        """Generate all comparison figures. Returns list of saved paths."""
+    def _pub_style(self):
+        """Apply publication-quality matplotlib rcParams."""
         import matplotlib
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt
+        plt.rcParams.update({
+            'font.family': 'sans-serif',
+            'font.sans-serif': ['Helvetica', 'Arial', 'DejaVu Sans'],
+            'font.size': 11,
+            'axes.titlesize': 13,
+            'axes.titleweight': 'bold',
+            'axes.labelsize': 12,
+            'axes.labelweight': 'medium',
+            'axes.linewidth': 1.2,
+            'axes.spines.top': False,
+            'axes.spines.right': False,
+            'axes.facecolor': self.C_BG,
+            'xtick.labelsize': 10,
+            'ytick.labelsize': 10,
+            'xtick.major.width': 1.0,
+            'ytick.major.width': 1.0,
+            'legend.fontsize': 10,
+            'legend.framealpha': 0.9,
+            'legend.edgecolor': '#CCCCCC',
+            'figure.facecolor': 'white',
+            'figure.dpi': 300,
+            'savefig.dpi': 300,
+            'savefig.bbox': 'tight',
+            'savefig.pad_inches': 0.15,
+        })
+        return plt
+
+    def generate_all(self) -> List[str]:
+        """Generate all comparison figures. Returns list of saved paths."""
+        self._pub_style()
 
         paths = []
         self.log("[Figures] Generating population growth...")
@@ -514,106 +566,113 @@ class ComparisonFigureGenerator:
         self.log(f"[Figures] Done — {len(result)} figures saved to {self.output_dir}")
         return result
 
-    def _plot_population_growth(self) -> str:
+    def _save(self, fig, name):
+        path = os.path.join(self.output_dir, name)
+        fig.savefig(path)
         import matplotlib.pyplot as plt
+        plt.close(fig)
+        return path
 
-        fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+    def _plot_population_growth(self) -> str:
+        plt = self._pub_style()
+
+        fig, ax = plt.subplots(figsize=(8, 5))
 
         sim_times = [s['time'] / 3600.0 for s in self.sim['timesteps']]
         sim_counts = [s['n_cells'] for s in self.sim['timesteps']]
-        ax.plot(sim_times, sim_counts, 'b-', linewidth=2, label='Calibrated Simulation')
+
+        ax.plot(sim_times, sim_counts, color=self.C_SIM, linewidth=2.5,
+                label='Calibrated Digital Twin', zorder=3)
 
         if self.default_sim:
             def_times = [s['time'] / 3600.0 for s in self.default_sim['timesteps']]
             def_counts = [s['n_cells'] for s in self.default_sim['timesteps']]
-            ax.plot(def_times, def_counts, 'r--', linewidth=1.5, label='Default (E. coli)')
+            ax.plot(def_times, def_counts, color=self.C_DEF, linewidth=2,
+                    linestyle='--', label='Default E. coli', zorder=2)
 
         doubling_time_h = self.real.get('doubling_time_s', 2400) / 3600.0
         if doubling_time_h > 0:
-            theory_times = np.linspace(0, max(sim_times), 100)
+            theory_times = np.linspace(0, max(sim_times), 200)
             theory_counts = np.exp(np.log(2) / doubling_time_h * theory_times)
-            ax.plot(theory_times, theory_counts, 'g:', linewidth=1.5,
-                    label=f'Theoretical (Td={doubling_time_h*60:.0f}min)')
+            ax.plot(theory_times, theory_counts, color=self.C_OBS, linewidth=1.8,
+                    linestyle=':', label=f'Theoretical ($T_d$={doubling_time_h*60:.0f} min)',
+                    zorder=1)
 
-        ax.set_xlabel('Time (hours)', fontsize=12)
-        ax.set_ylabel('Cell Count', fontsize=12)
-        ax.set_title('Population Growth: Simulated vs Theoretical', fontsize=14)
-        ax.legend(fontsize=10)
-        ax.grid(True, alpha=0.3)
+        ax.set_xlabel('Time (hours)')
+        ax.set_ylabel('Cell count')
+        ax.set_title('Population Growth Dynamics')
+        ax.legend(loc='upper left', frameon=True)
+        ax.grid(True, alpha=0.4, color=self.C_GRID, linestyle='-', linewidth=0.5)
+        ax.set_xlim(left=0)
+        ax.set_ylim(bottom=0)
 
-        path = os.path.join(self.output_dir, 'fig_population_growth.png')
-        fig.savefig(path, dpi=200, bbox_inches='tight')
-        plt.close(fig)
-        return path
+        return self._save(fig, 'fig_population_growth.png')
 
     def _plot_cell_size_distributions(self) -> str:
-        import matplotlib.pyplot as plt
+        plt = self._pub_style()
 
-        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
 
-        sim_lengths = []
-        for step in self.sim['timesteps']:
-            for cell in step['cells']:
-                L = cell.get('length', 0)
-                if L > 0:
-                    sim_lengths.append(L)
+        sim_lengths = [c['length'] for s in self.sim['timesteps']
+                       for c in s['cells'] if c.get('length', 0) > 0]
 
         ax = axes[0]
         if sim_lengths:
-            ax.hist(sim_lengths, bins=40, alpha=0.7, color='blue', density=True,
-                    label=f'Simulated (n={len(sim_lengths)})')
+            ax.hist(sim_lengths, bins=50, color=self.C_SIM, alpha=0.75,
+                    density=True, edgecolor='white', linewidth=0.5,
+                    label=f'Simulated ($n$={len(sim_lengths):,})')
         real_length_um = self.real.get('cell_length_mean_px', 0) * 0.065
         if real_length_um > 0:
-            ax.axvline(real_length_um, color='red', linewidth=2, linestyle='--',
-                       label=f'Observed mean: {real_length_um:.2f} µm')
-        ax.set_xlabel('Cell Length (µm)', fontsize=11)
-        ax.set_ylabel('Density', fontsize=11)
-        ax.set_title('Cell Length Distribution', fontsize=12)
-        ax.legend(fontsize=9)
+            ax.axvline(real_length_um, color=self.C_OBS, linewidth=2.5,
+                       linestyle='--', label=f'Observed mean: {real_length_um:.2f} µm',
+                       zorder=5)
+        ax.set_xlabel('Cell length (µm)')
+        ax.set_ylabel('Probability density')
+        ax.set_title('Cell Length Distribution')
+        ax.legend(frameon=True)
+        ax.grid(axis='y', alpha=0.3, color=self.C_GRID)
 
-        sim_masses = []
-        for step in self.sim['timesteps']:
-            for cell in step['cells']:
-                m = cell.get('mass', 0)
-                if m > 0:
-                    sim_masses.append(m)
+        sim_masses = [c['mass'] for s in self.sim['timesteps']
+                      for c in s['cells'] if c.get('mass', 0) > 0]
 
         ax = axes[1]
         if sim_masses:
-            ax.hist(sim_masses, bins=40, alpha=0.7, color='blue', density=True,
-                    label=f'Simulated (n={len(sim_masses)})')
-        ax.set_xlabel('Cell Mass', fontsize=11)
-        ax.set_ylabel('Density', fontsize=11)
-        ax.set_title('Cell Mass Distribution', fontsize=12)
-        ax.legend(fontsize=9)
+            ax.hist(sim_masses, bins=50, color=self.C_SIM, alpha=0.75,
+                    density=True, edgecolor='white', linewidth=0.5,
+                    label=f'Simulated ($n$={len(sim_masses):,})')
+        ax.set_xlabel('Cell mass (a.u.)')
+        ax.set_ylabel('Probability density')
+        ax.set_title('Cell Mass Distribution')
+        ax.legend(frameon=True)
+        ax.grid(axis='y', alpha=0.3, color=self.C_GRID)
 
-        fig.suptitle('Cell Size Distributions — Calibrated Simulation', fontsize=14, y=1.02)
-        path = os.path.join(self.output_dir, 'fig_size_distributions.png')
-        fig.savefig(path, dpi=200, bbox_inches='tight')
-        plt.close(fig)
-        return path
+        fig.tight_layout(w_pad=3)
+        return self._save(fig, 'fig_size_distributions.png')
 
     def _plot_growth_rate_comparison(self) -> str:
-        import matplotlib.pyplot as plt
+        plt = self._pub_style()
 
-        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
 
         sim_growth_rates = self._compute_sim_growth_rates()
 
         ax = axes[0]
         real_rates = self.real.get('growth_rates_all', [])
         if real_rates:
-            real_rates_per_h = [r * 3600 for r in real_rates]
-            ax.hist(real_rates_per_h, bins=20, alpha=0.6, color='green', density=True,
-                    label=f'Observed (n={len(real_rates)})')
+            real_h = [r * 3600 for r in real_rates]
+            ax.hist(real_h, bins=25, color=self.C_OBS, alpha=0.7, density=True,
+                    edgecolor='white', linewidth=0.5,
+                    label=f'Observed ($n$={len(real_rates)})')
         if sim_growth_rates:
-            sim_rates_per_h = [r * 3600 for r in sim_growth_rates]
-            ax.hist(sim_rates_per_h, bins=20, alpha=0.6, color='blue', density=True,
-                    label=f'Simulated (n={len(sim_growth_rates)})')
-        ax.set_xlabel('Growth Rate (1/h)', fontsize=11)
-        ax.set_ylabel('Density', fontsize=11)
-        ax.set_title('Growth Rate Distribution', fontsize=12)
-        ax.legend(fontsize=9)
+            sim_h = [r * 3600 for r in sim_growth_rates]
+            ax.hist(sim_h, bins=25, color=self.C_SIM, alpha=0.6, density=True,
+                    edgecolor='white', linewidth=0.5,
+                    label=f'Simulated ($n$={len(sim_growth_rates):,})')
+        ax.set_xlabel('Growth rate ($h^{-1}$)')
+        ax.set_ylabel('Probability density')
+        ax.set_title('Growth Rate Distribution')
+        ax.legend(frameon=True)
+        ax.grid(axis='y', alpha=0.3, color=self.C_GRID)
 
         ax = axes[1]
         real_mean = self.real.get('growth_rate_mean', 0) * 3600
@@ -622,71 +681,85 @@ class ComparisonFigureGenerator:
         sim_std = np.std(sim_growth_rates) * 3600 if sim_growth_rates else 0
         default_rate = 0.000289 * 3600
 
-        categories = ['Observed', 'Calibrated\nSimulation', 'Default\n(E. coli)']
+        x = np.arange(3)
         means = [real_mean, sim_mean, default_rate]
         stds = [real_std, sim_std, 0]
-        colors = ['green', 'blue', 'red']
+        colors = [self.C_OBS, self.C_SIM, self.C_DEF]
+        labels = ['Observed', 'Calibrated\nSimulation', 'Default\nE. coli']
 
-        bars = ax.bar(categories, means, yerr=stds, color=colors, alpha=0.7,
-                      capsize=5, edgecolor='black')
-        ax.set_ylabel('Growth Rate (1/h)', fontsize=11)
-        ax.set_title('Mean Growth Rate Comparison', fontsize=12)
+        bars = ax.bar(x, means, yerr=stds, width=0.6, color=colors,
+                      edgecolor='white', linewidth=1.5, capsize=6,
+                      error_kw={'linewidth': 1.5, 'capthick': 1.5})
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels)
+        ax.set_ylabel('Growth rate ($h^{-1}$)')
+        ax.set_title('Mean Growth Rate Comparison')
+        ax.grid(axis='y', alpha=0.3, color=self.C_GRID)
 
-        path = os.path.join(self.output_dir, 'fig_growth_rates.png')
-        fig.savefig(path, dpi=200, bbox_inches='tight')
-        plt.close(fig)
-        return path
+        for bar, val in zip(bars, means):
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(stds)*0.1,
+                    f'{val:.2f}', ha='center', va='bottom', fontsize=10, fontweight='bold')
+
+        fig.tight_layout(w_pad=3)
+        return self._save(fig, 'fig_growth_rates.png')
 
     def _plot_division_timing(self) -> str:
-        import matplotlib.pyplot as plt
+        plt = self._pub_style()
 
-        fig, ax = plt.subplots(1, 1, figsize=(8, 5))
+        fig, ax = plt.subplots(figsize=(6, 5))
 
         real_idt = self.real.get('interdivision_time_mean_min', 0)
         real_std = self.real.get('interdivision_time_std_s', 0) / 60.0
-
         sim_doubling = self._estimate_sim_doubling_time()
         default_doubling = 40.0
 
-        categories = ['Observed', 'Calibrated\nSimulation', 'Default\n(E. coli)']
+        x = np.arange(3)
         values = [real_idt, sim_doubling, default_doubling]
         stds = [real_std, 0, 0]
-        colors = ['green', 'blue', 'red']
+        colors = [self.C_OBS, self.C_SIM, self.C_DEF]
+        labels = ['Observed', 'Calibrated\nSimulation', 'Default\nE. coli']
 
-        ax.bar(categories, values, yerr=stds, color=colors, alpha=0.7,
-               capsize=5, edgecolor='black')
-        ax.set_ylabel('Doubling / Interdivision Time (min)', fontsize=11)
-        ax.set_title('Division Timing: Observed vs Simulated', fontsize=12)
-        ax.grid(True, alpha=0.3, axis='y')
+        bars = ax.bar(x, values, yerr=stds, width=0.55, color=colors,
+                      edgecolor='white', linewidth=1.5, capsize=6,
+                      error_kw={'linewidth': 1.5, 'capthick': 1.5})
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels)
+        ax.set_ylabel('Interdivision time (min)')
+        ax.set_title('Division Timing Comparison')
+        ax.grid(axis='y', alpha=0.3, color=self.C_GRID)
+        ax.set_ylim(bottom=0)
 
-        path = os.path.join(self.output_dir, 'fig_division_timing.png')
-        fig.savefig(path, dpi=200, bbox_inches='tight')
-        plt.close(fig)
-        return path
+        for bar, val in zip(bars, values):
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
+                    f'{val:.1f}', ha='center', va='bottom', fontsize=10, fontweight='bold')
+
+        fig.tight_layout()
+        return self._save(fig, 'fig_division_timing.png')
 
     def _plot_single_cell_growth_curves(self) -> str:
-        import matplotlib.pyplot as plt
+        plt = self._pub_style()
+        from matplotlib.lines import Line2D
 
-        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
+        cmap_obs = plt.cm.get_cmap('Set2', 8)
+        cmap_sim = plt.cm.get_cmap('Dark2', 8)
 
         ax = axes[0]
         cells = list(self.cell_database.values())
-        longest = sorted(cells, key=lambda c: c['lifespan'], reverse=True)[:5]
-        for cell in longest:
+        longest = sorted(cells, key=lambda c: c['lifespan'], reverse=True)[:6]
+        for i, cell in enumerate(longest):
             areas = np.array(cell['area'], dtype=float)
             valid = ~np.isnan(areas)
             times = np.arange(len(areas))[valid] * self.real.get('time_interval_s', 300) / 60.0
-            ax.plot(times, areas[valid], '-', alpha=0.7,
-                    label=f"Cell {cell['cell_id']}")
-        ax.set_xlabel('Time (min)', fontsize=11)
-        ax.set_ylabel('Area (px²)', fontsize=11)
-        ax.set_title('Observed: Single Cell Growth', fontsize=12)
-        ax.legend(fontsize=8)
+            ax.plot(times, areas[valid], '-o', color=cmap_obs(i), linewidth=1.8,
+                    markersize=3, alpha=0.85, label=f"Cell {cell['cell_id']}")
+        ax.set_xlabel('Time (min)')
+        ax.set_ylabel('Area (px²)')
+        ax.set_title('Observed — Single Cell Growth')
+        ax.legend(frameon=True, fontsize=8, ncol=2)
+        ax.grid(True, alpha=0.3, color=self.C_GRID)
 
         ax = axes[1]
-        for step in self.sim['timesteps'][:1]:
-            cell_ids = [c['id'] for c in step['cells']]
-
         cell_traces = {}
         for step in self.sim['timesteps']:
             t = step['time'] / 60.0
@@ -698,104 +771,150 @@ class ComparisonFigureGenerator:
                 cell_traces[cid]['lengths'].append(cell['length'])
 
         longest_sim = sorted(cell_traces.items(),
-                             key=lambda x: len(x[1]['times']), reverse=True)[:5]
-        for cid, trace in longest_sim:
-            ax.plot(trace['times'], trace['lengths'], '-', alpha=0.7,
-                    label=f'{cid[:12]}...' if len(cid) > 12 else cid)
-        ax.set_xlabel('Time (min)', fontsize=11)
-        ax.set_ylabel('Cell Length (µm)', fontsize=11)
-        ax.set_title('Simulated: Single Cell Growth', fontsize=12)
-        ax.legend(fontsize=8)
+                             key=lambda x: len(x[1]['times']), reverse=True)[:6]
+        for i, (cid, trace) in enumerate(longest_sim):
+            short_id = cid.split('_')[1][:6] if '_' in cid else cid[:6]
+            ax.plot(trace['times'], trace['lengths'], '-', color=cmap_sim(i),
+                    linewidth=1.8, alpha=0.85, label=short_id)
+        ax.set_xlabel('Time (min)')
+        ax.set_ylabel('Cell length (µm)')
+        ax.set_title('Simulated — Single Cell Growth')
+        ax.legend(frameon=True, fontsize=8, ncol=2)
+        ax.grid(True, alpha=0.3, color=self.C_GRID)
 
-        fig.suptitle('Single Cell Growth Curves — Observed vs Simulated', fontsize=14, y=1.02)
-        path = os.path.join(self.output_dir, 'fig_single_cell_growth.png')
-        fig.savefig(path, dpi=200, bbox_inches='tight')
-        plt.close(fig)
-        return path
+        fig.tight_layout(w_pad=3)
+        return self._save(fig, 'fig_single_cell_growth.png')
 
     def _plot_summary_dashboard(self) -> str:
-        import matplotlib.pyplot as plt
+        plt = self._pub_style()
 
         fig = plt.figure(figsize=(16, 10))
-        fig.suptitle('Digital Twin Validation Dashboard', fontsize=16, fontweight='bold')
+        fig.suptitle('Digital Twin Validation Dashboard',
+                     fontsize=18, fontweight='bold', y=0.98)
+        fig.text(0.5, 0.945,
+                 'Observed microscopy parameters vs. Viva-munk calibrated simulation',
+                 ha='center', fontsize=11, color='#666666', style='italic')
 
-        gs = fig.add_gridspec(2, 3, hspace=0.35, wspace=0.3)
+        gs = fig.add_gridspec(2, 3, hspace=0.4, wspace=0.35,
+                              top=0.9, bottom=0.08, left=0.06, right=0.97)
 
         # 1. Population growth
         ax1 = fig.add_subplot(gs[0, 0])
         sim_times = [s['time'] / 3600.0 for s in self.sim['timesteps']]
         sim_counts = [s['n_cells'] for s in self.sim['timesteps']]
-        ax1.plot(sim_times, sim_counts, 'b-', linewidth=2)
-        ax1.set_title('Population Growth', fontsize=11)
+        ax1.plot(sim_times, sim_counts, color=self.C_SIM, linewidth=2.2)
+        ax1.fill_between(sim_times, 0, sim_counts, color=self.C_SIM, alpha=0.1)
+        doubling_time_h = self.real.get('doubling_time_s', 2400) / 3600.0
+        if doubling_time_h > 0:
+            th_t = np.linspace(0, max(sim_times), 200)
+            th_c = np.exp(np.log(2) / doubling_time_h * th_t)
+            ax1.plot(th_t, th_c, ':', color=self.C_OBS, linewidth=1.5)
+        ax1.set_title('Population Growth')
         ax1.set_xlabel('Time (h)')
-        ax1.set_ylabel('Cells')
+        ax1.set_ylabel('Cell count')
+        ax1.grid(True, alpha=0.3, color=self.C_GRID)
+        ax1.set_xlim(left=0)
+        ax1.set_ylim(bottom=0)
 
-        # 2. Growth rate comparison
+        # 2. Growth rate
         ax2 = fig.add_subplot(gs[0, 1])
         real_rate = self.real.get('growth_rate_mean', 0) * 3600
         sim_rates = self._compute_sim_growth_rates()
         sim_rate = np.mean(sim_rates) * 3600 if sim_rates else 0
-        ax2.bar(['Observed', 'Simulated'], [real_rate, sim_rate],
-                color=['green', 'blue'], alpha=0.7, edgecolor='black')
-        ax2.set_title('Growth Rate (1/h)', fontsize=11)
+        default_rate = 0.000289 * 3600
+        x = np.arange(3)
+        bars = ax2.bar(x, [real_rate, sim_rate, default_rate], width=0.55,
+                       color=[self.C_OBS, self.C_SIM, self.C_DEF],
+                       edgecolor='white', linewidth=1.5)
+        ax2.set_xticks(x)
+        ax2.set_xticklabels(['Observed', 'Simulated', 'Default'], fontsize=9)
+        ax2.set_title('Growth Rate ($h^{-1}$)')
+        ax2.grid(axis='y', alpha=0.3, color=self.C_GRID)
+        for bar, val in zip(bars, [real_rate, sim_rate, default_rate]):
+            ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02,
+                     f'{val:.2f}', ha='center', va='bottom', fontsize=9, fontweight='bold')
 
         # 3. Division timing
         ax3 = fig.add_subplot(gs[0, 2])
         real_idt = self.real.get('interdivision_time_mean_min', 0)
         sim_dt = self._estimate_sim_doubling_time()
-        ax3.bar(['Observed', 'Simulated'], [real_idt, sim_dt],
-                color=['green', 'blue'], alpha=0.7, edgecolor='black')
-        ax3.set_title('Interdivision Time (min)', fontsize=11)
+        x = np.arange(3)
+        bars = ax3.bar(x, [real_idt, sim_dt, 40.0], width=0.55,
+                       color=[self.C_OBS, self.C_SIM, self.C_DEF],
+                       edgecolor='white', linewidth=1.5)
+        ax3.set_xticks(x)
+        ax3.set_xticklabels(['Observed', 'Simulated', 'Default'], fontsize=9)
+        ax3.set_title('Interdivision Time (min)')
+        ax3.grid(axis='y', alpha=0.3, color=self.C_GRID)
+        for bar, val in zip(bars, [real_idt, sim_dt, 40.0]):
+            ax3.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
+                     f'{val:.1f}', ha='center', va='bottom', fontsize=9, fontweight='bold')
 
-        # 4. Cell size
+        # 4. Cell length distribution
         ax4 = fig.add_subplot(gs[1, 0])
-        sim_lengths = [c['length'] for s in self.sim['timesteps'] for c in s['cells'] if c['length'] > 0]
+        sim_lengths = [c['length'] for s in self.sim['timesteps']
+                       for c in s['cells'] if c.get('length', 0) > 0]
         if sim_lengths:
-            ax4.hist(sim_lengths, bins=30, alpha=0.7, color='blue', density=True)
-        ax4.set_title('Sim Cell Lengths', fontsize=11)
+            ax4.hist(sim_lengths, bins=40, color=self.C_SIM, alpha=0.75,
+                     density=True, edgecolor='white', linewidth=0.5)
+        real_len = self.real.get('cell_length_mean_px', 0) * 0.065
+        if real_len > 0:
+            ax4.axvline(real_len, color=self.C_OBS, linewidth=2.5, linestyle='--')
+            ax4.text(real_len * 1.05, ax4.get_ylim()[1] * 0.85,
+                     f'Obs: {real_len:.1f} µm', color=self.C_OBS, fontsize=9, fontweight='bold')
+        ax4.set_title('Cell Length Distribution')
         ax4.set_xlabel('Length (µm)')
+        ax4.set_ylabel('Density')
+        ax4.grid(axis='y', alpha=0.3, color=self.C_GRID)
 
-        # 5. Parameter table
+        # 5. Parameter comparison table
         ax5 = fig.add_subplot(gs[1, 1:])
         ax5.axis('off')
+        ax5.set_title('Quantitative Comparison', pad=15)
+
         table_data = [
-            ['Parameter', 'Observed', 'Simulated', 'Default E. coli'],
-            ['Growth rate (1/h)',
-             f"{self.real.get('growth_rate_mean', 0)*3600:.4f}",
-             f"{sim_rate:.4f}" if sim_rate else "N/A",
-             f"{0.000289*3600:.4f}"],
+            ['Growth rate ($h^{-1}$)',
+             f"{real_rate:.3f}",
+             f"{sim_rate:.3f}" if sim_rate else "—",
+             f"{default_rate:.3f}"],
             ['Doubling time (min)',
              f"{self.real.get('doubling_time_min', 0):.1f}",
-             f"{sim_dt:.1f}" if sim_dt else "N/A",
+             f"{sim_dt:.1f}" if sim_dt else "—",
              "40.0"],
             ['Cell length (µm)',
-             f"{self.real.get('cell_length_mean_px', 0)*0.065:.2f}",
-             f"{np.mean(sim_lengths):.2f}" if sim_lengths else "N/A",
+             f"{real_len:.2f}",
+             f"{np.mean(sim_lengths):.2f}" if sim_lengths else "—",
              "2.0"],
+            ['Aspect ratio',
+             f"{self.real.get('aspect_ratio_mean', 0):.2f}",
+             "—", "—"],
             ['Dividing cells',
              f"{self.real.get('n_dividing_cells', 0)}",
              f"{self.sim.get('final_cell_count', 0)}",
-             "N/A"],
-            ['Cells analyzed',
+             "—"],
+            ['Total cells analyzed',
              f"{self.real.get('n_cells', 0)}",
              f"{self.sim.get('final_cell_count', 0)} final",
-             "N/A"],
+             "—"],
         ]
 
-        table = ax5.table(cellText=table_data[1:], colLabels=table_data[0],
+        col_labels = ['Parameter', 'Observed', 'Calibrated DT', 'Default E. coli']
+        table = ax5.table(cellText=table_data, colLabels=col_labels,
                           loc='center', cellLoc='center')
         table.auto_set_font_size(False)
         table.set_fontsize(10)
-        table.scale(1.0, 1.5)
+        table.scale(1.0, 1.6)
 
-        for i in range(len(table_data[0])):
-            table[0, i].set_facecolor('#4472C4')
-            table[0, i].set_text_props(color='white', fontweight='bold')
+        for i in range(len(col_labels)):
+            table[0, i].set_facecolor('#2C3E50')
+            table[0, i].set_text_props(color='white', fontweight='bold', fontsize=10)
+        for row in range(1, len(table_data) + 1):
+            bg = '#F8F9FA' if row % 2 == 0 else 'white'
+            for col in range(len(col_labels)):
+                table[row, col].set_facecolor(bg)
+                table[row, col].set_edgecolor('#DEE2E6')
 
-        path = os.path.join(self.output_dir, 'fig_validation_dashboard.png')
-        fig.savefig(path, dpi=200, bbox_inches='tight')
-        plt.close(fig)
-        return path
+        return self._save(fig, 'fig_validation_dashboard.png')
 
     def _compute_sim_growth_rates(self) -> List[float]:
         """Estimate per-cell growth rates from simulation data."""
