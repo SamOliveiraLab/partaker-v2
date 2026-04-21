@@ -110,6 +110,7 @@ class DigitalTwinTab(QWidget):
         self._results = None
         self._worker = None
         self._init_ui()
+        self._sync_experiment_settings()
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -226,8 +227,24 @@ class DigitalTwinTab(QWidget):
     # ------------------------------------------------------------------ #
     # Public API — called by TrackingWidget when data becomes available
     # ------------------------------------------------------------------ #
+    def _sync_experiment_settings(self):
+        """Pull time interval and pixel calibration from experiment config."""
+        try:
+            from nd2_analyzer.data.appstate import ApplicationState
+            appstate = ApplicationState.get_instance()
+            if appstate and appstate.experiment:
+                exp = appstate.experiment
+                interval_s = (exp.time_interval_hours or 0.0833) * 3600.0
+                if interval_s > 0:
+                    self.interval_spin.setValue(interval_s)
+                if hasattr(exp, 'pixel_to_um') and exp.pixel_to_um:
+                    self.px_to_um_spin.setValue(exp.pixel_to_um)
+        except Exception:
+            pass
+
     def set_tracking_data(self, lineage_tracks, metrics_service):
         """Receive tracking data from the parent TrackingWidget."""
+        self._sync_experiment_settings()
         self._lineage_tracks = lineage_tracks
         self._metrics_service = metrics_service
         self._cell_database = None

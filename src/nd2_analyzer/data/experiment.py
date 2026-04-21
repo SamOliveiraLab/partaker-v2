@@ -293,6 +293,13 @@ class Experiment:
 
         return experiment, roi_mask, registration_offsets, crop_coordinates
 
+    def is_focus_loss_frame(self, frame: int) -> bool:
+        """Return True if the given frame falls within a focus loss interval."""
+        if not self.focus_loss_intervals:
+            return False
+        time_h = frame * self.time_interval_hours
+        return any(start <= time_h < end for start, end in self.focus_loss_intervals)
+
     def filter_track_frames(self, track):
         """
         Remove frames from track that fall within focus loss intervals.

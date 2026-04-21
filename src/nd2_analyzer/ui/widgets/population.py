@@ -197,11 +197,12 @@ class PopulationWidget(QWidget):
         df = filter_data(df, analysis_cgf)
         df = calculate_population_statistics(df, analysis_cgf)
 
-        component_intervals = {
-            'aTc': [(0, 19.25)],
-            'IPTG': [(19.25, 30.42)],
-            'M9': [(30.42, 100)]
-        }
+        component_intervals = {}
+        try:
+            if self.experiment and self.experiment.component_intervals:
+                component_intervals = dict(self.experiment.component_intervals)
+        except Exception:
+            pass
 
         # Normalize with RPU
         text = self.mcherry_channel_combo.currentText()
@@ -306,11 +307,12 @@ class PopulationWidget(QWidget):
             self.population_canvas.draw()
             return
 
-        component_intervals = {
-            'aTc': [(0, 19.25)],
-            'IPTG': [(19.25, 30.42)],
-            'M9': [(30.42, 100)]
-        }
+        component_intervals = {}
+        try:
+            if self.experiment and self.experiment.component_intervals:
+                component_intervals = dict(self.experiment.component_intervals)
+        except Exception:
+            pass
 
         # Normalize with RPU
         text = self.mcherry_channel_combo.currentText()

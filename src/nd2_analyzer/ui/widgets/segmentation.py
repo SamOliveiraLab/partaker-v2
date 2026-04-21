@@ -285,10 +285,26 @@ class SegmentationWidget(QWidget):
         from nd2_analyzer.analysis.metrics_service import MetricsService
         metrics_service = MetricsService()
 
+        # Get focus loss intervals to skip bad frames
+        _focus_loss_skip = set()
+        try:
+            from nd2_analyzer.data.appstate import ApplicationState
+            _appstate = ApplicationState.get_instance()
+            if _appstate and _appstate.experiment and _appstate.experiment.focus_loss_intervals:
+                for t in range(t_start, t_end + 1):
+                    if _appstate.experiment.is_focus_loss_frame(t):
+                        _focus_loss_skip.add(t)
+                if _focus_loss_skip:
+                    print(f"[Segmentation] Skipping {len(_focus_loss_skip)} focus-loss frames")
+        except Exception:
+            pass
+
         # Check if we need to segment anything
         frames_to_segment = []
         for p in self.positions:
             for t in range(t_start, t_end + 1):
+                if t in _focus_loss_skip:
+                    continue
                 # If metrics don't exist for this frame, add it to the queue
                 if not metrics_service.has_data_for(position=p, time=t, channel=self.channel):
                     frames_to_segment.append((t, p))

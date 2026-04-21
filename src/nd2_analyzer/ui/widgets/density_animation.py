@@ -52,6 +52,18 @@ class DensityAnimationGenerator(QThread):
             self.error.emit("No time data found in tracks")
             return
 
+        # Remove focus loss frames
+        try:
+            from nd2_analyzer.data.appstate import ApplicationState
+            _appstate = ApplicationState.get_instance()
+            if _appstate and _appstate.experiment and _appstate.experiment.focus_loss_intervals:
+                all_time_points = {
+                    t for t in all_time_points
+                    if not _appstate.experiment.is_focus_loss_frame(int(t))
+                }
+        except Exception:
+            pass
+
         time_points = sorted(all_time_points)
 
         # Generate frame for each time point

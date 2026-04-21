@@ -83,6 +83,15 @@ def tracks_to_grid(
             "image_shape": image_shape,
         }
 
+    # Remove focus loss frames
+    try:
+        from nd2_analyzer.data.appstate import ApplicationState
+        _appstate = ApplicationState.get_instance()
+        if _appstate and _appstate.experiment and _appstate.experiment.focus_loss_intervals:
+            t_set = {t for t in t_set if not _appstate.experiment.is_focus_loss_frame(t)}
+    except Exception:
+        pass
+
     t_values = np.array(sorted(t_set), dtype=int)
     t_index = {int(tv): i for i, tv in enumerate(t_values)}
     T = len(t_values)
