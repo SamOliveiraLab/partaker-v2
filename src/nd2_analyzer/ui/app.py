@@ -605,7 +605,24 @@ class App(QMainWindow):
                 metrics_loaded = metrics_service.load_optimized(folder_path)
 
                 # Load experiment with ROI and registration data
-                experiment, roi_mask, registration_offsets, crop_coordinates = Experiment.load(folder_path)
+                # Try loading; if image files moved, prompt for their new location
+                relink_root = None
+                try:
+                    experiment, roi_mask, registration_offsets, crop_coordinates = Experiment.load(folder_path)
+                except FileNotFoundError:
+                    relink_root = QFileDialog.getExistingDirectory(
+                        self,
+                        "Original image files not found — select folder containing the raw data",
+                        "",
+                        QFileDialog.ShowDirsOnly,
+                    )
+                    if not relink_root:
+                        raise FileNotFoundError(
+                            "Image file paths in this project are missing and no replacement folder was selected."
+                        )
+                    experiment, roi_mask, registration_offsets, crop_coordinates = Experiment.load(
+                        folder_path, relink_root=relink_root
+                    )
                 self.appstate.experiment = experiment
 
                 # Load image data (with TIFF relink fallback for moved datasets)
@@ -640,7 +657,19 @@ class App(QMainWindow):
                         image_data = ImageData.load_tiff_directory(file_map, tiff_mode)
 
                 if image_data is None:
-                    image_data = ImageData.load_from_disk(folder_path)
+                    try:
+                        image_data = ImageData.load_from_disk(folder_path, relink_root=relink_root)
+                    except FileNotFoundError:
+                        if not relink_root:
+                            relink_root = QFileDialog.getExistingDirectory(
+                                self,
+                                "Original image files not found — select folder containing the raw data",
+                                "",
+                                QFileDialog.ShowDirsOnly,
+                            )
+                        if not relink_root:
+                            raise
+                        image_data = ImageData.load_from_disk(folder_path, relink_root=relink_root)
 
                 # Restore registration offsets if they exist
                 if registration_offsets is not None:

@@ -398,6 +398,12 @@ class ViewAreaWidget(QWidget):
 
         # Build labeled mask
         seg = np.asarray(segmented)
+
+        from nd2_analyzer.analysis.roi_helper import ROIHelper
+        roi_mask = ROIHelper.get_roi_mask()
+        if roi_mask is not None and roi_mask.shape == seg.shape:
+            seg = seg * roi_mask.astype(seg.dtype)
+
         if seg.max() <= 255 and len(np.unique(seg)) <= 100:
             labeled = sk_label(seg > 0)
         else:
