@@ -24,12 +24,17 @@ DT_VIVAMUNK = str(DT_HOME / "digital_twin_vivamunk")
 DT_OUTPUT_DIR = str(PROJECT_ROOT / "digital_twin_output")
 
 
+def _noop_log(msg):
+    print(msg)
+
+
 class ParameterExtractor:
     """Extracts simulation-ready parameters from PARTAKER cell history data."""
 
-    def __init__(self, cell_database: Dict):
+    def __init__(self, cell_database: Dict, log=None):
         self.cell_database = cell_database
         self.params = {}
+        self.log = log or _noop_log
 
     def extract_all(self, time_interval_seconds: float = 300.0) -> Dict:
         """Extract all parameters needed for Viva-munk calibration.
@@ -43,14 +48,23 @@ class ParameterExtractor:
         self.dt = time_interval_seconds
         cells = list(self.cell_database.values())
 
+        self.log(f"[Extract] {len(cells)} cells in database, dt={time_interval_seconds}s")
+
         self.params = {
             'n_cells': len(cells),
             'time_interval_s': self.dt,
         }
 
+        self.log("[Extract] Fitting growth rates (ln(area) vs time)...")
         self._extract_growth_rates(cells)
+
+        self.log("[Extract] Extracting division parameters...")
         self._extract_division_params(cells)
+
+        self.log("[Extract] Extracting morphology statistics...")
         self._extract_morphology(cells)
+
+        self.log("[Extract] Extracting motility statistics...")
         self._extract_movement(cells)
 
         return self.params
@@ -89,6 +103,11 @@ class ParameterExtractor:
             self.params['doubling_time_min'] = self.params['doubling_time_s'] / 60.0
             self.params['n_cells_with_growth'] = len(growth_rates)
             self.params['growth_rates_all'] = growth_rates
+            self.log(f"  -> {len(growth_rates)} cells with valid growth, "
+                     f"rate={np.mean(growth_rates)*3600:.4f}/h, "
+                     f"Td={self.params['doubling_time_min']:.1f}min")
+        else:
+            self.log("  -> WARNING: No cells with valid growth rates found")
 
     def _extract_division_params(self, cells: List[Dict]):
         """Extract division size threshold and interdivision time."""
@@ -123,6 +142,11 @@ class ParameterExtractor:
                 self.params['interdivision_time_mean_min'] = self.params['interdivision_time_mean_s'] / 60.0
 
             self.params['n_dividing_cells'] = len(dividing_cells)
+            self.log(f"  -> {len(dividing_cells)} dividing cells, "
+                     f"IDT={self.params.get('interdivision_time_mean_min', 0):.1f}min, "
+                     f"div length={self.params.get('division_length_mean', 0):.1f}px")
+        else:
+            self.log("  -> No dividing cells found")
 
     def _extract_morphology(self, cells: List[Dict]):
         """Extract average cell dimensions."""
@@ -161,6 +185,8 @@ class ParameterExtractor:
             self.params['cell_area_mean_px'] = float(np.mean(all_areas))
         if all_aspect_ratios:
             self.params['aspect_ratio_mean'] = float(np.mean(all_aspect_ratios))
+        self.log(f"  -> length={np.mean(all_lengths):.1f}px, width={np.mean(all_widths):.1f}px, "
+                 f"AR={np.mean(all_aspect_ratios):.2f}" if all_lengths else "  -> No morphology data")
 
     def _extract_movement(self, cells: List[Dict]):
         """Extract movement/motility statistics."""
@@ -172,23 +198,18 @@ class ParameterExtractor:
             self.params['avg_velocity_px_per_frame'] = float(np.mean(velocities))
             self.params['avg_displacement_px'] = float(np.mean(displacements))
             self.params['avg_directionality'] = float(np.mean(directionalities))
+            self.log(f"  -> velocity={np.mean(velocities):.2f}px/f, "
+                     f"displacement={np.mean(displacements):.1f}px, "
+                     f"directionality={np.mean(directionalities):.3f}")
 
 
 class DigitalTwinRunner:
     """Runs Viva-munk simulations calibrated with real parameters."""
 
-    def __init__(self, extracted_params: Dict, pixel_to_um: float = 0.065):
-        """
-        Parameters
-        ----------
-        extracted_params : dict
-            Output from ParameterExtractor.extract_all()
-        pixel_to_um : float
-            Pixel-to-micrometer conversion. Default 0.065 um/px for typical
-            microscopy at 100x magnification.
-        """
+    def __init__(self, extracted_params: Dict, pixel_to_um: float = 0.065, log=None):
         self.params = extracted_params
         self.px_to_um = pixel_to_um
+        self.log = log or _noop_log
         self.output_dir = DT_OUTPUT_DIR
         os.makedirs(self.output_dir, exist_ok=True)
 
@@ -228,14 +249,15 @@ class DigitalTwinRunner:
         }
 
         self.calibrated_config = config
+        self.log(f"[Config] env_size={env_size:.1f}µm, "
+                 f"growth_rate={growth_rate:.6f}/s ({growth_rate*3600:.4f}/h), "
+                 f"cell_length={cell_length_um:.2f}µm, radius={cell_radius:.2f}µm")
+        self.log(f"[Config] division_threshold={config['division_threshold']:.4f}, "
+                 f"sim_time={total_sim_time/3600:.1f}h")
         return config
 
     def run_simulation(self, experiment_type: str = 'daughter_machine') -> Dict:
-        """Run a Viva-munk simulation using the calibrated config.
-
-        Executes in the digital_twin_env Python since Viva-munk needs 3.11+.
-        Returns the simulation results as a dict.
-        """
+        """Run a Viva-munk simulation using the calibrated config."""
         config = self.build_calibrated_config()
 
         script = self._build_simulation_script(experiment_type, config)
@@ -246,17 +268,27 @@ class DigitalTwinRunner:
         with open(script_path, 'w') as f:
             f.write(script)
 
+        self.log(f"[Sim] Launching {experiment_type} in digital_twin_env...")
+        self.log(f"[Sim] Python: {DT_ENV_PYTHON}")
+
         result = subprocess.run(
             [DT_ENV_PYTHON, script_path],
             capture_output=True, text=True, timeout=600,
         )
 
+        if result.stdout:
+            for line in result.stdout.strip().split('\n'):
+                self.log(f"[Sim] {line}")
+
         if result.returncode != 0:
+            self.log(f"[Sim] STDERR: {result.stderr[:500]}")
             raise RuntimeError(f"Simulation failed:\n{result.stderr}")
 
         with open(results_path, 'r') as f:
             sim_results = json.load(f)
 
+        self.log(f"[Sim] Done: {sim_results.get('final_cell_count', 0)} final cells, "
+                 f"{sim_results.get('n_steps', 0)} steps")
         return sim_results
 
     def _build_simulation_script(self, experiment_type: str, config: Dict) -> str:
@@ -422,16 +454,25 @@ print(f"Default GIF saved: {{gif_path}}")
         with open(script_path, 'w') as f:
             f.write(script)
 
+        self.log("[Default] Launching default E. coli simulation...")
         result = subprocess.run(
             [DT_ENV_PYTHON, script_path],
             capture_output=True, text=True, timeout=600,
         )
 
+        if result.stdout:
+            for line in result.stdout.strip().split('\n'):
+                self.log(f"[Default] {line}")
+
         if result.returncode != 0:
+            self.log(f"[Default] STDERR: {result.stderr[:500]}")
             raise RuntimeError(f"Default simulation failed:\n{result.stderr}")
 
         with open(results_path, 'r') as f:
-            return json.load(f)
+            data = json.load(f)
+
+        self.log(f"[Default] Done: {data.get('final_cell_count', 0)} cells")
+        return data
 
 
 class ComparisonFigureGenerator:
@@ -439,11 +480,13 @@ class ComparisonFigureGenerator:
 
     def __init__(self, real_params: Dict, sim_results: Dict,
                  default_sim_results: Optional[Dict] = None,
-                 cell_database: Optional[Dict] = None):
+                 cell_database: Optional[Dict] = None,
+                 log=None):
         self.real = real_params
         self.sim = sim_results
         self.default_sim = default_sim_results
         self.cell_database = cell_database
+        self.log = log or _noop_log
         self.output_dir = DT_OUTPUT_DIR
         os.makedirs(self.output_dir, exist_ok=True)
 
@@ -454,14 +497,22 @@ class ComparisonFigureGenerator:
         import matplotlib.pyplot as plt
 
         paths = []
+        self.log("[Figures] Generating population growth...")
         paths.append(self._plot_population_growth())
+        self.log("[Figures] Generating size distributions...")
         paths.append(self._plot_cell_size_distributions())
+        self.log("[Figures] Generating growth rate comparison...")
         paths.append(self._plot_growth_rate_comparison())
+        self.log("[Figures] Generating division timing...")
         paths.append(self._plot_division_timing())
         if self.cell_database:
+            self.log("[Figures] Generating single cell growth curves...")
             paths.append(self._plot_single_cell_growth_curves())
+        self.log("[Figures] Generating validation dashboard...")
         paths.append(self._plot_summary_dashboard())
-        return [p for p in paths if p]
+        result = [p for p in paths if p]
+        self.log(f"[Figures] Done — {len(result)} figures saved to {self.output_dir}")
+        return result
 
     def _plot_population_growth(self) -> str:
         import matplotlib.pyplot as plt

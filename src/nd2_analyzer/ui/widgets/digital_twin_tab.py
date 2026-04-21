@@ -65,35 +65,27 @@ class SimulationWorker(QThread):
                 ComparisonFigureGenerator,
             )
 
-            self.progress.emit("Extracting real cell parameters...")
-            extractor = ParameterExtractor(self.cell_database)
-            params = extractor.extract_all(self.time_interval_s)
-            self.progress.emit(
-                f"Extracted: growth rate={params.get('growth_rate_mean', 0)*3600:.4f}/h, "
-                f"doubling={params.get('doubling_time_min', 0):.1f}min, "
-                f"{params.get('n_cells', 0)} cells"
-            )
+            log = self.progress.emit
 
-            self.progress.emit("Running calibrated simulation...")
-            runner = DigitalTwinRunner(params, self.pixel_to_um)
+            log("--- STEP 1: PARAMETER EXTRACTION ---")
+            extractor = ParameterExtractor(self.cell_database, log=log)
+            params = extractor.extract_all(self.time_interval_s)
+
+            log("--- STEP 2: CALIBRATED SIMULATION ---")
+            runner = DigitalTwinRunner(params, self.pixel_to_um, log=log)
             config = runner.build_calibrated_config()
             sim_results = runner.run_simulation(self.experiment_type)
-            self.progress.emit(
-                f"Calibrated sim done: {sim_results.get('final_cell_count', 0)} cells"
-            )
 
-            self.progress.emit("Running default simulation for comparison...")
+            log("--- STEP 3: DEFAULT SIMULATION ---")
             default_results = runner.run_default_simulation()
-            self.progress.emit(
-                f"Default sim done: {default_results.get('final_cell_count', 0)} cells"
-            )
 
-            self.progress.emit("Generating comparison figures...")
+            log("--- STEP 4: COMPARISON FIGURES ---")
             generator = ComparisonFigureGenerator(
                 params, sim_results, default_results, self.cell_database,
+                log=log,
             )
             figure_paths = generator.generate_all()
-            self.progress.emit(f"Generated {len(figure_paths)} figures")
+            log("--- PIPELINE COMPLETE ---")
 
             self.finished.emit({
                 'params': params,
@@ -290,8 +282,11 @@ class DigitalTwinTab(QWidget):
         """Build cell histories from tracking + metrics data."""
         from nd2_analyzer.analysis.cell_history import CellHistoryBuilder
 
+        self._log(f"Building cell database from {len(self._lineage_tracks)} tracks...")
+        self._log("(This queries morphology for every cell at every timepoint)")
         builder = CellHistoryBuilder(self._lineage_tracks, self._metrics_service)
         self._cell_database = builder.build(min_track_length=5)
+        self._log(f"Cell database built: {len(self._cell_database)} cells passed filter")
 
     def _on_pipeline_done(self, results: dict):
         self._results = results
