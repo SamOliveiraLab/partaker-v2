@@ -161,11 +161,19 @@ class CellViewDialog(QDialog):
         self.metrics_table.itemClicked.connect(self._on_table_click)
         left_l.addWidget(self.metrics_table)
 
-        # Export GIF button
+        # Export buttons
+        export_layout = QHBoxLayout()
+
         self.export_btn = QPushButton("Export GIF")
         self.export_btn.setEnabled(False)
         self.export_btn.clicked.connect(self._export_gif)
-        left_l.addWidget(self.export_btn)
+        export_layout.addWidget(self.export_btn)
+
+        self.export_csv_btn = QPushButton("Export Cell History CSV")
+        self.export_csv_btn.clicked.connect(self._export_cell_history)
+        export_layout.addWidget(self.export_csv_btn)
+
+        left_l.addLayout(export_layout)
 
         splitter.addWidget(left_w)
 
@@ -832,6 +840,36 @@ class CellViewDialog(QDialog):
         self.current_t = int(value)
         self.time_label.setText(f"t={self.current_t}")
         self._render_frame()
+
+    # ------------------------------------------------------------------ #
+    # Cell History CSV export                                              #
+    # ------------------------------------------------------------------ #
+
+    def _export_cell_history(self):
+        from nd2_analyzer.analysis.cell_history import CellHistoryBuilder
+
+        if not self.lineage_tracks:
+            QMessageBox.warning(self, "No Data", "No tracking data available.")
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Cell History CSV",
+            f"cell_history_p{self.position}.csv",
+            "CSV Files (*.csv)",
+        )
+        if not path:
+            return
+
+        try:
+            builder = CellHistoryBuilder(self.lineage_tracks, self.metrics_service)
+            builder.build(min_track_length=5)
+            builder.export_to_csv(path)
+            QMessageBox.information(
+                self, "Export Complete",
+                f"Exported {len(builder.cell_database)} cells to:\n{path}",
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Export Failed", str(e))
 
     # ------------------------------------------------------------------ #
     # GIF export                                                          #
