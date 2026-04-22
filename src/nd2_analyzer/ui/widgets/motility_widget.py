@@ -1778,6 +1778,7 @@ class MotilityDialog(QDialog):
                         row_data = {
                             'cell_id': track_id,
                             'time_point': t,
+                            'position': p,
                             'position_in_track': i,
                             'x_pixels': x,
                             'y_pixels': y,
