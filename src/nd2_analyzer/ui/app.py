@@ -16,6 +16,7 @@ from nd2_analyzer.analysis.morphology.morphology import (
 from nd2_analyzer.data.experiment import Experiment
 from nd2_analyzer.data.image_data import ImageData
 from .dialogs import AboutDialog, ExperimentDialog
+from nd2_analyzer.ui.dialogs.export_raw import ExportDialog
 from nd2_analyzer.ui.dialogs.roisel import PolygonROISelector
 from nd2_analyzer.ui.dialogs.crop_selection import CropSelector
 from nd2_analyzer.ui.biofilms.analysis_mode import AnalysisMode, AnalysisModeConfig
@@ -401,6 +402,11 @@ class App(QMainWindow):
         load_action.triggered.connect(self.load_from_folder)
         file_menu.addAction(load_action)
 
+        export_raw_action = QAction("Export Raw to TIF...", self)
+        export_raw_action.setShortcut("Ctrl+Shift+E")
+        export_raw_action.triggered.connect(self.show_export_raw_dialog)
+        file_menu.addAction(export_raw_action)
+
         file_menu.addSeparator()
 
         switch_mode_action = QAction("Switch Analysis Mode", self)
@@ -494,6 +500,18 @@ class App(QMainWindow):
     def show_about_dialog(self):
         about_dialog = AboutDialog()
         about_dialog.exec_()
+
+    def show_export_raw_dialog(self):
+        """Open the raw export dialog. Pre-fills current P/C from the view area."""
+        if ImageData.get_instance() is None:
+            QMessageBox.warning(self, "No Data", "Load image data before exporting.")
+            return
+        export_dialog = ExportDialog(
+            self,
+            current_p=self.viewArea.current_p,
+            current_c=self.viewArea.current_c,
+        )
+        export_dialog.exec_()
 
     def save_to_folder(self):
         """Save the current project to a folder"""

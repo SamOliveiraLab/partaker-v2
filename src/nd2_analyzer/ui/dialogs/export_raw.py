@@ -26,12 +26,13 @@ from pubsub import pub
 
 from nd2_analyzer.data.image_data import ImageData
 from nd2_analyzer.data.appstate import ApplicationState
+from nd2_analyzer.analysis.roi_helper import ROIHelper
 
 class ExportDialog(QDialog):
     """Dialog for exporting to TIF files"""
 
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, current_p: int = 0, current_c: int = 0):
         super().__init__(parent)
         self.setWindowTitle("Export Raw to TIF")
         self.setMinimumWidth(700)
@@ -41,6 +42,8 @@ class ExportDialog(QDialog):
         self.file_paths = []
         self.output_directory = None
         self.export_mode = None
+        self.current_p = current_p
+        self.current_c = current_c
 
         #  Set a name for export directories/files
         appstate = ApplicationState.get_instance()
@@ -124,7 +127,8 @@ class ExportDialog(QDialog):
         self.export_mode_combo.addItems([
             "Batch Directory (TIFF files)",
             "OME-TIFF",
-            "Stacked TIFF"
+            "Stacked TIFF",
+            "Stacked TIFF (Single P/C)"
         ])
         # Set default values for export mode
         self.export_mode_combo.setPlaceholderText("Select export mode...")
@@ -132,6 +136,26 @@ class ExportDialog(QDialog):
         # Set values for export mode
         details_layout.addRow("Export Mode:", self.export_mode_combo)
         self.export_mode_combo.currentTextChanged.connect(self.update_export_mode)
+
+        # P / C selectors for "Single P/C" mode
+        image_data = ImageData.get_instance()
+        max_p, max_c = 0, 0
+        if image_data is not None and image_data.data is not None:
+            shape = image_data.data.shape
+            if len(shape) >= 2:
+                max_p = max(0, shape[1] - 1)
+            if len(shape) == 5:
+                max_c = max(0, shape[2] - 1)
+
+        self.position_spin = QSpinBox()
+        self.position_spin.setRange(0, max_p)
+        self.position_spin.setValue(min(self.current_p, max_p))
+        details_layout.addRow("Position (P):", self.position_spin)
+
+        self.channel_spin = QSpinBox()
+        self.channel_spin.setRange(0, max_c)
+        self.channel_spin.setValue(min(self.current_c, max_c))
+        details_layout.addRow("Channel (C):", self.channel_spin)
 
         details_group.setLayout(details_layout)
         layout.addWidget(details_group)
@@ -168,8 +192,22 @@ class ExportDialog(QDialog):
             self.ome_tiff(output_folder)
         elif mode == "Stacked TIFF":
             self.stacked_tiff(output_folder)
+        elif mode == "Stacked TIFF (Single P/C)":
+            self.stacked_tiff_single(
+                output_folder,
+                self.position_spin.value(),
+                self.channel_spin.value(),
+            )
         else:
             QMessageBox.warning(self, "Export Mode", "Please select an export mode.")
+
+    @staticmethod
+    def _apply_roi(img):
+        """Apply current ROI mask (zero outside ROI) if shape matches."""
+        roi_mask = ROIHelper.get_roi_mask()
+        if roi_mask is not None and roi_mask.shape == img.shape:
+            return img * roi_mask.astype(img.dtype)
+        return img
 
     def batch_tiff(self, output_folder):
         """Export as Batch Directory (TIFF files)"""
@@ -201,7 +239,7 @@ class ExportDialog(QDialog):
 
             for t in range(T):
                 for c in range(C):
-                    img = image_data.get(t, p, c)
+                    img = self._apply_roi(image_data.get(t, p, c))
 
                     path = pos_folder / f"pos{p}_t{t}_{c}.tif"
                     tifffile.imwrite(path, img)
@@ -250,7 +288,7 @@ class ExportDialog(QDialog):
                 for c in range(C):
                     img = image_data.get(t, p, c)
 
-                    target[t, p, c] = img
+                    target[t, p, c] = self._apply_roi(img)
 
                 total += 1
                 self.progress_bar.setValue(total)
@@ -293,8 +331,8 @@ class ExportDialog(QDialog):
                 stack_path = exp_folder / f"pos{p}_{c}.tif"
                 with tf.TiffWriter(stack_path, bigtiff=True) as tif:
                     for t in range(T):
-                        # Grab an image frame
-                        img = image_data.get(t, p, c)
+                        # Grab an image frame (crop + registration applied)
+                        img = self._apply_roi(image_data.get(t, p, c))
                         # Write each frame as a new page
                         tif.write(img)
 
@@ -305,3 +343,47 @@ class ExportDialog(QDialog):
             print(f"✅ Exported {total} images")
         self.total_images = total
         self.progress_label.setText(f"Exported {total} images: Stacked TIFF export complete")
+
+    def stacked_tiff_single(self, output_folder, p: int, c: int):
+        """Export a stacked, multipage TIFF for a single (position, channel) across all time.
+        Applies crop + registration via image_data.get(), and ROI mask if present."""
+        import tifffile as tf
+        from pathlib import Path
+
+        image_data = ImageData.get_instance()
+        if image_data is None or image_data.data is None:
+            QMessageBox.warning(self, "No Data", "No image data is loaded.")
+            return
+
+        shape = image_data.data.shape
+        T = shape[0]
+        P = shape[1] if len(shape) >= 2 else 1
+        C = shape[2] if len(shape) == 5 else 1
+
+        if not (0 <= p < P) or not (0 <= c < C):
+            QMessageBox.warning(self, "Invalid P/C",
+                                f"Position/Channel out of range (P=0..{P-1}, C=0..{C-1}).")
+            return
+
+        output_root = Path(output_folder)
+        output_root.mkdir(parents=True, exist_ok=True)
+        stack_path = output_root / f"{self.exp_name}_pos{p}_c{c}.tif"
+
+        self.progress_bar.setMinimum(0)
+        self.progress_bar.setMaximum(T)
+        self.progress_bar.setValue(0)
+
+        total = 0
+        with tf.TiffWriter(stack_path, bigtiff=True) as tif:
+            for t in range(T):
+                img = self._apply_roi(image_data.get(t, p, c))
+                tif.write(img)
+                total += 1
+                self.progress_bar.setValue(total)
+                QApplication.processEvents()
+
+        self.total_images = total
+        print(f"✅ Exported {total} frames to {stack_path}")
+        self.progress_label.setText(
+            f"Exported {total} frames (P={p}, C={c}) to {stack_path.name}"
+        )
