@@ -72,12 +72,15 @@ class ExportDialog(QDialog):
 
         # Main dialog buttons
         button_layout = QHBoxLayout()
-        self.export_button = QPushButton("Export")
+        self.export_button = QPushButton("Export TIFF")
         self.export_button.clicked.connect(self.convert_to_tif)
+        self.export_gif_button = QPushButton("Export Raw GIF")
+        self.export_gif_button.clicked.connect(self.export_gif)
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
         button_layout.addStretch()
         button_layout.addWidget(self.export_button)
+        button_layout.addWidget(self.export_gif_button)
         button_layout.addWidget(self.cancel_button)
         main_layout.addLayout(button_layout)
 
@@ -156,6 +159,11 @@ class ExportDialog(QDialog):
         self.channel_spin.setRange(0, max_c)
         self.channel_spin.setValue(min(self.current_c, max_c))
         details_layout.addRow("Channel (C):", self.channel_spin)
+
+        self.gif_fps_spin = QSpinBox()
+        self.gif_fps_spin.setRange(1, 60)
+        self.gif_fps_spin.setValue(10)
+        details_layout.addRow("GIF FPS:", self.gif_fps_spin)
 
         details_group.setLayout(details_layout)
         layout.addWidget(details_group)
@@ -386,4 +394,76 @@ class ExportDialog(QDialog):
         print(f"✅ Exported {total} frames to {stack_path}")
         self.progress_label.setText(
             f"Exported {total} frames (P={p}, C={c}) to {stack_path.name}"
+        )
+
+    @staticmethod
+    def _to_uint8(img, lo, hi):
+        """Stretch image to 8-bit using fixed lo/hi window."""
+        import numpy as np
+        if hi <= lo:
+            return np.zeros(img.shape, dtype=np.uint8)
+        out = np.clip((img.astype(np.float32) - lo) * (255.0 / (hi - lo)), 0, 255)
+        return out.astype(np.uint8)
+
+    def export_gif(self):
+        """Export a single (P, C) timelapse as an animated GIF.
+        Uses the same ROI + registration as TIFF export. Normalizes to 8-bit
+        once across the whole stack so brightness stays stable."""
+        import imageio
+        import numpy as np
+        from pathlib import Path
+
+        if not self.output_directory:
+            QMessageBox.warning(self, "No Output Directory", "Please select an output directory first.")
+            return
+
+        image_data = ImageData.get_instance()
+        if image_data is None or image_data.data is None:
+            QMessageBox.warning(self, "No Data", "No image data is loaded.")
+            return
+
+        shape = image_data.data.shape
+        T = shape[0]
+        P = shape[1] if len(shape) >= 2 else 1
+        C = shape[2] if len(shape) == 5 else 1
+
+        p = self.position_spin.value()
+        c = self.channel_spin.value()
+        if not (0 <= p < P) or not (0 <= c < C):
+            QMessageBox.warning(self, "Invalid P/C",
+                                f"Position/Channel out of range (P=0..{P-1}, C=0..{C-1}).")
+            return
+
+        out_root = Path(self.output_directory)
+        out_root.mkdir(parents=True, exist_ok=True)
+        gif_path = out_root / f"{self.exp_name}_pos{p}_c{c}.gif"
+
+        # Determine intensity window from a sample of frames so brightness is stable
+        sample_indices = list({0, T // 4, T // 2, (3 * T) // 4, T - 1})
+        sample_indices = [i for i in sample_indices if 0 <= i < T]
+        sample_pixels = []
+        for t in sample_indices:
+            img = self._apply_roi(image_data.get(t, p, c))
+            sample_pixels.append(img.ravel())
+        sample = np.concatenate(sample_pixels) if sample_pixels else np.array([0, 1])
+        lo, hi = np.percentile(sample, [1, 99])
+
+        self.progress_bar.setMinimum(0)
+        self.progress_bar.setMaximum(T)
+        self.progress_bar.setValue(0)
+
+        frames = []
+        for t in range(T):
+            img = self._apply_roi(image_data.get(t, p, c))
+            frames.append(self._to_uint8(img, lo, hi))
+            self.progress_bar.setValue(t + 1)
+            QApplication.processEvents()
+
+        fps = self.gif_fps_spin.value()
+        imageio.mimsave(str(gif_path), frames, fps=fps)
+
+        self.total_images = T
+        print(f"✅ Exported GIF: {gif_path}")
+        self.progress_label.setText(
+            f"Exported GIF ({T} frames, P={p}, C={c}, {fps} fps) → {gif_path.name}"
         )
