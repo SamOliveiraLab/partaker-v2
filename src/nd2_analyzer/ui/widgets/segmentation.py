@@ -1203,11 +1203,13 @@ class SegmentationWidget(QWidget):
 
     def export_raw_gif(self):
         """Export raw frames (with crop, registration, and ROI applied) as a
-        single animated GIF. Uses the Channel and Time Range from this tab,
-        and the first selected position (or current view position if none).
-        Works for both fresh ND2 loads and reloaded saved projects."""
-        import imageio
+        single animated GIF — same pipeline as the Morphology widget's
+        original-image GIF export. Uses image_data.get() for crop+registration,
+        applies the appstate ROI mask, then per-frame min/max normalization
+        and PIL for GIF writing.
+        Works for fresh ND2 loads and reloaded saved projects."""
         from pathlib import Path
+        from PIL import Image
         from PySide6.QtWidgets import QApplication, QMessageBox
         from nd2_analyzer.data.image_data import ImageData
         from nd2_analyzer.data.appstate import ApplicationState
@@ -1218,18 +1220,13 @@ class SegmentationWidget(QWidget):
             QMessageBox.warning(self, "No Data", "No image data is loaded.")
             return
 
-        # Pick a single position: first selected, otherwise position 0
+        # Single position: first selected, else 0
         selected_items = self.position_list.selectedItems()
-        if selected_items:
-            position = int(selected_items[0].text().split()[-1])
-        else:
-            position = 0
+        position = int(selected_items[0].text().split()[-1]) if selected_items else 0
 
         channel = self.channel_combo.currentIndex() if self.channel_combo.count() > 0 else 0
 
         total_frames_in_data = image_data.data.shape[0]
-        # Read live values from the From/To spinboxes so segmentation doesn't
-        # need to have been run first.
         t_start = self.time_start_spin.value()
         t_end = self.time_end_spin.value()
         if t_end < t_start:
@@ -1239,7 +1236,6 @@ class SegmentationWidget(QWidget):
         t_start = max(0, t_start)
         t_end = min(total_frames_in_data - 1, t_end)
 
-        # Pick output file (single GIF, user names it)
         appstate = ApplicationState.get_instance()
         exp_name = appstate.experiment.name if (appstate and appstate.experiment) else "export"
         default_name = f"{exp_name}_pos{position}_c{channel}.gif"
@@ -1251,33 +1247,41 @@ class SegmentationWidget(QWidget):
             return
         gif_path = Path(gif_path_str)
 
-        from skimage import exposure
-
         roi_mask = ROIHelper.get_roi_mask()
-
-        def normalize_like_viewer(img):
-            """Same call as view_area._normalize_image, dropped to uint8 for GIF."""
-            if img.dtype == np.uint8:
-                return img
-            return exposure.rescale_intensity(img, out_range="uint8").astype(np.uint8)
-
         T = t_end - t_start + 1
-        fps = 10
         self.progress_bar.setMinimum(0)
         self.progress_bar.setMaximum(T)
         self.progress_bar.setValue(0)
 
-        frames = []
+        pil_frames = []
         for i, t in enumerate(range(t_start, t_end + 1), start=1):
-            raw = image_data.get(t, position, channel)
-            img8 = normalize_like_viewer(raw)
-            if roi_mask is not None and roi_mask.shape == img8.shape:
-                img8 = img8 * roi_mask.astype(np.uint8)
-            frames.append(img8)
+            # image_data.get() already applies crop + registration
+            img = image_data.get(t, position, channel)
+
+            # Apply ROI mask (zero outside ROI) if shape matches
+            if roi_mask is not None and roi_mask.shape == img.shape:
+                img = img * roi_mask.astype(img.dtype)
+
+            # Same normalization as morphology.py original-image GIF
+            img_min = img.min()
+            img_max = img.max()
+            if img_max > img_min:
+                img8 = ((img - img_min) / (img_max - img_min) * 255).astype(np.uint8)
+            else:
+                img8 = np.zeros(img.shape, dtype=np.uint8)
+
+            pil_frames.append(Image.fromarray(img8))
             self.progress_bar.setValue(i)
             QApplication.processEvents()
 
-        imageio.mimsave(str(gif_path), frames, fps=fps)
+        # Save GIF (matches morphology.py)
+        pil_frames[0].save(
+            str(gif_path),
+            save_all=True,
+            append_images=pil_frames[1:],
+            duration=200,  # 200 ms per frame ≈ 5 fps
+            loop=0,
+        )
         print(f"✅ Exported GIF: {gif_path}")
         self.progress_label.setText(
             f"Exported GIF: pos {position}, channel {channel}, frames {t_start}–{t_end} → {gif_path.name}"
