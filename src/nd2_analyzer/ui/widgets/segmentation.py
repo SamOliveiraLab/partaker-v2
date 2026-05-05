@@ -1247,6 +1247,20 @@ class SegmentationWidget(QWidget):
             return
         gif_path = Path(gif_path_str)
 
+        # Locate the ViewArea instance so we can run frames through the same
+        # _prepare_image_for_display the viewer uses.
+        view_area = None
+        node = self
+        while node is not None:
+            if hasattr(node, "viewArea"):
+                view_area = node.viewArea
+                break
+            node = node.parent()
+        if view_area is None:
+            QMessageBox.warning(self, "View area not found",
+                                "Could not locate the view area widget — GIF aborted.")
+            return
+
         roi_mask = ROIHelper.get_roi_mask()
         T = t_end - t_start + 1
         self.progress_bar.setMinimum(0)
@@ -1262,14 +1276,21 @@ class SegmentationWidget(QWidget):
             if roi_mask is not None and roi_mask.shape == img.shape:
                 img = img * roi_mask.astype(img.dtype)
 
-            # Same normalization as morphology.py original-image GIF
-            img_min = img.min()
-            img_max = img.max()
-            if img_max > img_min:
-                img8 = ((img - img_min) / (img_max - img_min) * 255).astype(np.uint8)
-            else:
-                img8 = np.zeros(img.shape, dtype=np.uint8)
+            # Run through the EXACT viewer pipeline — same bytes the viewer
+            # would render. Returns a uint16 grayscale array (Format_Grayscale16).
+            processed, _w, _h, _bpl, _fmt = view_area._prepare_image_for_display(
+                img, normalize=True
+            )
 
+            # GIF needs 8-bit; chop the high byte (no extra contrast change)
+            if processed.dtype == np.uint16:
+                img8 = (processed >> 8).astype(np.uint8)
+            elif processed.dtype == np.uint8:
+                img8 = processed
+            else:
+                img8 = np.clip(processed, 0, 255).astype(np.uint8)
+
+            # If color came back (RGB), let PIL handle it directly
             pil_frames.append(Image.fromarray(img8))
             self.progress_bar.setValue(i)
             QApplication.processEvents()
