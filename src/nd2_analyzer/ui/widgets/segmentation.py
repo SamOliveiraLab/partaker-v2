@@ -1202,9 +1202,10 @@ class SegmentationWidget(QWidget):
         )
 
     def export_raw_gif(self):
-        """Export raw frames (with crop, registration, and ROI applied) as
-        animated GIFs — one per selected position. Uses the Time Range and
-        Channel selected in this tab."""
+        """Export raw frames (with crop, registration, and ROI applied) as a
+        single animated GIF. Uses the Channel and Time Range from this tab,
+        and the first selected position (or current view position if none).
+        Works for both fresh ND2 loads and reloaded saved projects."""
         import imageio
         from pathlib import Path
         from PySide6.QtWidgets import QApplication, QMessageBox
@@ -1213,31 +1214,42 @@ class SegmentationWidget(QWidget):
         from nd2_analyzer.analysis.roi_helper import ROIHelper
 
         image_data = ImageData.get_instance()
-        if image_data is None or image_data.data is None:
+        if image_data is None or getattr(image_data, "data", None) is None:
             QMessageBox.warning(self, "No Data", "No image data is loaded.")
             return
 
-        # Pick up current selections from this tab
+        # Pick a single position: first selected, otherwise position 0
         selected_items = self.position_list.selectedItems()
-        if not selected_items:
-            QMessageBox.warning(self, "No Positions",
-                                "Select at least one position to export.")
-            return
-        positions = [int(item.text().split()[-1]) for item in selected_items]
+        if selected_items:
+            position = int(selected_items[0].text().split()[-1])
+        else:
+            position = 0
 
         channel = self.channel_combo.currentIndex() if self.channel_combo.count() > 0 else 0
-        t_start, t_end = self.time_range
+
+        total_frames_in_data = image_data.data.shape[0]
+        # Read live values from the From/To spinboxes so segmentation doesn't
+        # need to have been run first.
+        t_start = self.time_start_spin.value()
+        t_end = self.time_end_spin.value()
         if t_end < t_start:
-            t_start, t_end = 0, image_data.data.shape[0] - 1
-
-        folder_path = QFileDialog.getExistingDirectory(self, "Select Output Folder")
-        if not folder_path:
+            QMessageBox.warning(self, "Invalid Time Range",
+                                "End frame must be ≥ start frame.")
             return
-        out_root = Path(folder_path)
-        out_root.mkdir(parents=True, exist_ok=True)
+        t_start = max(0, t_start)
+        t_end = min(total_frames_in_data - 1, t_end)
 
+        # Pick output file (single GIF, user names it)
         appstate = ApplicationState.get_instance()
         exp_name = appstate.experiment.name if (appstate and appstate.experiment) else "export"
+        default_name = f"{exp_name}_pos{position}_c{channel}.gif"
+
+        gif_path_str, _ = QFileDialog.getSaveFileName(
+            self, "Save GIF As", default_name, "GIF Files (*.gif)"
+        )
+        if not gif_path_str:
+            return
+        gif_path = Path(gif_path_str)
 
         roi_mask = ROIHelper.get_roi_mask()
 
@@ -1252,38 +1264,31 @@ class SegmentationWidget(QWidget):
             out = np.clip((img.astype(np.float32) - lo) * (255.0 / (hi - lo)), 0, 255)
             return out.astype(np.uint8)
 
+        # Sample 5 evenly-spaced frames to compute a stable contrast window
+        T = t_end - t_start + 1
+        sample_ts = sorted({t_start, t_start + T // 4, t_start + T // 2,
+                            t_start + (3 * T) // 4, t_end})
+        sample_pixels = [apply_roi(image_data.get(st, position, channel)).ravel()
+                         for st in sample_ts]
+        sample = np.concatenate(sample_pixels)
+        lo, hi = np.percentile(sample, [1, 99])
+
         fps = 10
-        total_frames = (t_end - t_start + 1) * len(positions)
         self.progress_bar.setMinimum(0)
-        self.progress_bar.setMaximum(total_frames)
+        self.progress_bar.setMaximum(T)
         self.progress_bar.setValue(0)
 
-        done = 0
-        for p in positions:
-            # Sample 5 frames evenly to compute a stable contrast window
-            T = t_end - t_start + 1
-            sample_ts = sorted({t_start, t_start + T // 4, t_start + T // 2,
-                                t_start + (3 * T) // 4, t_end})
-            sample_pixels = []
-            for st in sample_ts:
-                sample_pixels.append(apply_roi(image_data.get(st, p, channel)).ravel())
-            sample = np.concatenate(sample_pixels)
-            lo, hi = np.percentile(sample, [1, 99])
+        frames = []
+        for i, t in enumerate(range(t_start, t_end + 1), start=1):
+            img = apply_roi(image_data.get(t, position, channel))
+            frames.append(to_uint8(img, lo, hi))
+            self.progress_bar.setValue(i)
+            QApplication.processEvents()
 
-            frames = []
-            for t in range(t_start, t_end + 1):
-                img = apply_roi(image_data.get(t, p, channel))
-                frames.append(to_uint8(img, lo, hi))
-                done += 1
-                self.progress_bar.setValue(done)
-                QApplication.processEvents()
-
-            gif_path = out_root / f"{exp_name}_pos{p}_c{channel}_t{t_start}-{t_end}.gif"
-            imageio.mimsave(str(gif_path), frames, fps=fps)
-            print(f"✅ Exported GIF: {gif_path}")
-
+        imageio.mimsave(str(gif_path), frames, fps=fps)
+        print(f"✅ Exported GIF: {gif_path}")
         self.progress_label.setText(
-            f"Exported {len(positions)} GIF(s): frames {t_start}–{t_end}, channel {channel}"
+            f"Exported GIF: pos {position}, channel {channel}, frames {t_start}–{t_end} → {gif_path.name}"
         )
 
     # Receive segmentation data from outside of Widget
