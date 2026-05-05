@@ -1251,15 +1251,15 @@ class SegmentationWidget(QWidget):
             return
         gif_path = Path(gif_path_str)
 
+        from skimage import exposure
+
         roi_mask = ROIHelper.get_roi_mask()
 
-        def to_uint8(img):
-            """Bit-depth conversion only — no contrast stretching."""
+        def normalize_like_viewer(img):
+            """Same call as view_area._normalize_image, dropped to uint8 for GIF."""
             if img.dtype == np.uint8:
                 return img
-            if img.dtype == np.uint16:
-                return (img >> 8).astype(np.uint8)
-            return img.astype(np.uint8)
+            return exposure.rescale_intensity(img, out_range="uint8").astype(np.uint8)
 
         T = t_end - t_start + 1
         fps = 10
@@ -1270,7 +1270,7 @@ class SegmentationWidget(QWidget):
         frames = []
         for i, t in enumerate(range(t_start, t_end + 1), start=1):
             raw = image_data.get(t, position, channel)
-            img8 = to_uint8(raw)
+            img8 = normalize_like_viewer(raw)
             if roi_mask is not None and roi_mask.shape == img8.shape:
                 img8 = img8 * roi_mask.astype(np.uint8)
             frames.append(img8)
