@@ -1251,28 +1251,17 @@ class SegmentationWidget(QWidget):
             return
         gif_path = Path(gif_path_str)
 
+        from skimage import exposure
+
         roi_mask = ROIHelper.get_roi_mask()
 
-        def apply_roi(img):
-            if roi_mask is not None and roi_mask.shape == img.shape:
-                return img * roi_mask.astype(img.dtype)
-            return img
+        def normalize_like_viewer(img):
+            """Mirror view_area._normalize_image then drop to uint8 for GIF."""
+            if img.dtype == np.uint8:
+                return img
+            return exposure.rescale_intensity(img, out_range="uint8").astype(np.uint8)
 
-        def to_uint8(img, lo, hi):
-            if hi <= lo:
-                return np.zeros(img.shape, dtype=np.uint8)
-            out = np.clip((img.astype(np.float32) - lo) * (255.0 / (hi - lo)), 0, 255)
-            return out.astype(np.uint8)
-
-        # Sample 5 evenly-spaced frames to compute a stable contrast window
         T = t_end - t_start + 1
-        sample_ts = sorted({t_start, t_start + T // 4, t_start + T // 2,
-                            t_start + (3 * T) // 4, t_end})
-        sample_pixels = [apply_roi(image_data.get(st, position, channel)).ravel()
-                         for st in sample_ts]
-        sample = np.concatenate(sample_pixels)
-        lo, hi = np.percentile(sample, [1, 99])
-
         fps = 10
         self.progress_bar.setMinimum(0)
         self.progress_bar.setMaximum(T)
@@ -1280,8 +1269,11 @@ class SegmentationWidget(QWidget):
 
         frames = []
         for i, t in enumerate(range(t_start, t_end + 1), start=1):
-            img = apply_roi(image_data.get(t, position, channel))
-            frames.append(to_uint8(img, lo, hi))
+            raw = image_data.get(t, position, channel)
+            img8 = normalize_like_viewer(raw)
+            if roi_mask is not None and roi_mask.shape == img8.shape:
+                img8 = img8 * roi_mask.astype(np.uint8)
+            frames.append(img8)
             self.progress_bar.setValue(i)
             QApplication.processEvents()
 
