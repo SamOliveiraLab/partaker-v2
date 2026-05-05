@@ -336,7 +336,7 @@ class ExperimentDialog(QDialog):
         focus_group = QGroupBox("Focus Loss Intervals")
         focus_layout = QVBoxLayout()
 
-        focus_help = QLabel("Track time intervals (in hours) where autofocus failed")
+        focus_help = QLabel("Track frame intervals where autofocus failed")
         focus_help.setStyleSheet("color: gray; font-size: 9pt;")
         focus_layout.addWidget(focus_help)
 

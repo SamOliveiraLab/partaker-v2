@@ -77,14 +77,36 @@ class ViewAreaWidget(QWidget):
     # FOCUS LOSS HANDLING
 
     def on_experiment_loaded(self, experiment):
-        """Handle experiment loading and update valid frames based on focus loss intervals"""
+        """Handle experiment loading; update valid frames and slider bounds."""
         self._update_valid_frames(experiment)
+        self._refresh_time_slider_bounds()
+
+    def _refresh_time_slider_bounds(self):
+        """Re-apply the time slider's max based on current valid_time_frames."""
+        image_data = ImageData.get_instance()
+        if not image_data or not hasattr(image_data, "data"):
+            return
+
+        if self.valid_time_frames is not None:
+            slider_t_max = len(self.valid_time_frames) - 1
+        else:
+            slider_t_max = image_data.data.shape[0] - 1
+
+        new_max = max(0, slider_t_max)
+        self.slider_t.setMaximum(new_max)
+
+        # Keep slider position within new bounds
+        if self.slider_t.value() > new_max:
+            self.slider_t.setValue(new_max)
+        else:
+            # Force a refresh so current_t reflects mapped frame
+            self.on_slider_changed()
 
     def _update_valid_frames(self, experiment):
-        """Calculate which frames are valid (not in focus loss intervals)"""
+        """Calculate which frames are valid (within time_range and not in focus loss intervals)"""
         from nd2_analyzer.data.appstate import ApplicationState
 
-        if experiment is None or not hasattr(experiment, 'focus_loss_intervals'):
+        if experiment is None:
             self.valid_time_frames = None
             return
 
@@ -96,8 +118,19 @@ class ViewAreaWidget(QWidget):
 
         total_frames = image_data.data.shape[0]
 
-        # If no focus loss intervals, all frames are valid
-        if not experiment.focus_loss_intervals:
+        # Determine analysis time range, clamped to actual data
+        time_range = getattr(experiment, "time_range", None) or (0, total_frames - 1)
+        range_start = max(0, int(time_range[0]))
+        range_end = min(total_frames - 1, int(time_range[1]))
+        if range_end < range_start:
+            range_start, range_end = 0, total_frames - 1
+
+        focus_loss_intervals = getattr(experiment, "focus_loss_intervals", None) or []
+
+        # If time_range covers the whole dataset and there are no focus loss intervals,
+        # no filtering is needed.
+        full_range = (range_start == 0 and range_end == total_frames - 1)
+        if full_range and not focus_loss_intervals:
             self.valid_time_frames = None
             return
 
@@ -107,8 +140,9 @@ class ViewAreaWidget(QWidget):
 
         print(f"Time interval per frame: {time_interval_hours:.4f} hours")
         print(f"Total frames in dataset: {total_frames}")
+        print(f"Analysis time range: frames {range_start}-{range_end}")
 
-        for start_hours, end_hours in experiment.focus_loss_intervals:
+        for start_hours, end_hours in focus_loss_intervals:
             start_frame_calc = start_hours / time_interval_hours
             end_frame_calc = end_hours / time_interval_hours
 
@@ -128,17 +162,19 @@ class ViewAreaWidget(QWidget):
             else:
                 print(f"  WARNING: Invalid interval after clamping: {start_frame_clamped}-{end_frame_clamped}")
 
-        # Create list of valid frames (excluding focus loss)
+        # Create list of valid frames (within time_range and excluding focus loss)
         focus_loss_set = set(focus_loss_frames)
-        self.valid_time_frames = [f for f in range(total_frames) if f not in focus_loss_set]
+        self.valid_time_frames = [
+            f for f in range(range_start, range_end + 1) if f not in focus_loss_set
+        ]
 
         excluded_count = len(focus_loss_set)
         valid_count = len(self.valid_time_frames)
 
-        print(f"Focus loss filtering: {excluded_count} frames excluded, {valid_count} valid frames remaining (out of {total_frames} total)")
+        print(f"Frame filtering: time range {range_start}-{range_end}, {excluded_count} focus-loss frames excluded, {valid_count} valid frames (out of {total_frames} total)")
 
         if valid_count == 0:
-            print("WARNING: All frames are marked as focus loss! Reverting to showing all frames.")
+            print("WARNING: No valid frames after filtering! Reverting to showing all frames.")
             self.valid_time_frames = None
 
     def _map_slider_to_frame(self, slider_value):
