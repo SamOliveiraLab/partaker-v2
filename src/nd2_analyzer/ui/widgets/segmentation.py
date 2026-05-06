@@ -1262,6 +1262,17 @@ class SegmentationWidget(QWidget):
             return
 
         roi_mask = ROIHelper.get_roi_mask()
+        # Convert mask to a clean bool, then crop to match what image_data.get()
+        # returns (image_data crops if crop_coordinates is set; the stored ROI
+        # mask is on the full image).
+        roi_bool = None
+        if roi_mask is not None:
+            roi_bool = roi_mask.astype(bool)
+            crop = getattr(image_data, "crop_coordinates", None)
+            if crop is not None:
+                cx, cy, cw, ch = crop
+                roi_bool = roi_bool[cy: cy + ch, cx: cx + cw]
+
         T = t_end - t_start + 1
         self.progress_bar.setMinimum(0)
         self.progress_bar.setMaximum(T)
@@ -1272,9 +1283,10 @@ class SegmentationWidget(QWidget):
             # image_data.get() already applies crop + registration
             img = image_data.get(t, position, channel)
 
-            # Apply ROI mask (zero outside ROI) if shape matches
-            if roi_mask is not None and roi_mask.shape == img.shape:
-                img = img * roi_mask.astype(img.dtype)
+            # Apply ROI mask via boolean indexing (no value-multiplication, so
+            # mask value range can't overflow the image dtype)
+            if roi_bool is not None and roi_bool.shape == img.shape:
+                img = np.where(roi_bool, img, 0)
 
             # Run through the EXACT viewer pipeline — same bytes the viewer
             # would render. Returns a uint16 grayscale array (Format_Grayscale16).
