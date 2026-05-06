@@ -656,12 +656,32 @@ class TrackingWidget(QWidget):
             # Tracking finished; dismiss the progress dialog before we draw.
             progress.close()
 
+            # The tracker sees frames as 0..N-1 indices into labeled_frames;
+            # remap each track's t back to absolute experiment time and tag
+            # the position. Without this, downstream consumers (cell history,
+            # MetricsService join, exports) cannot align tracks to the rest of
+            # the data.
+            local_to_abs_t = [t for (t, _p) in available_frames]
+            for tr in all_tracks:
+                tr["t"] = [int(local_to_abs_t[int(li)]) for li in tr.get("t", [])]
+                tr["position"] = int(selected_p)
+
             # Filter tracks by ROI (if defined)
             from nd2_analyzer.analysis.roi_helper import ROIHelper
             if ROIHelper.has_roi():
                 pre_roi = len(all_tracks)
                 all_tracks = ROIHelper.filter_tracks_by_roi(all_tracks)
                 print(f"  ROI filtering: {pre_roi} -> {len(all_tracks)} tracks")
+
+            # Materialize the track_id ↔ (time, position, seg_label) join
+            # into MetricsService.df so cell_history queries work correctly.
+            try:
+                attached = self.metrics_service.attach_track_ids(
+                    all_tracks, position=selected_p
+                )
+                print(f"  attach_track_ids: tagged {attached} metric rows for P={selected_p}")
+            except Exception as e:
+                print(f"  WARNING: attach_track_ids failed: {e}")
 
             self.lineage_tracks = all_tracks
 
@@ -915,6 +935,15 @@ class TrackingWidget(QWidget):
 
                     with open(pkl_path, "rb") as f:
                         payload = pickle.load(f)
+
+                    # Backfill 'position' on tracks saved before the per-track
+                    # position tag was introduced; pickles older than that fix
+                    # have no idea which position they belong to without the
+                    # manifest key, and downstream joins need it.
+                    for tr in (payload.get("lineage_tracks") or []):
+                        tr.setdefault("position", p)
+                    for tr in (payload.get("tracked_cells") or []):
+                        tr.setdefault("position", p)
 
                     self.tracks_by_position[p] = {
                         "tracked_cells": payload.get("tracked_cells"),

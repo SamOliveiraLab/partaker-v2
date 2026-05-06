@@ -39,6 +39,39 @@ def run_tracker(segmented_images, algorithm="btrack", raw_images=None):
     raise ValueError(f"Unknown tracking algorithm: {algorithm}")
 
 
+def _attach_seg_labels(tracks, segmented_images):
+    """Sample the segmentation label at each track centroid and store it.
+
+    Adds a ``seg_labels`` list to every track dict, aligned 1:1 with the
+    track's ``t`` / ``x`` / ``y`` arrays. The seg label is the integer value
+    of ``segmented_images[t, round(y), round(x)]``. A value of 0 (background)
+    means the centroid landed off-cell — typically a btrack-interpolated gap
+    or a sub-pixel rounding miss. Downstream joins should treat 0 as missing.
+
+    This is the bridge between tracker IDs (persistent across frames, one per
+    lineage) and segmentation labels (per-frame, the key MetricsService uses).
+    Without it, the cell_history join is comparing unrelated integers.
+    """
+    if segmented_images is None or len(tracks) == 0:
+        return tracks
+    arr = np.asarray(segmented_images)
+    if arr.ndim != 3:
+        return tracks
+    T, H, W = arr.shape
+    for tr in tracks:
+        labels = []
+        for tt, xx, yy in zip(tr.get("t", []), tr.get("x", []), tr.get("y", [])):
+            ti = int(tt)
+            ix = int(round(float(xx)))
+            iy = int(round(float(yy)))
+            if 0 <= ti < T and 0 <= iy < H and 0 <= ix < W:
+                labels.append(int(arr[ti, iy, ix]))
+            else:
+                labels.append(0)
+        tr["seg_labels"] = labels
+    return tracks
+
+
 def track_with_trackastra(segmented_images, raw_images=None, model_name="general_2d",
                           mode="greedy", device=None):
     """
@@ -121,6 +154,7 @@ def track_with_trackastra(segmented_images, raw_images=None, model_name="general
     # Convert the trackastra graph to btrack-compatible track dicts.
     napari_tracks, napari_graph, _props = graph_to_napari_tracks(track_graph)
     dict_tracks = _trackastra_napari_to_dict_tracks(napari_tracks, napari_graph)
+    _attach_seg_labels(dict_tracks, masks)
     print(f"Trackastra: produced {len(dict_tracks)} tracks")
 
     return dict_tracks, track_graph
@@ -386,6 +420,7 @@ def track_cells(segmented_images):
 
         dict_tracks.append(track_dict)
 
+    _attach_seg_labels(dict_tracks, segmented_images)
     print(f"Converted {len(dict_tracks)} tracks to dictionary format")
     return dict_tracks, graph
 

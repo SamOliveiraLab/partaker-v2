@@ -267,16 +267,86 @@ class MetricsService:
 
         return result.height > 0
 
+    @timing_decorator("attach_track_ids")
+    def attach_track_ids(self, tracks: list, position: int) -> int:
+        """
+        Materialize the tracker → segmentation-label mapping into the df.
+
+        For each track, walk its (t, seg_label) pairs and write the track's
+        persistent ID into a new ``track_id`` column at the matching
+        (time, position, cell_id) rows. After this runs, downstream code can
+        query metrics by lineage instead of by per-frame segmentation label.
+
+        Re-running for the same position overwrites the prior assignment for
+        that position only — other positions are preserved.
+
+        Returns the number of (t, cell_id) rows that received a track_id.
+        """
+        if self.df.is_empty() or not tracks:
+            return 0
+
+        rows = []
+        for tr in tracks:
+            tid = tr.get("ID")
+            if tid is None:
+                continue
+            seg_labels = tr.get("seg_labels")
+            if not seg_labels:
+                continue
+            for t, lbl in zip(tr.get("t", []), seg_labels):
+                if lbl and int(lbl) > 0:
+                    rows.append({
+                        "time": int(t),
+                        "position": int(position),
+                        "cell_id": int(lbl),
+                        "track_id_new": int(tid),
+                    })
+
+        if not rows:
+            return 0
+
+        # If two tracks happen to claim the same (t, position, cell_id) — which
+        # can occur near divisions if centroid rounding lands inside a sibling
+        # — keep the last writer. This is a heuristic; real conflicts indicate
+        # a tracker quality issue.
+        map_df = pl.DataFrame(rows).unique(
+            subset=["time", "position", "cell_id"], keep="last"
+        )
+
+        # Ensure the column exists with a stable Int64 dtype for joins later.
+        if "track_id" not in self.df.columns:
+            self.df = self.df.with_columns(
+                pl.lit(None, dtype=pl.Int64).alias("track_id")
+            )
+
+        # Wipe prior track_ids for *this* position so the join is authoritative.
+        self.df = self.df.with_columns(
+            pl.when(pl.col("position") == int(position))
+              .then(pl.lit(None, dtype=pl.Int64))
+              .otherwise(pl.col("track_id"))
+              .alias("track_id")
+        )
+
+        # Join the new mapping in and coalesce.
+        self.df = self.df.join(
+            map_df, on=["time", "position", "cell_id"], how="left"
+        ).with_columns(
+            pl.coalesce([pl.col("track_id_new"), pl.col("track_id")]).alias("track_id")
+        ).drop("track_id_new")
+
+        return len(rows)
+
     @timing_decorator("query_optimized")
     def query_optimized(
             self,
             time: Optional[int] = None,
             position: Optional[int] = None,
             cell_id: Optional[int] = None,
+            track_id: Optional[int] = None,
             exclude_focus_loss: bool = True,
     ) -> pl.DataFrame:
         """
-        Queries metrics for a given time/position/cell_id.
+        Queries metrics for a given time/position/cell_id/track_id.
 
         Parameters:
         -----------
@@ -285,7 +355,11 @@ class MetricsService:
         position : int, optional
             Position to filter
         cell_id : int, optional
-            Cell ID to filter
+            Per-frame segmentation label (skimage label, restarts each frame).
+        track_id : int, optional
+            Persistent tracker lineage ID. Requires `attach_track_ids` to have
+            been called for the corresponding position. This is the right key
+            for cell_history / lineage analysis — `cell_id` alone is per-frame.
         exclude_focus_loss : bool, default True
             If True, excludes frames marked as focus loss in experiment settings
 
@@ -305,6 +379,10 @@ class MetricsService:
             conditions.append(pl.col("position") == position)
         if cell_id is not None:
             conditions.append(pl.col("cell_id") == cell_id)
+        if track_id is not None:
+            if "track_id" not in self.df.columns:
+                return pl.DataFrame()
+            conditions.append(pl.col("track_id") == track_id)
 
         # Add focus loss filtering
         if exclude_focus_loss:

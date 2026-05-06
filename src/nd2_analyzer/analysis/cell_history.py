@@ -26,22 +26,31 @@ class CellHistoryBuilder:
     Cell-based: Data organized by cell (cell1: [t=0, t=1, ...], cell2: [...])
     """
 
-    def __init__(self, lineage_tracks, metrics_service):
+    def __init__(self, lineage_tracks, metrics_service, position: Optional[int] = None):
         """
         Initialize the builder.
 
         Parameters:
         -----------
         lineage_tracks : list
-            List of track dictionaries from tracking analysis
+            List of track dictionaries from tracking analysis. Each track
+            should carry a 'position' key; if missing, the ``position``
+            argument is used as a fallback.
         metrics_service : MetricsService
-            Service containing morphology metrics (frame-organized)
+            Service containing morphology metrics (frame-organized). Should
+            have had ``attach_track_ids(tracks, position)`` called on it for
+            each tracked position before building histories.
+        position : int, optional
+            Default position for tracks that don't carry one. Used when the
+            metrics_service join needs to disambiguate cell_ids across
+            positions.
         """
         print("\n" + "="*80)
         print("CELL HISTORY BUILDER - Initializing")
         print("="*80)
 
         self.metrics_service = metrics_service
+        self.default_position = position
         self.cell_database = {}
 
         self.focus_loss_intervals = []
@@ -149,7 +158,10 @@ class CellHistoryBuilder:
 
             try:
                 # Retrieve morphology data for this cell across all its timepoints
-                cell_record = self._build_cell_record(cell_id, times, x_coords, y_coords, track)
+                position = track.get("position", self.default_position)
+                cell_record = self._build_cell_record(
+                    cell_id, times, x_coords, y_coords, track, position
+                )
 
                 if cell_record:
                     self.cell_database[cell_id] = cell_record
@@ -179,12 +191,15 @@ class CellHistoryBuilder:
 
     def _build_cell_record(self, cell_id: int, times: List[int],
                           x_coords: List[float], y_coords: List[float],
-                          track: Dict) -> Optional[Dict]:
+                          track: Dict, position: Optional[int] = None) -> Optional[Dict]:
         """
         Build a complete record for a single cell by combining tracking and morphology.
 
-        This is where the magic happens - we query the frame-based metrics_service
-        for each timepoint and assemble everything into one cell record.
+        ``cell_id`` here is the tracker's persistent track ID — NOT a per-frame
+        segmentation label. The MetricsService stores morphology rows keyed by
+        per-frame segmentation label (`cell_id` column). The bridge between
+        the two is the `track_id` column attached by
+        ``MetricsService.attach_track_ids()`` after tracking finishes.
         """
         # Initialize arrays for morphology time series
         areas = []
@@ -212,8 +227,9 @@ class CellHistoryBuilder:
             # This is the frame-based → cell-based conversion happening here!
             metrics_df = self.metrics_service.query_optimized(
                 time=t,
-                cell_id=cell_id,
-                exclude_focus_loss=True
+                position=position,
+                track_id=cell_id,
+                exclude_focus_loss=True,
             )
 
             if not metrics_df.is_empty() and len(metrics_df) > 0:
@@ -532,7 +548,8 @@ class CellHistoryBuilder:
 
 # Convenience function for quick usage
 def build_cell_histories(lineage_tracks, metrics_service,
-                        min_track_length: int = 5) -> Dict:
+                        min_track_length: int = 5,
+                        position: Optional[int] = None) -> Dict:
     """
     Quick function to reorganize data to cell-based format.
 
@@ -544,11 +561,14 @@ def build_cell_histories(lineage_tracks, metrics_service,
         Morphology metrics service
     min_track_length : int
         Minimum track length to include
+    position : int, optional
+        Default position for the tracks. Required for the morphology join to
+        return correct values when the experiment has multiple positions.
 
     Returns:
     --------
     dict : Cell database
     """
-    builder = CellHistoryBuilder(lineage_tracks, metrics_service)
+    builder = CellHistoryBuilder(lineage_tracks, metrics_service, position=position)
     cell_database = builder.build(min_track_length=min_track_length)
     return cell_database
