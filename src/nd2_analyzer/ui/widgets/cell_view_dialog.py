@@ -861,7 +861,10 @@ class CellViewDialog(QDialog):
             return
 
         try:
-            builder = CellHistoryBuilder(self.lineage_tracks, self.metrics_service)
+            builder = CellHistoryBuilder(
+                self.lineage_tracks, self.metrics_service,
+                position=getattr(self, "position", None),
+            )
             builder.build(min_track_length=5)
             builder.export_to_csv(path)
             QMessageBox.information(

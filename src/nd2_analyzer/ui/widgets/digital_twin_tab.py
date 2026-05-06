@@ -301,7 +301,14 @@ class DigitalTwinTab(QWidget):
 
         self._log(f"Building cell database from {len(self._lineage_tracks)} tracks...")
         self._log("(This queries morphology for every cell at every timepoint)")
-        builder = CellHistoryBuilder(self._lineage_tracks, self._metrics_service)
+        # Tracks carry their own 'position' (set by tracking_widget); pass the
+        # first one as a default so query_optimized always has a position arg.
+        default_position = None
+        if self._lineage_tracks:
+            default_position = self._lineage_tracks[0].get("position")
+        builder = CellHistoryBuilder(
+            self._lineage_tracks, self._metrics_service, position=default_position
+        )
         self._cell_database = builder.build(min_track_length=5)
         self._log(f"Cell database built: {len(self._cell_database)} cells passed filter")
 
