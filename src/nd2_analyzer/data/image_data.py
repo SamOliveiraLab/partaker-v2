@@ -61,8 +61,36 @@ class ImageData:
             if cls._instance is not None:
                 cls._instance._cleanup()
 
-            # Create new instance
+            # Normalize first path
+            first_path = path[0] if isinstance(path, (list, tuple)) else path
+            first_path = str(first_path)
+            lower_path = first_path.lower()
+            voxel = None
+
+            # ND2 branch
+            if lower_path.endswith(".nd2"):
+                with nd2.ND2File(first_path) as f:
+                    voxel = f.voxel_size()
+
+            # TIFF / OME-TIFF branch
+            elif lower_path.endswith((".tif", ".tiff", ".ome.tif", ".ome.tiff", ".ome.tf2", ".ome.tf8", ".ome.btf")):
+                import tifffile
+
+                with tifffile.TiffFile(first_path) as tif:
+                    # Try OME metadata first
+                    try:
+                        if tif.is_ome and tif.ome_metadata:
+                            # Keep raw metadata around if useful later
+                            ome_xml = tif.ome_metadata
+                            # Pixel sizes here later if needed
+                            voxel = None
+                    except Exception:
+                        pass
+            else:
+                raise ValueError(f"Unsupported image format: {first_path}")
+
             instance = cls(data, path, is_image, channel_n)
+            instance.voxel_size = voxel
             cls._instance = instance
 
         pub.sendMessage("image_data_loaded", image_data=cls._instance)

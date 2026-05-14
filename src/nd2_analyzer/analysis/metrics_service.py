@@ -16,7 +16,6 @@ from nd2_analyzer.utils import timing_decorator
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("MetricsService")
 
-
 class MetricsService:
     _instance = None
 
@@ -125,6 +124,15 @@ class MetricsService:
 
     def calculate_cell_metrics(_frame: TLFrame):
         cells = regionprops(_frame.labeled_phc)
+
+        # IMPORTANT: this is the fluorescence image actually used
+        if _frame.yfp is not None:
+            fluorescence_image = _frame.yfp
+        elif _frame.mcherry is not None:
+            fluorescence_image = _frame.mcherry
+        else:
+            fluorescence_image = _frame.phase
+
         batch_data = []
 
         use_phase_intensity = (
@@ -144,15 +152,46 @@ class MetricsService:
             _frame.yfp[_frame.labeled_phc == 0].mean() if _frame.yfp is not None else -1
         )
         max_back_fluo = max(back_fluo_mcherry, back_fluo_yfp)
+        # filter bad frames
+
+        # Case 1: both channels exist
+        if _frame.mcherry is not None and _frame.yfp is not None:
+            max_signal = max(
+                np.max(_frame.mcherry),
+                np.max(_frame.yfp)
+            )
+
+        # Case 2: only one channel exists
+        elif _frame.mcherry is not None:
+            max_signal = np.max(_frame.mcherry)
+
+        elif _frame.yfp is not None:
+            max_signal = np.max(_frame.yfp)
+
+        else:
+            max_signal = 0
+
+        # If frame has no real signal → SKIP ENTIRE FRAME
+        if max_signal < 10:  # <-- tune threshold if needed
+            print(f"DEBUG: Skipping bad frame T={_frame.index[0]} P={_frame.index[1]}")
+            return []
         has_fluorescence = True
-        if use_phase_intensity:
-            has_fluorescence = False
-        elif max_back_fluo < 0.01:
-            fluorescence_channel = -1
-            fluorescence_level = 0.0
-            has_fluorescence = False
 
         for cell in cells:
+            fluorescence_channel = -1
+            fluorescence_level = 0.0
+            mask = _frame.labeled_phc == cell.label
+
+            # pick the SAME image your code uses
+            if _frame.yfp is not None:
+                img = _frame.yfp
+            elif _frame.mcherry is not None:
+                img = _frame.mcherry
+            else:
+                img = _frame.phase
+
+            pix = img[mask]
+
             cell_id = cell.label
 
             # Calculate derived metrics
@@ -191,39 +230,31 @@ class MetricsService:
                 pix = _frame.phase[mask]
                 fluorescence_channel = 0
                 fluorescence_level = float(np.mean(pix)) if pix.size else 0.0
+
             elif has_fluorescence:
-                # If only mcherry has fluo
-                if back_fluo_mcherry != -1 and back_fluo_yfp == -1:
-                    mcherry_fluo = _frame.mcherry[_frame.labeled_phc == cell_id].mean()
+                # compute BOTH channels exist
+                if _frame.mcherry is not None and _frame.yfp is not None:
+                    mcherry_fluo = _frame.mcherry[mask].mean()
+                    yfp_fluo = _frame.yfp[mask].mean()
+
+                    if mcherry_fluo > yfp_fluo:
+                        fluorescence_channel = 1
+                        fluorescence_level = mcherry_fluo
+                    else:
+                        fluorescence_channel = 2
+                        fluorescence_level = yfp_fluo
+
+                # ONLY mcherry exists
+                elif _frame.mcherry is not None:
+                    mcherry_fluo = _frame.mcherry[mask].mean()
                     fluorescence_channel = 1
                     fluorescence_level = mcherry_fluo
 
-                # If both have fluorescence, compare them
-                elif back_fluo_mcherry != -1 and back_fluo_yfp != -1:
-                    # Select the region corresponding to the cell in the frames
-                    mcherry_fluo = _frame.mcherry[_frame.labeled_phc == cell_id].mean()
-                    yfp_fluo = _frame.yfp[_frame.labeled_phc == cell_id].mean()
-                    if (
-                        back_fluo_mcherry != -1
-                        and back_fluo_yfp != -1
-                        and back_fluo_mcherry > 0
-                        and back_fluo_yfp > 0
-                    ):
-                        if (mcherry_fluo / back_fluo_mcherry) > (yfp_fluo / back_fluo_yfp):
-                            fluorescence_channel = 1
-                            fluorescence_level = mcherry_fluo
-                        else:
-                            fluorescence_channel = 2
-                            fluorescence_level = yfp_fluo
-                    else:
-                        fluorescence_channel = -1
-                        fluorescence_level = 0.0
-                else:
-                    fluorescence_channel = -1
-                    fluorescence_level = 0.0
-            else:
-                fluorescence_channel = -1
-                fluorescence_level = 0.0
+                # ONLY yfp exists
+                elif _frame.yfp is not None:
+                    yfp_fluo = _frame.yfp[mask].mean()
+                    fluorescence_channel = 2
+                    fluorescence_level = yfp_fluo
 
             row_data = {
                 "time": _frame.index[0],

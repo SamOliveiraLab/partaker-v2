@@ -1,5 +1,5 @@
 {
-  "analysis_mode": "single_cell",
+  "analysis_mode": "biofilm_cloud",
   "default_mode": "single_cell",
   "remember_choice": false,
   "version": "1.0"
