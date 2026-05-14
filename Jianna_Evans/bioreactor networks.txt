@@ -1,0 +1,33 @@
+bioreactor networks
+for efficient co-consumption of renewable carbon sources (glucose/xylose mixture)
+
+ethylene/ammonia/methanol --everyday chemicals
+from fossil fuels -> non-renewable
+
+ALTERNATIVE: Bio-feedstock (sugar, starch, cellulose, algae, agricultural-residue)
+
+
+bioreactor network - an interconnected system of multiple bioreactors, vessels, or treatment units working together to cultivate organisms or process materials on a large scale
+
+experimental vs computational studies - paper study - should be big takeaway - or should be to end of slide show since it has a lot of technical information upfront
+exp
+production of succinic acid; real bioreactor setup; key limitation> product inhibition reduces productivity; insight> process-level constraints matter
+comp
+mix sugar fermentation (glucose + xylose)
+comp simulations; key limitations> diauxic growth - sequential sugar use; insight> biology regulation limits efficiency
+
+e. coli had diauxic shift - genetically engineered to utilize xylose (new primary source) for main carbon intake instead of glucose (primary source)
+
+Problem - Phenomena first -THEN-> Solutions -> Models
+in presentation don't say 'papers' so much / can say case study
+don't really need to include DOI, but do need author (last) name there
+
+glucose produces ethanol? consumption of ethanol? glucose limits ethanol? ethanol is a byproduct that yeast consumes. it wasn't meant to be a sugar, but can act like it.
+
+
+
+Bridges2 pwd:
+May4Day3Day!
+
+ODO/ORNL
+May4Day3Day!ZeroNight!
