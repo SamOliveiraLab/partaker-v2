@@ -4,14 +4,16 @@ Colony Separation Widget - Separate tab for manual and automatic colony detectio
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QSlider, QTabWidget, QGroupBox, QRadioButton, QButtonGroup
+    QSlider, QTabWidget, QGroupBox, QRadioButton, QButtonGroup, QSpinBox, QFileDialog, QProgressBar
 )
 from PySide6.QtCore import Qt
 from pubsub import pub
 import numpy as np
 
+from .colony_metric_exporter import ColonyMetricExporter
 from .colony_separator import ColonySeparator
 
+from PySide6.QtCore import QObject, Signal
 
 class ColonySeparationWidget(QWidget):
     """Widget for colony separation with manual and automatic detection modes"""
@@ -58,7 +60,125 @@ class ColonySeparationWidget(QWidget):
         # Common controls at the bottom
         self.add_common_controls(main_layout)
 
+        # Layout for time-series export controls
+        time_layout = QHBoxLayout()
+
+        time_layout.addWidget(QLabel("T start:"))
+        self.time_start_spin = QSpinBox()
+        self.time_start_spin.setRange(0, 10000)
+        time_layout.addWidget(self.time_start_spin)
+
+        time_layout.addWidget(QLabel("T end:"))
+        self.time_end_spin = QSpinBox()
+        self.time_end_spin.setRange(0, 10000)
+        self.time_end_spin.setValue(10)
+        time_layout.addWidget(self.time_end_spin)
+
+        main_layout.addLayout(time_layout)
+
+        self.channel_combo = QSpinBox()
+        self.channel_combo.setRange(0, 10)
+        main_layout.addWidget(self.channel_combo)
+
+        # Progress label
+        self.progress_label = QLabel("Ready.")
+        self.progress_label.setStyleSheet("color: #666; padding: 5px;")
+        main_layout.addWidget(self.progress_label)
+
+        # Progress bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setValue(0)
+        self.progress_bar.setMinimum(0)
+        self.progress_bar.setMaximum(100)
+        main_layout.addWidget(self.progress_bar)
+
+        # Add time-series exporter for colony detection
+        self.export_btn = QPushButton("Export Colonies")
+        self.export_btn.setStyleSheet(
+            "background-color: #FF9800; color: white; font-weight: bold; padding: 10px;"
+        )
+        self.export_btn.clicked.connect(self.export_colonies)
+        main_layout.addWidget(self.export_btn)
+
         main_layout.addStretch()
+
+    def get_selected_positions(self):
+        """Get list of selected positions from the position list widget"""
+        selected_positions = []
+        for i in range(self.position_list.count()):
+            item = self.position_list.item(i)
+            if item.isSelected():
+                # Extract position number from item text (e.g., "Position 0" -> 0)
+                position_text = item.text()
+                if "Position" in position_text:
+                    try:
+                        position_num = int(position_text.split()[-1])
+                        selected_positions.append(position_num)
+                    except (ValueError, IndexError):
+                        print(f"Warning: Could not parse position from '{position_text}'")
+
+        return selected_positions
+
+    from .colony_metric_exporter import ColonyMetricExporter
+    def export_colonies(self):
+        print("DEBUG: Export button clicked!")  # Add this line first
+
+        # Get image data from main app
+        from nd2_analyzer.data.image_data import ImageData
+        image_data = ImageData.get_instance()
+
+        # Checks if segmentation exists before exporting
+        cache = image_data.segmentation_cache.with_model(image_data.segmentation_cache.model_name)
+        _, index_set = cache.mmap_arrays_idx[cache.model_name]
+        if len(index_set) == 0:
+            print("No cell segmentation detected. Export cancelled.")
+            self.progress_label.setText("No cells detected. Segment cells first.")
+            return
+
+        # Checks if colonies exists before exporting
+        if not hasattr(self, 'colony_separator') or not self.colony_separator.get_all_colonies():
+            print("DEBUG: No colonies found")
+            self.progress_label.setText("No colonies to export. Detect colonies first.")
+            return
+
+        # Get current parameters
+        """time_start = self.time_start_spin.value()
+        time_end = self.time_end_spin.value()
+        position = self.get_selected_positions()[0] if self.get_selected_positions() else 0
+        channel = self.channel_combo.value()"""
+
+        # Create exporter and start export
+        exporter = ColonyMetricExporter(
+            image_data=image_data,
+            colonies=self.colony_separator.get_all_colonies(),
+            segmentation_storage=image_data.segmentation_cache,
+            model_name = image_data.segmentation_cache.model_name,
+            voxel_size = image_data.voxel_size
+        )
+
+        # Progress callback
+        def update_progress(percent):
+            self.progress_bar.setValue(percent)
+
+        self.progress_label.setText("Exporting colony time series...")
+        self.export_btn.setEnabled(False)
+
+        import traceback
+        try:
+            exporter.export_csv("./colonies.csv")
+            shape = image_data.get(0, 0, 0).shape
+            exporter.export_grids("./density_outputs", shape)
+
+            exported_count = len(exporter.colonies)  # or rows if you prefer
+            self.progress_label.setText(f"Successfully exported {exported_count} colonies")
+
+        except Exception as e:
+            traceback.print_exc()
+            self.progress_label.setText(f"Export failed: {e}")
+
+        finally:
+            self.export_btn.setEnabled(True)
+            self.progress_bar.setValue(100)
 
     def create_manual_selection_tab(self):
         """Create the manual selection tab"""
@@ -198,7 +318,7 @@ class ColonySeparationWidget(QWidget):
         """Open colony verification dialog"""
 
         from nd2_analyzer.ui.dialogs.colony_auto_verifier import VerifyColoniesDialog
-        colonies = self.colony_separator.detected_colonies
+        colonies = self.get_all_colonies()
 
         verify_dialog = VerifyColoniesDialog(
             self.current_raw_image,
@@ -218,6 +338,7 @@ class ColonySeparationWidget(QWidget):
         # Preserve the last autodetection state and clear existing auto additions
         self.auto_detect_params = params
         self.detected_colonies = []
+        self.colony_separator.detected_colonies = []
         for colony in verified_colonies:
             # Preserve contour if it exists
             if "contour" in colony:
@@ -238,17 +359,16 @@ class ColonySeparationWidget(QWidget):
 
     def handle_selected_colonies(self, colonies_data):
         """Handle colonies selected from the ROI selector"""
-        self.manual_additions = []
+        """self.manual_additions = []
+        self.colony_separator.manual_additions = []"""
         # Creates new colonies on overlay from polygon points
         for colony in colonies_data:
-            polygon = colony['polygon']
-            new_colony = self.colony_separator.add_manual_colony(
-                polygon,
-                self.current_raw_image.shape
-            )
-            self.manual_additions.append(new_colony)
+            polygon = colony['polygon_points']
+            self.manual_additions.append(colony)
+            self.colony_separator.manual_additions.append(colony)
+            # self.manual_additions.append(new_colony)
 
-        self.colony_count_label.setText(f"Colonies: {len(self.get_all_colonies())}")
+        self.colony_count_label.setText(f"Colonies: {len(self.colony_separator.get_all_colonies())}")
         self.colony_overlay_visible = True
         self.update_colony_overlay()
 
@@ -264,19 +384,16 @@ class ColonySeparationWidget(QWidget):
         from nd2_analyzer.ui.dialogs.colony_roi_selector import ColonyROISelector
 
         # Get existing colonies
-        existing_colonies = []
-        for colony in self.colony_separator.get_all_colonies():
-            if 'polygon_points' in colony:
-                existing_colonies.append({
-                    'colony_id': colony['colony_id'],
-                    'polygon': colony['polygon_points'],
-                    'mask': None
-                })
+        existing_colonies = [c for c in self.colony_separator.manual_additions]
+
+        # Previous colonies
+        prev_colonies = self.colony_separator.get_all_colonies()
 
         # Open ROI selector dialog
         roi_dialog = ColonyROISelector(
             self.current_raw_image,
             existing_colonies=existing_colonies,
+            prev_colonies=prev_colonies,
             parent=self
         )
         roi_dialog.colonies_selected.connect(self.handle_selected_colonies)

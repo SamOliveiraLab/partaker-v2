@@ -198,15 +198,15 @@ class SegmentationModels:
             # default is .4, but only needed if there are spurious masks to clean up; slows down output
             "transparency": True,  # transparency in flow output
             "omni": True,  # we can turn off Omnipose mask reconstruction, not advised
-            "cluster": True,  # use DBSCAN clustering
+            "cluster": False,  # use DBSCAN clustering
             "resample": True,  # whether or not to run dynamics on rescaled grid or original grid
             "verbose": False,  # turn on if you want to see more output
-            "tile": True,  # average the outputs from flipped (augmented) images; slower, usually not needed
+            "tile": False,  # average the outputs from flipped (augmented) images; slower, usually not needed
             "niter": None,
             # default None lets Omnipose calculate # of Euler iterations (usually <20) but you can tune it for over/under segmentation
             "augment": False,  # Can optionally rotate the image and average network outputs, usually not needed
             # 'affinity_seg': True, # new feature, stay tuned...
-            "batch_size": 4  # default is 8, halved to prevent (out of memory) OOM errors
+            "batch_size": 12  # default is 8, halved to prevent (out of memory) OOM errors
         }
 
         print("type:", type(images))
