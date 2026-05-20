@@ -799,6 +799,12 @@ class CubeAnalysisWidget(QWidget):
         browse_layout.addWidget(self.folder_path_label)
         browse_layout.addWidget(browse_btn)
         layout.addLayout(browse_layout)
+
+        # Import from session button
+        self.import_session_btn = QPushButton("Import From Current Session")
+        self.import_session_btn.clicked.connect(self.import_from_current_session)
+        self.import_session_btn.setStyleSheet("background-color: #9C27B0; color: white; font-weight: bold;")
+        layout.addWidget(self.import_session_btn)
         
         # Colony list
         layout.addWidget(QLabel("Available Colonies:"))
@@ -1434,3 +1440,164 @@ class CubeAnalysisWidget(QWidget):
             results_text += f"  Average squares per colony: {total_squares / len(self.analysis_results):.1f}\n"
         
         self.results_area.setText(results_text)
+
+    def import_from_current_session(self):
+        """Import cell and colony metrics from current session"""
+        try:
+            from nd2_analyzer.data.image_data import ImageData
+            from nd2_analyzer.ui.biofilms.colony_metric_exporter import ColonyMetricExporter
+
+            image_data = ImageData.get_instance()
+
+            # CHECK SEGMENTATION
+            cache = image_data.segmentation_cache.with_model(
+                image_data.segmentation_cache.model_name
+            )
+
+            _, index_set = cache.mmap_arrays_idx[cache.model_name]
+
+            if len(index_set) == 0:
+                self.console_area.append(
+                    "No cells detected. Segment cells first."
+                )
+                return
+
+            app = self.window()
+
+            if not hasattr(app, "colony_separation_tab"):
+                self.console_area.append(
+                    "No colony separation tab found."
+                )
+                return
+
+            colonies = (
+                app
+                .colony_separation_tab
+                .colony_separator
+                .get_all_colonies()
+            )
+
+            if not colonies:
+                self.console_area.append(
+                    "No colonies detected."
+                )
+                return
+
+            # Build Exporter/Importer
+            exporter = ColonyMetricExporter(
+                image_data=image_data,
+                colonies=colonies,
+                segmentation_storage=image_data.segmentation_cache,
+                model_name=image_data.segmentation_cache.model_name,
+                voxel_size=image_data.voxel_size
+            )
+
+            # Get Cell Data
+            cell_data = exporter.return_cell_metrics()
+            cell_data = exporter.track_cells_hungarian(cell_data) # TODO: Change to UNETSF
+
+            # Convert to cube format
+            self.analysis_results = self.convert_cells_to_cube_format(cell_data)
+
+            # Update UI
+            self.populate_time_combo()
+            self.display_results()
+
+            # Enable visualization/export only
+            self.visualize_btn.setEnabled(True)
+            self.export_csv_btn.setEnabled(True)
+            self.export_plots_btn.setEnabled(True)
+
+            # Connect buttons
+            self.visualize_btn.clicked.connect(self.generate_heatmap)
+            self.export_csv_btn.clicked.connect(self.export_to_csv)
+            self.export_plots_btn.clicked.connect(self.export_plots)
+
+            # Hide irrelevant button
+            self.start_analysis_btn.hide()
+
+            self.status_label.setText(
+                "Current session imported successfully!"
+            )
+
+            self.console_area.append(
+                "Imported current session successfully!"
+            )
+
+        except Exception as e:
+            import traceback
+            self.console_area.append(str(e))
+            self.console_area.append(traceback.format_exc())
+
+    def convert_cells_to_cube_format(self, cell_data):
+        from collections import defaultdict
+        import numpy as np
+
+        # Output Structure
+        results = defaultdict(dict)
+
+        # Group Cells by Time
+        frames = defaultdict(list)
+        for cell in cell_data:
+            frames[cell["t"]].append(cell)
+        colony_name = "CurrentSession"
+
+        # Process each Timepoint
+        for t, cells in frames.items():
+            if not cells:
+                continue
+
+            # Cube Analysis Format Conversion
+            time_results = {
+                'square_positions': [],
+                'local_density': [],
+                'distance_to_edge': [],
+                'distance_to_center': [],
+                'shape_area': [],
+                'intensity_mean': [],
+                'local_thickness': []
+            }
+
+            # Approximate Colony Center
+            center_x = np.mean([c["centroid_x"] for c in cells])
+            center_y = np.mean([c["centroid_y"] for c in cells])
+
+            # Build dataset
+            for c in cells:
+                x = c["centroid_x"]
+                y = c["centroid_y"]
+
+                # positions
+                time_results['square_positions'].append((x, y))
+
+                # local density
+                time_results['local_density'].append(c.get("local_density", 0))
+
+                # distance to center
+                dist_center = np.sqrt((x - center_x) ** 2 + (y - center_y) ** 2)
+                time_results['distance_to_center'].append(dist_center)
+
+                # shape area
+                time_results['shape_area'].append(c.get("area_px", 0))
+
+                # intensity
+                raw_img = c.get("raw_img")
+                if raw_img is not None:
+                    intensity = float(np.mean(raw_img))
+                else:
+                    intensity = 0
+                time_results['intensity_mean'].append(intensity)
+
+                # local thickness proxy
+                time_results['local_thickness'].append(
+                    c.get("local_density", 0)
+                )
+
+                # edge distance placeholder
+                """NEED TO UPDATE"""
+                time_results['distance_to_edge'].append(0)
+
+            # Store Timepoint
+            results[colony_name][str(t)] = time_results
+
+        return results

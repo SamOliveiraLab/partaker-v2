@@ -45,7 +45,7 @@ class PopulationWidget(QWidget):
         layout = QVBoxLayout(self)
 
         # Matplotlib figure
-        self.population_figure = plt.figure()
+        self.population_figure = plt.figure(constrained_layout=True)
         self.population_canvas = FigureCanvas(self.population_figure)
         layout.addWidget(self.population_canvas)
 
@@ -102,6 +102,16 @@ class PopulationWidget(QWidget):
         export_btn = QPushButton("Export DataFrame to CSV")
         export_btn.clicked.connect(self.export_dataframe)
         bottom_btn_layout.addWidget(export_btn)
+
+        # Plot fluor. across position
+        avg_plot_btn = QPushButton("Plot Avg ± SD (All Positions)")
+        avg_plot_btn.clicked.connect(self.on_plot_avg_sd)
+        bottom_btn_layout.addWidget(avg_plot_btn)
+
+        # Save current graph/plot button
+        self.save_plot_button = QPushButton("Save Plot")
+        self.save_plot_button.clicked.connect(self.save_population_plot)
+        bottom_btn_layout.addWidget(self.save_plot_button)
 
         # Calculate RPU button (new)
         rpu_btn = QPushButton("Calculate RPU Reference Values")
@@ -283,6 +293,23 @@ class PopulationWidget(QWidget):
 
         # Current dataframe
         df = self.metrics_service.df
+        print("---BEFORE FILTER---")
+        print("mcherry", df.filter(pl.col("fluorescence_channel") == 1)
+              .group_by("time")
+              .agg([
+            pl.mean("fluo_level").alias("mean"),
+            pl.std("fluo_level").alias("std"),
+            pl.min("fluo_level").alias("min"),
+            pl.max("fluo_level").alias("max"),
+        ]))
+        print("yfp channel", df.filter(pl.col("fluorescence_channel") == 2)
+              .group_by("time")
+              .agg([
+            pl.mean("fluo_level").alias("mean"),
+            pl.std("fluo_level").alias("std"),
+            pl.min("fluo_level").alias("min"),
+            pl.max("fluo_level").alias("max"),
+        ]))
         if df.is_empty():
             QMessageBox.warning(
                 self,
@@ -295,6 +322,23 @@ class PopulationWidget(QWidget):
         # Perform data processing
         df = filter_data(df, analysis_cgf)
         df = calculate_population_statistics(df, analysis_cgf)
+        print("---AFTER FILTER---")
+        print("mcherry", df.filter(pl.col("fluorescence_channel") == 1)
+              .group_by("time")
+              .agg([
+            pl.mean("mean_intensity").alias("mean1"),
+            pl.std("mean_intensity").alias("std1"),
+            pl.min("mean_intensity").alias("min1"),
+            pl.max("mean_intensity").alias("max1"),
+        ]))
+        print("yfp channel", df.filter(pl.col("fluorescence_channel") == 2)
+        .group_by("time")
+        .agg([
+            pl.mean("mean_intensity").alias("mean2"),
+            pl.std("mean_intensity").alias("std2"),
+            pl.min("mean_intensity").alias("min2"),
+            pl.max("mean_intensity").alias("max2"),
+        ]))
 
         if df.is_empty():
             QMessageBox.warning(
@@ -396,6 +440,145 @@ class PopulationWidget(QWidget):
         # plt.savefig('1_9_iptg_on_p_all.pdf')
         # plt.show()
 
+    def compute_avg_sd_stats(self, df: pl.DataFrame):
+        stats = (
+            df.group_by("time")
+            .agg([
+                # --- GFP / fluorescence ---
+                pl.col("fluo_level").mean().alias("mean_fluo"),
+                pl.col("fluo_level").std().alias("std_fluo"),
+
+                # --- Integrated intensity  ---
+                (pl.col("fluo_level") * pl.col("area")).mean().alias("mean_integrated"),
+                (pl.col("fluo_level") * pl.col("area")).std().alias("std_integrated"),
+
+                pl.col("area").mean().alias("mean_area"),
+                pl.col("area").std().alias("std_area"),
+
+                pl.col("circularity").mean().alias("mean_circ"),
+                pl.col("circularity").std().alias("std_circ"),
+            ])
+            .sort("time")
+        )
+
+        return stats
+
+    def on_plot_avg_sd(self):
+        self.population_figure.clear()
+
+        df = self.metrics_service.df
+
+        if df.is_empty():
+            QMessageBox.warning(self, "No data", "Run segmentation first.")
+            return
+
+        # Compute stats
+        gfp_channel = int(self.yfp_channel_combo.currentText())
+        phc_channel = int(self.mcherry_channel_combo.currentText())
+
+        df_gfp = df.filter(pl.col("fluorescence_channel") == gfp_channel)
+        df_phc = df
+
+        print("ALL TIMES:", sorted(df["time"].unique()))
+        print("GFP TIMES:", sorted(df_gfp["time"].unique()))
+        print("PHC TIMES:", sorted(df_phc["time"].unique()))
+
+        stats_gfp = self.compute_avg_sd_stats(df_gfp)
+        print("\n=== RAW DF CHECK ===")
+        print(df.select(["time", "fluorescence_channel", "fluo_level"]).head(20))
+
+        print("\n=== GFP DF CHECK ===")
+        print(df_gfp.select(["time", "fluo_level"]).head(20))
+
+        print("\n=== GROUPED STATS INPUT ===")
+        print(df_gfp.group_by("time").agg(pl.col("fluo_level").count()))
+        stats_phc = self.compute_avg_sd_stats(df_phc)
+
+
+        # --- manual time mapping ---
+        unique_times = sorted(self.metrics_service.df["time"].unique())
+        # REAL TIMES HERE
+        real_times = [0, 24, 48, 85, 96]
+        # Build mapping
+        time_map = dict(zip(unique_times, real_times))
+
+        fig = self.population_figure
+        axs = fig.subplots(3, 1)
+
+        # --- TIME ---
+        time_gfp = np.array([time_map[t] for t in stats_gfp["time"]])
+        time_phc = np.array([time_map[t] for t in stats_phc["time"]])
+
+        # --- 1. GFP ---
+        axs[0].errorbar(
+            time_gfp,
+            stats_gfp["mean_fluo"],
+            yerr=stats_gfp["std_fluo"],
+            fmt='-o',
+            capsize=5,
+            color='green'
+        )
+        axs[0].set_title("GFP Fluorescence")
+        axs[0].set_ylabel("Mean Intensity")
+
+        # --- 2. BIOMASS (Integrated) ---
+        axs[1].errorbar(
+            time_phc,
+            stats_phc["mean_integrated"],
+            yerr=stats_phc["std_integrated"],
+            fmt='-o',
+            capsize=5,
+            color='blue'
+        )
+        axs[1].set_title("Integrated Intensity (Biomass Proxy)")
+        axs[1].set_ylabel("Total Signal")
+
+        # --- 3. MORPHOLOGY (AREA) ---
+        axs[2].errorbar(
+            time_phc,
+            stats_phc["mean_area"],
+            yerr=stats_phc["std_area"],
+            fmt='-o',
+            capsize=5,
+            color='goldenrod'
+        )
+        axs[2].set_title("Cell Area (Morphology)")
+        axs[2].set_ylabel("Area")
+        axs[2].set_xlabel("Time (hours)")
+
+        fig.subplots_adjust(
+            top=0.92,
+            bottom=0.08,
+            left=0.12,
+            right=0.95,
+            hspace=0.4
+        )
+
+        self.population_canvas.draw()
+
+    def save_population_plot(self):
+        """Save the current population plot"""
+        if not hasattr(self, "population_figure"):
+            QMessageBox.warning(self, "Error", "No plot available to save.")
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Population Plot",
+            "",
+            "PNG Files (*.png);;PDF Files (*.pdf);;SVG Files (*.svg);;All Files (*)",
+        )
+
+        if file_path:
+            try:
+                self.population_figure.savefig(
+                    file_path, dpi=300, bbox_inches="tight"
+                )
+                QMessageBox.information(
+                    self, "Success", f"Plot saved to {file_path}"
+                )
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Failed to save plot: {str(e)}")
     # def calculate_rpu_values(self):
     #     """
     #     Calculate RPU reference values from all segmented cells across all frames.
