@@ -746,7 +746,7 @@ class VerifyColoniesDialog(QDialog):
         """Redo last undone action."""
         print("REDO CALLED")
         print(f"UNDO STACK SIZE: {len(self.undo_stack)}")
-        print(f"REDO STACK SIZE: {len(self.redo_stack)}"
+        print(f"REDO STACK SIZE: {len(self.redo_stack)}")
         if not self.redo_stack:
             self.status_label.setText("Nothing to redo.")
             return
