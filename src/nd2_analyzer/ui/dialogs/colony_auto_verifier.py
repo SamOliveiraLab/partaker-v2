@@ -1,9 +1,10 @@
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QLabel, QPushButton, QHBoxLayout,
                                QWidget, QScrollArea, QFrame, QGroupBox, QSlider, QComboBox, QRubberBand)
 from PySide6.QtCore import Qt, Signal, QTimer, QRect, QPoint, QSize, QEvent
-from PySide6.QtGui import QPixmap, QImage
+from PySide6.QtGui import QPixmap, QImage, QShortcut, QKeySequence
 import cv2
 import numpy as np
+import copy
 
 from nd2_analyzer.ui.biofilms.colony_separator import ColonySeparator
 
@@ -17,6 +18,10 @@ class VerifyColoniesDialog(QDialog):
         self.colonies = colonies.copy()
         self.colony_separator = ColonySeparator()
         self.colony_separator.detected_colonies = self.colonies.copy()
+        # Initilize State History Undo/Redo
+        self.undo_stack = []
+        self.redo_stack = []
+        self.max_history = 5
         # Default auto colony modify mode
         self.modify_mode = "Trim"
         self.origin = QPoint()
@@ -179,17 +184,45 @@ class VerifyColoniesDialog(QDialog):
         # Set layout for colony modification mode
         mode_layout = QHBoxLayout()
         mode_layout.addWidget(QLabel("Modify Mode:"))
+        # Trim/Add selector
         self.mode_selector = QComboBox()
         self.mode_selector.addItems(["Trim", "Add"])
         self.mode_selector.currentTextChanged.connect(self.on_mode_changed)
+
         mode_layout.addWidget(self.mode_selector)
+
+        # Small spacing
+        mode_layout.addSpacing(20)
+
+        # Undo button
+        self.undo_btn = QPushButton("Undo")
+        self.undo_btn.clicked.connect(self.undo)
+        mode_layout.addWidget(self.undo_btn)
+
+        # Redo button
+        self.redo_btn = QPushButton("Redo")
+        self.redo_btn.clicked.connect(self.redo)
+        mode_layout.addWidget(self.redo_btn)
+
+        # Undo shortcut
+        self.undo_shortcut = QShortcut(QKeySequence(QKeySequence.Undo), self)
+        self.undo_shortcut.activated.connect(self.undo_btn.click)
+
+        # Redo shortcut
+        self.redo_shortcut = QShortcut(QKeySequence(QKeySequence.Redo), self)
+        self.redo_shortcut.activated.connect(self.redo_btn.click)
+
+        # Push everything left
+        mode_layout.addStretch()
 
         main_layout.addLayout(mode_layout)
 
         # Set the button layout to the bottom of the main layout
         button_layout = QHBoxLayout()
+        # Accept button
         self.ok_btn = QPushButton("Accept Colonies")
         self.ok_btn.clicked.connect(self.accept_colonies)
+        # Cancel button
         cancel_btn = QPushButton("Cancel")
         cancel_btn.clicked.connect(self.reject)
 
@@ -411,6 +444,7 @@ class VerifyColoniesDialog(QDialog):
 
     def delete_colony(self, index):
         """Delete colony at given index and update colony IDs"""
+        self.save_state()
         if 0 <= index < len(self.colonies):
             del self.colonies[index]
             for i, colony in enumerate(self.colonies):
@@ -454,6 +488,7 @@ class VerifyColoniesDialog(QDialog):
 
     def add_colony_from_rect(self, rect: QRect):
         """Add a colony or extend colony area to auto-detected colonies"""
+        self.save_state()
         pixmap = self.image_label.pixmap()
         if pixmap is None:
             return
@@ -564,6 +599,7 @@ class VerifyColoniesDialog(QDialog):
 
     def trim_colonies_from_rect(self, rect: QRect):
         """Trim or remove colonies from an auto-detected colony"""
+        self.save_state()
         pixmap = self.image_label.pixmap()
         if pixmap is None:
             return
@@ -660,3 +696,66 @@ class VerifyColoniesDialog(QDialog):
         self.colony_separator.detected_colonies = self.colonies
         self.update_display()
         self.update_colonies_list()
+
+    def save_state(self):
+        """Save current colony state for undo."""
+        print(f"SAVING STATE: {len(self.colonies)} colonies")
+        print(f"UNDO STACK SIZE BEFORE: {len(self.undo_stack)}")
+        self.undo_stack.append(copy.deepcopy(self.colonies))
+        print(f"UNDO STACK SIZE AFTER: {len(self.undo_stack)}")
+
+        # Keep only last 5 actions
+        if len(self.undo_stack) > self.max_history:
+            self.undo_stack.pop(0)
+
+        # New action invalidates redo history
+        self.redo_stack.clear()
+
+    def restore_state(self, state):
+        """Restore colony state and refresh UI."""
+        self.colonies = copy.deepcopy(state)
+
+        # Reassign IDs
+        for i, colony in enumerate(self.colonies):
+            colony["colony_id"] = i + 1
+
+        self.colony_separator.detected_colonies = self.colonies
+
+        self.update_display()
+        self.update_colonies_list()
+
+    def undo(self):
+        """Undo last action."""
+        print("UNDO CALLED")
+        print(f"UNDO STACK SIZE: {len(self.undo_stack)}")
+        print(f"REDO STACK SIZE: {len(self.redo_stack)}")
+        if not self.undo_stack:
+            self.status_label.setText("Nothing to undo.")
+            return
+
+        # Save current state for redo
+        self.redo_stack.append(copy.deepcopy(self.colonies))
+
+        # Restore previous state
+        previous_state = self.undo_stack.pop()
+        self.restore_state(previous_state)
+
+        self.status_label.setText("↩ Undo")
+
+    def redo(self):
+        """Redo last undone action."""
+        print("REDO CALLED")
+        print(f"UNDO STACK SIZE: {len(self.undo_stack)}")
+        print(f"REDO STACK SIZE: {len(self.redo_stack)}"
+        if not self.redo_stack:
+            self.status_label.setText("Nothing to redo.")
+            return
+
+        # Save current state back into undo
+        self.undo_stack.append(copy.deepcopy(self.colonies))
+
+        # Restore redo state
+        next_state = self.redo_stack.pop()
+        self.restore_state(next_state)
+
+        self.status_label.setText("↪ Redo")
