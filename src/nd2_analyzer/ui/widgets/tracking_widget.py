@@ -30,6 +30,7 @@ import matplotlib.cm as cm
 from nd2_analyzer.analysis.metrics_service import MetricsService
 from nd2_analyzer.ui.widgets.environment_view_tab import EnvironmentViewTab
 from nd2_analyzer.ui.widgets.digital_twin_tab import DigitalTwinTab
+from nd2_analyzer.ui.widgets.track_validation_tab import TrackValidationTab
 
 
 class TrackingWidget(QWidget):
@@ -191,6 +192,10 @@ class TrackingWidget(QWidget):
         self.dt_tab = DigitalTwinTab()
         self.view_tabs.addTab(self.dt_tab, "Digital Twin")
 
+        # Track Validation tab ----------------------------------------- #
+        self.validation_tab = TrackValidationTab()
+        self.view_tabs.addTab(self.validation_tab, "Track Validation")
+
         layout.addWidget(self.view_tabs)
 
         # Progress bar
@@ -267,6 +272,35 @@ class TrackingWidget(QWidget):
             return
         dt.set_tracking_data(self.lineage_tracks, self.metrics_service)
 
+    def _refresh_validation_tab(self):
+        """Push tracks and image stacks into the Track Validation tab."""
+        vt = getattr(self, "validation_tab", None)
+        if vt is None:
+            return
+        raw_stack = self._get_raw_stack()
+        vt.set_data(self.lineage_tracks, raw_images=raw_stack)
+
+    def _get_raw_stack(self):
+        """Assemble a (T, H, W) raw intensity stack for the current position."""
+        if self.image_data is None:
+            return None
+        try:
+            raw_data = self.image_data.data
+            p = self.position_combo.currentData()
+            if p is None:
+                p = 0
+            if raw_data.ndim == 5:
+                # (T, P, C, Y, X) -- take channel 0
+                return np.asarray(raw_data[:, p, 0])
+            elif raw_data.ndim == 4:
+                # (T, P, Y, X)
+                return np.asarray(raw_data[:, p])
+            elif raw_data.ndim == 3:
+                return np.asarray(raw_data)
+        except Exception as e:
+            print(f"_get_raw_stack failed: {e}")
+        return None
+
     def _export_tracking_data(self):
         """Auto-export tracking data to JSON for Digital Twin offline use."""
         if not self.lineage_tracks:
@@ -328,6 +362,7 @@ class TrackingWidget(QWidget):
         self.cell_view_button.setEnabled(has_tracks)
         self.export_video_button.setEnabled(has_tracks)
         self._refresh_dt_tab()
+        self._refresh_validation_tab()
 
         # Let the rest of the app know which tracks are active for this p.
         pub.sendMessage(
@@ -429,6 +464,7 @@ class TrackingWidget(QWidget):
                 self.visualize_tracks()
                 self._refresh_env_view()
                 self._refresh_dt_tab()
+                self._refresh_validation_tab()
 
                 QMessageBox.information(
                     self,
@@ -722,6 +758,7 @@ class TrackingWidget(QWidget):
             self.visualize_tracks()
             self._refresh_env_view()
             self._refresh_dt_tab()
+            self._refresh_validation_tab()
 
             # Show success message with detailed stats
             total_tracks = len(all_tracks)
