@@ -172,9 +172,9 @@ class MetricsService:
             max_signal = 0
 
         # If frame has no real signal → SKIP ENTIRE FRAME
-        if max_signal < 10:  # <-- tune threshold if needed
+        """if max_signal < 10:  # <-- tune threshold if needed
             print(f"DEBUG: Skipping bad frame T={_frame.index[0]} P={_frame.index[1]}")
-            return []
+            return []"""
         has_fluorescence = True
 
         for cell in cells:
