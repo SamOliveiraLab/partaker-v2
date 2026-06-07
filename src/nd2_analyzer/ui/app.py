@@ -23,6 +23,7 @@ from nd2_analyzer.ui.biofilms.analysis_mode import AnalysisMode, AnalysisModeCon
 from nd2_analyzer.ui.dialogs.mode_selection_dialog import ModeSelectionDialog
 from nd2_analyzer.ui.biofilms.config.biofilm_config import BiofilmConfig
 from nd2_analyzer.ui.biofilms.cube_analysis import CubeAnalysisWidget
+from nd2_analyzer.ui.biofilms.eps_analysis import EPSAnalysisWidget
 from nd2_analyzer.ui.biofilms.colony_separation_widget import ColonySeparationWidget
 from .widgets import (
     ViewAreaWidget,
@@ -103,10 +104,12 @@ class App(QMainWindow):
         self.segmentation_tab = SegmentationWidget()  # Same segmentation
         self.colony_separation_tab = ColonySeparationWidget()  # New colony separation tab
         self.cube_analysis_tab = CubeAnalysisWidget()
+        self.eps_analysis_tab = EPSAnalysisWidget()
 
         self.tab_widget.addTab(self.segmentation_tab, "Segmentation")
         self.tab_widget.addTab(self.colony_separation_tab, "Colony Separation")
         self.tab_widget.addTab(self.cube_analysis_tab, "Colony Analysis")
+        self.tab_widget.addTab(self.eps_analysis_tab, "EPS Analysis")
 
     # ── Drag & Drop ──────────────────────────────────────────────────
 
