@@ -400,6 +400,7 @@ class VerifyColoniesDialog(QDialog):
         self.colonies_count_label.setText(f"Colonies: {len(self.colonies)}")
 
     def accept_colonies(self):
+        self.export_colony_overlay()
         """Accept the selected colonies and emit signal"""
         params = {
             "min_size": self.min_size_slider.value(),
@@ -660,3 +661,64 @@ class VerifyColoniesDialog(QDialog):
         self.colony_separator.detected_colonies = self.colonies
         self.update_display()
         self.update_colonies_list()
+
+    def export_colony_overlay(self):
+        from pathlib import Path
+        import cv2
+
+        if self.original_image is None:
+            return
+
+        # Copy raw image
+        display_image = self.original_image.copy()
+
+        # Convert grayscale -> RGB
+        if len(display_image.shape) == 2:
+            display_image = cv2.cvtColor(
+                display_image,
+                cv2.COLOR_GRAY2RGB
+            )
+
+        # Create the exact overlay currently shown in the viewer
+        overlay = self.colony_separator.create_colony_overlay(
+            display_image.shape[:2]
+        )
+
+        if overlay.shape[:2] == display_image.shape[:2]:
+            display_image = cv2.addWeighted(
+                display_image,
+                1.0,
+                overlay,
+                0.6,
+                0
+            )
+
+        # Create output folder
+        output_dir = (
+                Path("analysis_results")
+                / "auto_colony_selector"
+        )
+
+        output_dir.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+        # Save with current frame naming convention
+        filename = (
+            f"pos{self.current_position}"
+            f"_t{self.current_time}"
+            f"_{self.current_channel}.png"
+        )
+
+        save_path = output_dir / filename
+
+        cv2.imwrite(
+            str(save_path),
+            cv2.cvtColor(
+                display_image,
+                cv2.COLOR_RGB2BGR
+            )
+        )
+
+        print(f"Saved colony overlay: {save_path}")
