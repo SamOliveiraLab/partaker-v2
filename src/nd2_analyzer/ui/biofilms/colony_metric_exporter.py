@@ -16,6 +16,7 @@ import polars as pl
 import json
 
 class ColonyMetricExporter:
+    """Creates metrics for single-cells in microcolonies for biofilm analysis"""
     def __init__(self, image_data, colonies, segmentation_storage, model_name, voxel_size):
         self.image_data = image_data
         self.colonies = colonies
@@ -23,36 +24,11 @@ class ColonyMetricExporter:
         self.model_name = model_name
         self.voxel_size = voxel_size
 
-        """import torch
-        import torch.nn as nn
-
-        class SimpleUNet(nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.encoder = nn.Sequential(
-                    nn.Conv2d(3, 16, 3, padding=1),
-                    nn.ReLU(),
-                    nn.Conv2d(16, 32, 3, padding=1),
-                    nn.ReLU()
-                )
-                self.decoder = nn.Sequential(
-                    nn.Conv2d(32, 16, 3, padding=1),
-                    nn.ReLU(),
-                    nn.Conv2d(16, 1, 1),
-                    nn.Sigmoid()
-                )
-
-            def forward(self, x):
-                return self.decoder(self.encoder(x))"""
-
-        #self.tracking_model = SimpleUNet()
-        #self.tracking_model.load_state_dict(torch.load("tracking_unet.pth"))
-        #self.tracking_model.eval()
-
     def build_table(self):
-
+        """Build a table of colony and cell metrics to export to CSV"""
         cell_data = self.return_cell_metrics()
         # cell_data = self.track_cells_hungarian(cell_data)
+        #TODO: Add cell tracking to cell data
         colony_cell_map = self.assign_cells_to_colonies(cell_data, self.colonies)
         rows = []
         for colony in self.colonies:
@@ -62,22 +38,14 @@ class ColonyMetricExporter:
             print(f"Processed {len(rows)} colonies in table")
         return pl.DataFrame(rows)
 
-    def export_json(self, path: str):
-        data = [
-            self.flatten_colony(c, self.voxel_size)
-            for c in self.colonies
-        ]
-
-        with open(path, "w") as f:
-            json.dump(data, f, indent=2)
-
     def export_csv(self, path: str):
+        """Exports metrics to CSV"""
         df = self.build_table()
         df.write_csv(path)
 
     def print_metrics(self):
+        """Debugging function: prints metrics to console"""
         #df = self.build_table()
-
         cache = self.segmented_storage.with_model(self.model_name)  # or your model
         mmap_array, index_set = cache.mmap_arrays_idx[cache.model_name]
 
@@ -94,14 +62,16 @@ class ColonyMetricExporter:
         #print(df)
 
     def flatten_colony(self, colony: Dict, colony_cell_map: Dict, voxel_size) -> Dict:
+        """Summarizes microcolony cluster contour and the cells assigned
+        to it, into numerical measurements in dictionary"""
 
+        # records shape of contour around cluster
         contour = np.array(colony["contour"], dtype=np.int32)
-
-        area_px = float(cv2.contourArea(contour))
+        area = float(cv2.contourArea(contour))
         perimeter = float(cv2.arcLength(contour, True))
-
         x, y, w, h = cv2.boundingRect(contour)
 
+        # records center of microcolony cluster
         M = cv2.moments(contour)
         if M["m00"] != 0:
             cx = M["m10"] / M["m00"]
@@ -109,45 +79,44 @@ class ColonyMetricExporter:
         else:
             cx, cy = x + w / 2, y + h / 2
 
+        # records convex hull area & solidity: how compact colony is
         hull = cv2.convexHull(contour)
         hull_area = cv2.contourArea(hull)
-        solidity = area_px / hull_area if hull_area > 0 else 0
+        # solidity close to 1 implies compacted cluster, solidity closer to 0 implies branching/irregular colony
+        solidity = area / hull_area if hull_area > 0 else 0
 
-        # ---------------------------
-        # CELL STATS (KEY PART)
-        # ---------------------------
 
+        # Generate cell statistics per microcolony cluster
         cid = colony["colony_id"]
         cells = colony_cell_map.get(cid, [])
 
+        # checks if voxel size is present
+        has_vox = voxel_size is not None
+
         if cells:
-            mean_density = np.mean([c["local_density"] for c in cells])
-            total_biomass = np.sum([c["volume_um3"] for c in cells])
+            if has_vox:
+                mean_density = np.mean([c["local_density"] for c in cells])
+                #total_biomass = np.sum([c["volume"] for c in cells])
         else:
             mean_density = 0
-            total_biomass = 0
-
+            #total_biomass = 0
         cell_count = len(cells)
 
-        if voxel_size is not None:
-            area_um2 = area_px * voxel_size.x * voxel_size.y
-        else:
-            area_um2 = area_px
-        density = cell_count / area_um2 if area_um2 > 0 else 0
+        #TODO: Refactor and optimize for voxel existence, default should be for voxel if they exist
+        # Change back to oringinal because cell tracking may rely on this, but maybe not
 
-        # ---------------------------
+        density = cell_count / area
+
         # OUTPUT
-        # ---------------------------
-
         flat = {
             "colony_id": cid,
 
-            "area_px": area_px,
-            "perimeter_px": perimeter,
+            "area": area,
+            "perimeter": perimeter,
             "solidity": solidity,
 
-            "centroid_x_px": cx,
-            "centroid_y_px": cy,
+            "centroid_x": cx,
+            "centroid_y": cy,
 
             "bbox_x1": x,
             "bbox_y1": y,
@@ -156,81 +125,85 @@ class ColonyMetricExporter:
 
             "cells_per_colony": cell_count,
             "cell_density": density,
+            "has_vox": has_vox,
         }
 
-        if voxel_size:
-            flat.update({
-                "area_um2": area_um2,
-                "centroid_x_um": cx * voxel_size.x,
-                "centroid_y_um": cy * voxel_size.y,
-            })
+        area_um2 = area * voxel_size.x * voxel_size.y if has_vox else 0
+        perimeter_um = perimeter * ((voxel_size.x + voxel_size.y) / 2) if has_vox else 0
+        density_um = cell_count / area_um2 if has_vox else 0
+        centroid_x_um = cx * voxel_size.x if has_vox else 0
+        centroid_y_um = cy * voxel_size.y if has_vox else 0
+        mean_density_um = mean_density / cell_count if cell_count > 0 else 0 #check
+
         flat.update({
-            "biomass_um3": total_biomass,
+            "area_um2": area_um2,
+            "perimeter_um": perimeter_um,
+            "density_um": density_um,
+            "centroid_x_um": centroid_x_um,
+            "centroid_y_um": centroid_y_um,
+
             "mean_biofilm_density": mean_density
-        })
+        }) #"biomass_um3": total_biomass,
 
-        if cells:
-            times = [c["t"] for c in cells]
-            t_span = max(times) - min(times) if len(times) > 1 else 1
-            growth_rate = total_biomass / t_span
-        else:
-            growth_rate = 0
+        #if cells:
+        #    times = [c["t"] for c in cells]
+        #    t_span = max(times) - min(times) if len(times) > 1 else 1
+        #    growth_rate = total_biomass / t_span
+        #else:
+        #    growth_rate = 0
 
-        flat["growth_rate"] = growth_rate
+        #flat["growth_rate"] = growth_rate
 
         return flat
 
     def return_cell_metrics(self):
-
+        """Return metrics for every cell in (later) specified region"""
         cache = self.segmented_storage.with_model(self.model_name)
         mmap_array, index_set = cache.mmap_arrays_idx[cache.model_name]
-
         from skimage.measure import label, regionprops
 
         cells = []
-
         print("Index set:", len(index_set))
 
         # process frame-by-frame (not all at once mentally)
         for idx in index_set:
             print("Processing idx:", idx)
-
             if len(idx) == 3:
                 t, p, c = idx
             else:
                 t, p = idx
                 c = self.image_data.channel_n
 
+            # get segmented images
             segmented = cache[(t, p, c, self.model_name)]
             raw_img = self.image_data.get(t, p, c)
 
+            # get segmented labels and masks
             labeled = label(segmented)
             regions = regionprops(labeled)
 
-            # TEMP frame list (small)
+            # Create TEMP frame list (small)
             frame_cells = []
 
+            # get individual cell metrics
             for region in regions:
+                # cell position
                 cx = region.centroid[1]
                 cy = region.centroid[0]
-
+                # cell area
                 area_px = region.area
                 if self.voxel_size is not None and self.voxel_size.x:
                     area_um2 = area_px * self.voxel_size.x * self.voxel_size.y
 
-                    volume_um3 = (
-                        area_um2 * self.voxel_size.z
-                        if self.voxel_size.z else area_um2
-                    )
+                    # TODO: implement volume for Partaker v3
+                    #volume_um3 = (
+                    #    area_um2 * self.voxel_size.z
+                    #    if self.voxel_size.z else area_um2
+                    #)
                 else:
                     # fallback to pixel units
                     area_um2 = area_px
                     volume_um3 = area_px
-
-                # crop mask (fixes memory issue)
-                #y1, x1, y2, x2 = region.bbox
-                #cropped_mask = (labeled[y1:y2, x1:x2] == region.label).astype(np.uint8)
-                #cropped_img = raw_img[y1:y2, x1:x2]"""
 
 
                 # FIXED PATCH EXTRACTION FOR MASK SIZE
@@ -271,10 +244,11 @@ class ColonyMetricExporter:
                     "centroid_y": cy,
                     "area_px": area_px,
                     "area_um2": area_um2,
-                    "volume_um3": volume_um3,
                     "mask": cropped_mask,
                     "raw_img": cropped_img,
                 })
+
+                #frame_cells.append({"volume_um3": volume_um3,})
 
             # compute density per frame (NOT global)
             densities = self.compute_local_density(frame_cells)
@@ -288,20 +262,19 @@ class ColonyMetricExporter:
         print("Successfully returned Cells!")
         return cells
 
-    def compute_local_density(self, cells, radius_um=10):
-
+    def compute_local_density(self, cells, radius_fraction=0.10):
         densities = [0] * len(cells)
 
-        # Apply voxel size
-        if self.voxel_size is not None and self.voxel_size.x:
-            r_px = radius_um / self.voxel_size.x
-        else:
-            # fallback: interpret radius_um as pixels
-            r_px = radius_um
+        first_frame = cells[0]["raw_img"]
+        h, w = first_frame.shape
+        neighborhood_radius = min(h, w) * radius_fraction
+
+        neighborhood_area = np.pi * (neighborhood_radius ** 2)
 
         # group by time
         from collections import defaultdict
         frames = defaultdict(list)
+
 
         for i, c in enumerate(cells):
             frames[c["t"]].append((i, c))
@@ -313,21 +286,23 @@ class ColonyMetricExporter:
             cells_at_t = frames[t]
 
             coords = np.array([[c["centroid_x"], c["centroid_y"]] for c in frame_cells])
-            volumes = np.array([c["volume_um3"] for c in frame_cells])
+            cell_areas = np.array([cell["area_um2"] if self.voxel_size is not None else cell["area_px"] for cell in frame_cells])
+            #volumes = np.array([c["volume_um3"] for c in frame_cells])
 
             for i, center in enumerate(coords):
 
                 dists = np.linalg.norm(coords - center, axis=1)
-                neighbors = dists <= r_px
+                neighbors = dists <= neighborhood_radius
+                total_neighbor_area = cell_areas[neighbors].sum()
 
-                total_biomass = volumes[neighbors].sum()
+                #total_biomass = volumes[neighbors].sum()
+                #if self.voxel_size is not None and self.voxel_size.z:
+                #        sphere_vol = (4 / 3) * np.pi * (radius_um ** 3)
+                #else:
+                #    sphere_vol = np.pi * (radius_um ** 2)
+                #density_3 = total_biomass / sphere_vol if sphere_vol > 0 else 0
 
-                if self.voxel_size is not None and self.voxel_size.z:
-                        sphere_vol = (4 / 3) * np.pi * (radius_um ** 3)
-                else:
-                    sphere_vol = np.pi * (radius_um ** 2)
-
-                density = total_biomass / sphere_vol if sphere_vol > 0 else 0
+                density = (total_neighbor_area / neighborhood_area if neighborhood_area > 0 else 0)
 
                 densities[indices[i]] = density
 
@@ -389,8 +364,8 @@ class ColonyMetricExporter:
         h, w = grid.shape
 
         # Convert pixel indices → microns (if possible)
-        x_um = np.arange(0, w * vx, vx)
-        y_um = np.arange(0, h * vy, vy)
+        x_ax = np.arange(0, w * vx, vx)
+        y_ax = np.arange(0, h * vy, vy)
 
         plt.figure(figsize=(8, 6))
 
@@ -587,107 +562,13 @@ class ColonyMetricExporter:
         self.plot_density_field_from_neighbors(grid_f, os.path.join(output_dir, "density_field_from_neighbors.png"))
 
         # cell_data = self.return_cell_metrics()
-        print("Started Hungarian Tracking for Grid!")
-        # implement cell tracking. TODO: change tracking to UNET
-        cell_data = self.track_cells_hungarian(cell_data)
-        self.plot_velocity_field(cell_data, os.path.join(output_dir, "velocity_field.png"))
-        self.plot_division_heatmap(cell_data, shape, os.path.join(output_dir, "division_heatmap.png"))
-
+        # implement cell tracking. TODO: change tracking to trackster
+        #cell_data = self.track_cells_hungarian(cell_data)
+        #self.plot_velocity_field(cell_data, os.path.join(output_dir, "velocity_field.png"))
+        #self.plot_division_heatmap(cell_data, shape, os.path.join(output_dir, "division_heatmap.png"))
         print(f"Saved density grids to {output_dir}")
 
-    def track_cells_hungarian(self, cells):
-        from collections import defaultdict
-        from scipy.optimize import linear_sum_assignment
-        import numpy as np
 
-        tracks = []
-        next_id = 0
-
-        # group cells by time
-        frames = defaultdict(list)
-        for c in cells:
-            frames[c["t"]].append(c)
-
-        prev_cells = []
-
-        for t in sorted(frames.keys()):
-            curr_cells = frames[t]
-
-            # initialize track_id
-            for c in curr_cells:
-                c["track_id"] = None
-
-            # FIRST FRAME → assign new IDs
-            if not prev_cells:
-                for c in curr_cells:
-                    c["track_id"] = next_id
-                    next_id += 1
-
-            else:
-                # BUILD COST MATRIX
-                cost_matrix = np.zeros((len(prev_cells), len(curr_cells)))
-
-                for i, p in enumerate(prev_cells):
-                    for j, c in enumerate(curr_cells):
-                        # Euclidean distance
-                        dist = np.linalg.norm([
-                            c["centroid_x"] - p["centroid_x"],
-                            c["centroid_y"] - p["centroid_y"]
-                        ])
-
-                        if dist > 50:
-                            cost_matrix[i, j] = 1e6
-                            continue  # SKIP IoU
-
-                        # IoU (shape similarity)
-                        iou = self.compute_iou(p["mask"], c["mask"])
-
-                        # FINAL COST (tunable)
-                        cost = dist - (iou * 20)
-
-                        cost_matrix[i, j] = cost
-
-                # HUNGARIAN MATCHING
-                row_ind, col_ind = linear_sum_assignment(cost_matrix)
-                MAX_DIST = 30
-                assigned_curr = set()
-
-                # ASSIGN MATCHES
-                for i, j in zip(row_ind, col_ind):
-
-                    if cost_matrix[i, j] < MAX_DIST:
-                        curr_cells[j]["track_id"] = prev_cells[i]["track_id"]
-                        assigned_curr.add(j)
-
-                # NEW CELLS (not matched)
-                for j, c in enumerate(curr_cells):
-                    if j not in assigned_curr:
-                        c["track_id"] = next_id
-                        next_id += 1
-
-                # DIVISION DETECTION
-                for i, p in enumerate(prev_cells):
-
-                    matches = []
-
-                    for j, c in enumerate(curr_cells):
-                        dist = np.linalg.norm([
-                            c["centroid_x"] - p["centroid_x"],
-                            c["centroid_y"] - p["centroid_y"]
-                        ])
-
-                        if dist < MAX_DIST:
-                            matches.append(c)
-
-                    # if one parent → multiple children
-                    if len(matches) >= 2:
-                        for m in matches:
-                            m["parent_id"] = p["track_id"]
-
-            prev_cells = curr_cells
-            tracks.extend(curr_cells)
-
-        return tracks
 
     def build_tracking_dataset(self, cells):
         from collections import defaultdict
@@ -715,96 +596,6 @@ class ColonyMetricExporter:
 
         return dataset
 
-    def track_cells_unet(self, cells):
-        from collections import defaultdict
-
-        tracks = []
-        next_id = 0
-
-        # group cells by time
-        frames = defaultdict(list)
-        for c in cells:
-            frames[c["t"]].append(c)
-
-        prev_cells = []
-
-        for t in sorted(frames.keys()):
-            curr_cells = frames[t]
-
-            # assign empty ids
-            for c in curr_cells:
-                c["track_id"] = None
-
-            # first frame
-            if not prev_cells:
-                for c in curr_cells:
-                    c["track_id"] = next_id
-                    next_id += 1
-
-            else:
-                for p in prev_cells:
-                    input_tensor = self.build_tracking_input(
-                        p["raw_img"],  # ← correct per-cell input
-                        curr_cells[0]["raw_img"],  # OK (same frame)
-                        p["mask"]
-                    )
-
-                assigned_curr = set()
-
-                assigned_curr = set()
-
-                for p in prev_cells:
-
-                    prev_img = p["raw_img"]
-                    curr_img = curr_cells[0]["raw_img"]
-
-                    input_tensor = self.build_tracking_input(
-                        prev_img,
-                        curr_img,
-                        p["mask"]
-                    )
-
-                    import torch
-                    with torch.no_grad():
-                        x = torch.tensor(input_tensor, dtype=torch.float32)
-                        x = x.permute(0, 3, 1, 2)
-
-                        pred = self.tracking_model(x)
-                        pred = pred.squeeze().numpy()
-
-                    prediction = (pred > 0.5).astype(np.uint8)
-
-                    overlaps = []
-                    for j, c in enumerate(curr_cells):
-                        iou = self.compute_iou(prediction, c["mask"])
-                        if iou > 0.3:
-                            overlaps.append((j, iou))
-
-                    if len(overlaps) == 1:
-                        j, _ = overlaps[0]
-                        curr_cells[j]["track_id"] = p["track_id"]
-                        assigned_curr.add(j)
-
-                    elif len(overlaps) >= 2:
-                        for j, _ in overlaps:
-                            curr_cells[j]["track_id"] = next_id
-                            curr_cells[j]["parent_id"] = p["track_id"]
-                            assigned_curr.add(j)
-                            next_id += 1
-
-                    # CASE 3: DISAPPEAR → do nothing
-
-                # NEW CELLS (not matched)
-                for j, c in enumerate(curr_cells):
-                    if j not in assigned_curr:
-                        c["track_id"] = next_id
-                        next_id += 1
-
-            prev_cells = curr_cells
-            tracks.extend(curr_cells)
-
-        return tracks
-
     def build_tracking_input(self, prev_img, curr_img, seed_mask):
         # normalize cell images
         prev_img = prev_img.astype(np.float32) / 255.0
@@ -826,36 +617,6 @@ class ColonyMetricExporter:
 
         # add batch dimension
         return np.expand_dims(input_tensor, axis=0)
-
-    def build_table_hungarian(self):
-
-        cell_data = self.return_cell_metrics()
-        print("Building Hungarian table...")
-
-        # STEP 1: generate ground truth
-        cell_data = self.track_cells_hungarian(cell_data)
-
-        # STEP 2: build dataset
-        dataset = self.build_tracking_dataset(cell_data)
-
-        print("Training samples:", len(dataset))
-
-        return dataset  # temporarily return dataset for training
-
-    def compute_iou(self, mask1, mask2):
-        import cv2
-
-        # resize mask2 to match mask1
-        mask2_resized = cv2.resize(
-            mask2.astype(np.uint8),
-            (mask1.shape[1], mask1.shape[0]),
-            interpolation=cv2.INTER_NEAREST
-        )
-
-        intersection = np.logical_and(mask1, mask2_resized).sum()
-        union = np.logical_or(mask1, mask2_resized).sum()
-
-        return intersection / union if union > 0 else 0
 
 
 

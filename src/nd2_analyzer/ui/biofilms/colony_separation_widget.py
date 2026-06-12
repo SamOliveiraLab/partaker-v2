@@ -298,6 +298,9 @@ class ColonySeparationWidget(QWidget):
 
     def on_image_ready(self, image, time, position, channel, mode):
         """Handle image ready event"""
+        self.current_time = time
+        self.current_position = position
+        self.current_channel = channel
         if mode == "normal":
             # Store the raw image for colony detection
             self.current_raw_image = image
@@ -326,6 +329,9 @@ class ColonySeparationWidget(QWidget):
             params=self.auto_detect_params,
             parent=self
         )
+        verify_dialog.current_time = self.current_time
+        verify_dialog.current_position = self.current_position
+        verify_dialog.current_channel = self.current_channel
         verify_dialog.colonies_verified.connect(self.handle_verified_colonies)
         result = verify_dialog.exec()
         if result:
