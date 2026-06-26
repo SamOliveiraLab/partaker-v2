@@ -203,6 +203,25 @@ class ViewAreaWidget(QWidget):
 
     # CENTRALIZED IMAGE PROCESSING FUNCTIONS
 
+    # Per-channel display colors. Channel 0 (phase) stays grayscale (None);
+    # fluorescence channels get a tint. The EPS dye glows green.
+    CHANNEL_COLORS = {0: None, 1: (0, 255, 0), 2: (255, 60, 90), 3: (0, 200, 255)}
+
+    def _channel_tint(self):
+        """Return the (R,G,B) tint for the current channel, or None for grayscale."""
+        return self.CHANNEL_COLORS.get(getattr(self, "current_c", 0), None)
+
+    def _to_uint8(self, img, normalize):
+        """Intensity-normalize a 2D array to uint8 (for colour tinting)."""
+        a = img.astype(np.float32)
+        if normalize:
+            lo, hi = float(a.min()), float(a.max())
+        else:
+            lo, hi = 0.0, (65535.0 if img.dtype == np.uint16 else 255.0)
+        if hi <= lo:
+            hi = lo + 1.0
+        return np.clip((a - lo) / (hi - lo) * 255.0, 0, 255).astype(np.uint8)
+
     def _normalize_image(self, image):
         """
         Normalize image to appropriate display range based on dtype.
@@ -245,6 +264,17 @@ class ViewAreaWidget(QWidget):
 
         # Handle grayscale images
         if len(img.shape) == 2:
+            # Colorize this channel (e.g. EPS -> green) when a tint is assigned.
+            tint = self._channel_tint()
+            if tint is not None:
+                base8 = self._to_uint8(img, normalize)
+                rgb = np.ascontiguousarray(
+                    (base8[:, :, None].astype(np.float32) / 255.0
+                     * np.array(tint, np.float32)).astype(np.uint8)
+                )
+                h, w, ch = rgb.shape
+                return rgb, w, h, w * ch, QImage.Format_RGB888
+
             # Ensure grayscale is 16-bit for better display quality
             if img.dtype != np.uint16:
                 if normalize:

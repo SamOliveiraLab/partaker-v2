@@ -1,0 +1,53 @@
+Loading Nona data + installing ImageData singleton ...
+  array shape (T,P,C,Y,X): (4, 3, 2, 2044, 2048)
+
+=== validation run: pos2, t48 (T=2, P=2) ===
+Starting Moreau Local OTSU for <__main__.make_headless_eps.<locals>.EPSAlgo object at 0x3631dc740>
+P=2 T=2 | mode=moreau | local_area=60 | scope=cell_envelope | thr=10415.027 | rho=48.78% | encased=28.48% | cell_area_px=2,042,189 | cell_env_px=2,637,772 | vps_overlap_px=751,242
+  metrics: {'analysis_method': 'Moreau', 'eps_threshold_used': 10415.027, 'local_block_side_px': 1585, 'fraction_vps_coverage': 28.48, 'areal_fraction_percent': 48.785, 'cell_area_pixels': 2042189, 'cell_envelope_pixels': 2637772, 'vps_colocalized_pixels': 751242, 'cell_threshold_used': 35846.021}
+Updated parameters: intensity_threshold=50, min_colony_size=80
+  colonies detected: 59
+[90m2026-06-25 21:52:47,709	[INFO]     subset/__init__.py            _pru...ubset()	 line 3595	maxp pruned[0m
+[90m2026-06-25 21:52:47,711	[INFO]                                               	 line 3595	cmap pruned[0m
+[90m2026-06-25 21:52:47,714	[WARNING]  tables/_p_o_s_t.py            unpa...rings()	 line 307	1 extra bytes in post.stringData array[0m
+[90m2026-06-25 21:52:47,715	[INFO]     subset/__init__.py            _pru...ubset()	 line 3595	kern pruned[0m
+[90m2026-06-25 21:52:47,715	[INFO]                                               	 line 3595	post pruned[0m
+[90m2026-06-25 21:52:47,715	[INFO]                                               	 line 3579	Zapf dropped[0m
+[90m2026-06-25 21:52:47,715	[INFO]                                               	 line 3579	feat dropped[0m
+[90m2026-06-25 21:52:47,715	[INFO]                                               	 line 3579	meta dropped[0m
+[90m2026-06-25 21:52:47,715	[INFO]                                               	 line 3579	morx dropped[0m
+[90m2026-06-25 21:52:47,717	[WARNING]  tables/_h_e_a_d.py            decompile...()	 line  68	'created' timestamp seems very low; regarding as unix timestamp[0m
+[90m2026-06-25 21:52:47,718	[INFO]     subset/__init__.py            _pru...ubset()	 line 3595	glyf pruned[0m
+[90m2026-06-25 21:52:47,719	[INFO]                                   _clo...lyphs()	 line 3635	Added gid0 to subset[0m
+[90m2026-06-25 21:52:47,719	[INFO]                                               	 line 3643	Added first four glyphs to subset[0m
+[90m2026-06-25 21:52:47,719	[INFO]                                               	 line 3708	Closing glyph list over 'glyf': 30 glyphs before[0m
+[90m2026-06-25 21:52:47,719	[INFO]                                   _log_glyphs.()	 line 460	Glyph names: ['.notdef', '.null', 'E', 'M', 'P', 'S', 'a', 'c', 'e', 'equal', 'five', 'h', 'i', 'k', 'l', 'm', 'mu', 'n', 'nine', 'nonmarkingreturn', 'o', 'parenleft', 'parenright', 'r', 's', 'space', 'two', 'u', 'w', 'zero'][0m
+[90m2026-06-25 21:52:47,719	[INFO]                                               	 line 463	Glyph IDs:   [0, 1, 2, 3, 11, 12, 19, 21, 24, 28, 32, 40, 48, 51, 54, 68, 70, 72, 75, 76, 78, 79, 80, 81, 82, 85, 86, 88, 90, 151][0m
+[90m2026-06-25 21:52:47,719	[INFO]                                   _clo...lyphs()	 line 3714	Closed glyph list over 'glyf': 30 glyphs after[0m
+[90m2026-06-25 21:52:47,719	[INFO]                                   _log_glyphs.()	 line 460	Glyph names: ['.notdef', '.null', 'E', 'M', 'P', 'S', 'a', 'c', 'e', 'equal', 'five', 'h', 'i', 'k', 'l', 'm', 'mu', 'n', 'nine', 'nonmarkingreturn', 'o', 'parenleft', 'parenright', 'r', 's', 'space', 'two', 'u', 'w', 'zero'][0m
+[90m2026-06-25 21:52:47,719	[INFO]                                               	 line 463	Glyph IDs:   [0, 1, 2, 3, 11, 12, 19, 21, 24, 28, 32, 40, 48, 51, 54, 68, 70, 72, 75, 76, 78, 79, 80, 81, 82, 85, 86, 88, 90, 151][0m
+[90m2026-06-25 21:52:47,719	[INFO]                                   _clo...lyphs()	 line 3767	Retaining 30 glyphs[0m
+[90m2026-06-25 21:52:47,720	[INFO]                                   _sub...lyphs()	 line 3777	head subsetting not needed[0m
+[90m2026-06-25 21:52:47,720	[INFO]                                               	 line 3777	hhea subsetting not needed[0m
+[90m2026-06-25 21:52:47,720	[INFO]                                               	 line 3777	maxp subsetting not needed[0m
+[90m2026-06-25 21:52:47,720	[INFO]                                               	 line 3777	OS/2 subsetting not needed[0m
+[90m2026-06-25 21:52:47,721	[INFO]                                               	 line 3788	hmtx subsetted[0m
+[90m2026-06-25 21:52:47,721	[INFO]                                               	 line 3788	hdmx subsetted[0m
+[90m2026-06-25 21:52:47,721	[INFO]                                               	 line 3788	cmap subsetted[0m
+[90m2026-06-25 21:52:47,721	[INFO]                                               	 line 3777	fpgm subsetting not needed[0m
+[90m2026-06-25 21:52:47,721	[INFO]                                               	 line 3777	prep subsetting not needed[0m
+[90m2026-06-25 21:52:47,721	[INFO]                                               	 line 3777	cvt  subsetting not needed[0m
+[90m2026-06-25 21:52:47,721	[INFO]                                               	 line 3777	loca subsetting not needed[0m
+[90m2026-06-25 21:52:47,722	[INFO]                                               	 line 3788	kern subsetted[0m
+[90m2026-06-25 21:52:47,722	[INFO]                                               	 line 3788	post subsetted[0m
+[90m2026-06-25 21:52:47,722	[INFO]                                               	 line 3788	prop subsetted[0m
+[90m2026-06-25 21:52:47,722	[INFO]                                               	 line 3777	name subsetting not needed[0m
+[90m2026-06-25 21:52:47,723	[INFO]                                               	 line 3788	glyf subsetted[0m
+[90m2026-06-25 21:52:47,723	[INFO]                                   _pru...ubset()	 line 3847	head pruned[0m
+[90m2026-06-25 21:52:47,724	[INFO]                                               	 line 3814	OS/2 Unicode ranges pruned: [0, 1][0m
+[90m2026-06-25 21:52:47,724	[INFO]                                               	 line 3823	OS/2 CodePage ranges pruned: [0][0m
+[90m2026-06-25 21:52:47,724	[INFO]                                               	 line 3847	glyf pruned[0m
+[90m2026-06-25 21:52:47,725	[INFO]                                               	 line 3847	name pruned[0m
+  saved overlay: /Volumes/Extreme SSD/Partaker-2/partaker-v2/headless_analysis/out/validate_pos2_t48.png
+
+VALIDATION OK
