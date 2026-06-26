@@ -8,5 +8,5 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     app.setApplicationName('Partaker')
     tabWidgetApp = App()
-    tabWidgetApp.show()
+    tabWidgetApp.showMaximized()
     sys.exit(app.exec())

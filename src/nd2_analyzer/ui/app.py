@@ -62,8 +62,19 @@ class App(QMainWindow):
         self.setCentralWidget(self.central_widget)
         self.layout = QHBoxLayout(self.central_widget)
 
+        # Draggable splitter between the image view and the tabs, so the view
+        # area can be expanded or collapsed to any width by dragging the handle.
+        self.main_splitter = QSplitter(Qt.Horizontal)
+        self.main_splitter.setHandleWidth(8)
+        self.main_splitter.setChildrenCollapsible(True)
+        # Visible grip so the handle stays grabbable even when a pane is collapsed.
+        self.main_splitter.setStyleSheet(
+            "QSplitter::handle { background: #5a5a5a; }"
+            "QSplitter::handle:hover { background: #8a8a8a; }"
+        )
+
         self.viewArea = ViewAreaWidget()
-        self.layout.addWidget(self.viewArea)
+        self.main_splitter.addWidget(self.viewArea)
 
         # Initialize tabs based on analysis mode
         self.tab_widget = QTabWidget()
@@ -72,7 +83,13 @@ class App(QMainWindow):
         elif self.current_analysis_mode == AnalysisMode.BIOFILM_CLOUD:
             self.init_biofilm_cloud_tabs()
 
-        self.layout.addWidget(self.tab_widget)
+        self.main_splitter.addWidget(self.tab_widget)
+        # Let the tabs shrink so the view area can be dragged as wide as you like.
+        self.tab_widget.setMinimumWidth(120)
+        self.main_splitter.setStretchFactor(0, 0)  # view area keeps its set width
+        self.main_splitter.setStretchFactor(1, 1)  # tabs absorb extra space
+        self.main_splitter.setSizes([360, 760])     # sensible initial split
+        self.layout.addWidget(self.main_splitter)
 
         self.initMenuBar()
 
