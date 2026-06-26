@@ -2,10 +2,12 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                QPushButton, QSlider, QSpinBox, QComboBox,
                                QGroupBox, QListWidget, QProgressBar,
                                QCheckBox, QFrame, QTextEdit, QSplitter,
-                               QFileDialog, QAbstractItemView, QMessageBox, QDoubleSpinBox)
+                               QFileDialog, QAbstractItemView, QMessageBox,
+                               QDoubleSpinBox, QRadioButton, QButtonGroup)
 from PySide6.QtCore import Qt, Signal, QThread, QObject
 from PySide6.QtGui import QFont
 import os
+import math
 from scipy.spatial.distance import cdist
 from scipy.ndimage import gaussian_filter, distance_transform_edt
 from skimage import measure
@@ -20,13 +22,22 @@ from pathlib import Path
 import numpy as np
 from scipy.ndimage import gaussian_filter
 from skimage.restoration import rolling_ball
+from skimage.filters import threshold_otsu
 from skimage.filters.rank import otsu
-from skimage.morphology import disk, binary_closing, binary_dilation
+from skimage.morphology import disk, binary_closing, binary_dilation, binary_opening
 from skimage.util import img_as_ubyte
 
 
 class EPSAnalysisWidget(QWidget):
     """Widget for cube-based analysis of exported colony time series"""
+
+    # Moreau mode uses the best compromise parameters from the Fig. 4b match.
+    MOREAU_LOCAL_AREA_PERCENT = 60
+    MOREAU_THRESHOLD_SCOPE = "cell_envelope"
+    MOREAU_EPS_OPENING_RADIUS_PX = 0
+    MOREAU_EPS_CLOSING_RADIUS_PX = 0
+    MOREAU_EPS_DILATION_RADIUS_PX = 2
+    MOREAU_SMOOTHING_SIGMA = 1.5
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -116,6 +127,30 @@ class EPSAnalysisWidget(QWidget):
 
         # Select channels for Segmentation
         selection_layout = QVBoxLayout()
+
+        # Analysis Method Controls
+        analysis_mode_group = QGroupBox("Analysis Method")
+        analysis_mode_layout = QVBoxLayout()
+
+        self.radio_partaker = QRadioButton("Partaker")
+        self.radio_moreau = QRadioButton("Moreau")
+
+        # Partaker is the default method.
+        self.radio_partaker.setChecked(True)
+
+        self.analysis_method_group = QButtonGroup(self)
+        self.analysis_method_group.addButton(self.radio_partaker)
+        self.analysis_method_group.addButton(self.radio_moreau)
+
+        analysis_mode_layout.addWidget(self.radio_partaker)
+        analysis_mode_layout.addWidget(self.radio_moreau)
+
+        analysis_mode_group.setLayout(analysis_mode_layout)
+        selection_layout.addWidget(analysis_mode_group)
+
+        self.radio_partaker.toggled.connect(self.on_method_changed)
+        self.radio_moreau.toggled.connect(self.on_method_changed)
+
         selection_layout.addWidget(QLabel("EPS Channel:"))
         self.eps_channel_combo = QComboBox()
         selection_layout.addWidget(self.eps_channel_combo)
@@ -128,7 +163,7 @@ class EPSAnalysisWidget(QWidget):
         # Add image filtering options
         self.gaus_back_corr = QCheckBox("Gaussian Background Subtraction")
         self.gaus_back_corr.setChecked(False)
-        self.close_dialate = QCheckBox("Morphologically Close & Dilate Cell Channel")
+        self.close_dialate = QCheckBox("Morphologically Close & Dilate EPS Channel")
         self.close_dialate.setChecked(False)
         #self.center_distance_check = QCheckBox("Distance to Center")
         #self.center_distance_check.setChecked(True)
@@ -141,6 +176,31 @@ class EPSAnalysisWidget(QWidget):
         layout.addLayout(selection_layout)
 
         return group
+
+    def get_analysis_method(self):
+        """Return selected EPS analysis method."""
+        if hasattr(self, "radio_moreau") and self.radio_moreau.isChecked():
+            return "Moreau"
+
+        return "Partaker"
+
+    def is_partaker_method(self):
+        """Return True when the current implementation / segmented-cell method is selected."""
+        return self.get_analysis_method() == "Partaker"
+
+    def is_moreau_method(self):
+        """Return True when the Fig. 4b best-compromise parameter method is selected."""
+        return self.get_analysis_method() == "Moreau"
+
+    def on_method_changed(self):
+        """Update UI defaults when switching EPS analysis methods."""
+        if self.is_moreau_method():
+            # Moreau mode uses the best compromise EPS morphology setting:
+            # EPS opening = 0 px, EPS closing = 0 px, EPS dilation = 2 px.
+            self.close_dialate.setChecked(True)
+        else:
+            # Partaker is the current implementation and remains the default method.
+            self.close_dialate.setChecked(False)
 
     def select_stage_position(self):
         """Create cube configuration group"""
@@ -329,6 +389,69 @@ class EPSAnalysisWidget(QWidget):
             params.append("Surface Roughness")
 
         return params
+
+    def validate_partaker_segmentation_available(self):
+        """
+        Check that segmented cell masks are available for Partaker mode.
+
+        Moreau mode does not use the segmented-cell cache, so this check should
+        only run when Partaker is selected.
+        """
+        try:
+            from nd2_analyzer.data.image_data import ImageData
+
+            image_data = ImageData.get_instance()
+            if image_data is None or image_data.segmentation_cache is None:
+                QMessageBox.warning(
+                    self,
+                    "Missing cell segmentation",
+                    "Partaker mode requires segmented cell masks. Run cell segmentation first, or switch to Moreau mode."
+                )
+                return False
+
+            segmented_storage = image_data.segmentation_cache
+            model_name = image_data.segmentation_cache.model_name
+
+            if not model_name:
+                QMessageBox.warning(
+                    self,
+                    "Missing cell segmentation model",
+                    "Partaker mode requires a selected cell segmentation model. Run cell segmentation first, or switch to Moreau mode."
+                )
+                return False
+
+            cache = segmented_storage.with_model(model_name)
+
+            if (
+                    not hasattr(cache, "mmap_arrays_idx")
+                    or model_name not in cache.mmap_arrays_idx
+            ):
+                QMessageBox.warning(
+                    self,
+                    "Missing cell segmentation cache",
+                    "Partaker mode requires segmented cell masks. Run cell segmentation first, or switch to Moreau mode."
+                )
+                return False
+
+            _mmap_array, index_set = cache.mmap_arrays_idx[model_name]
+
+            if not index_set:
+                QMessageBox.warning(
+                    self,
+                    "Missing segmented cell masks",
+                    "Partaker mode requires segmented cell masks. Run cell segmentation first, or switch to Moreau mode."
+                )
+                return False
+
+            return True
+
+        except Exception as e:
+            QMessageBox.warning(
+                self,
+                "Segmentation check failed",
+                f"Could not verify segmented cell masks for Partaker mode:\n{e}"
+            )
+            return False
 
 
     def cancel_analysis(self):
@@ -626,8 +749,14 @@ class EPSAnalysisWidget(QWidget):
             self.status_label.setText("Invalid time range")
             return
 
+        if self.is_partaker_method() and not self.validate_partaker_segmentation_available():
+            self.start_segmentation_btn.setEnabled(True)
+            self.cancel_analysis_btn.setEnabled(False)
+            return
+
         eps_channel = self.eps_channel_combo.currentIndex()
         self.current_reference = self.ref_combo.currentText()
+        self.current_analysis_method = self.get_analysis_method()
 
         # Skip focus loss frames
         focus_loss_skip = set()
@@ -758,10 +887,14 @@ class EPSAnalysisWidget(QWidget):
             self.request_timer.start(1)
             return
 
-        self.eps_results.append({
+        result_row = {
             "time": time,
             "position": position,
             "channel": channel,
+            "analysis_method": metrics.get(
+                "analysis_method",
+                self.get_analysis_method()
+            ),
             "eps_mask":
                 metrics["eps_mask"],
             "occupancy_fraction":
@@ -774,7 +907,21 @@ class EPSAnalysisWidget(QWidget):
                 metrics["integrated_intensity"],
             "eps_area_pixels":
                 metrics["eps_area_pixels"]
-        })
+        }
+
+        for optional_key in [
+            "eps_threshold_used",
+            "local_block_side_px",
+            "fraction_vps_coverage",
+            "areal_fraction_percent",
+            "cell_area_pixels",
+            "cell_envelope_pixels",
+            "vps_colocalized_pixels",
+        ]:
+            if optional_key in metrics:
+                result_row[optional_key] = metrics[optional_key]
+
+        self.eps_results.append(result_row)
 
         completed = len(self.eps_results)
 
@@ -934,7 +1081,7 @@ class EPSAnalysisWidget(QWidget):
             )
         )
 
-        """
+
         # Custom time Mapping
         unique_times = sorted(stats_eps["time"].to_list())
         real_times = [0, 24, 48]
@@ -961,7 +1108,7 @@ class EPSAnalysisWidget(QWidget):
         }
         hours_per_frame = interval_value * hours_conversion[interval_unit]
         time_eps = np.array(stats_eps["time"]) * hours_per_frame
-
+        """
 
         fig = self.population_figure
         axs = fig.subplots(2, 1)
@@ -1034,75 +1181,212 @@ class EPSAnalysisWidget(QWidget):
             bbox_inches="tight"
         )
 
-        self.eps_cell_analysis()
-        self.on_plot_fraction_cells()
+        if self.is_partaker_method():
+            self.eps_cell_analysis()
+            self.on_plot_fraction_cells()
+        else:
+            self.moreau_cell_envelope_analysis()
+            self.on_plot_fraction_cells()
 
-    def process_eps_frame(self,
-            frame: np.ndarray,
-            time: int,
-            position: int,
-            channel: int,
-            background_sigma: float = 200,
+    def fixed_or_otsu_threshold(
+            self,
+            values: np.ndarray,
+            fixed_threshold=None,
+    ) -> float:
+        values = values[np.isfinite(values)]
+
+        if values.size == 0:
+            return 0.0
+
+        if fixed_threshold is not None:
+            return float(fixed_threshold)
+
+        if float(values.max()) == float(values.min()):
+            return float(values.max())
+
+        return float(threshold_otsu(values))
+
+    def get_pixel_size_um(self, image_data):
+        """Get pixel size in um from ImageData, with a safe fallback."""
+        voxel_size = getattr(image_data, "voxel_size", None)
+
+        if hasattr(voxel_size, "x"):
+            return float(voxel_size.x)
+
+        if isinstance(voxel_size, (int, float)):
+            return float(voxel_size)
+
+        return 1.0
+
+    def make_moreau_cell_masks(
+            self,
+            cell_frame: np.ndarray,
+            cell_closing_diameter_um: float = 0.65,
+            envelope_dilation_diameter_um: float = 0.65,
+    ):
+        """
+        Return two masks:
+
+        1. cell_area_mask:
+           fixed-threshold cell area, morphologically closed.
+           This is used for areal fraction rho.
+
+        2. cell_envelope_mask:
+           cell_area_mask dilated with a circular kernel matching the VPS envelope.
+           This is used as the denominator for the encased/VPS colocalization metric.
+        """
+
+        from nd2_analyzer.data.image_data import ImageData
+
+        image_data = ImageData.get_instance()
+        pixel_size_um = self.get_pixel_size_um(image_data)
+
+        cell_frame = cell_frame.astype(float)
+
+        if float(cell_frame.max()) == float(cell_frame.min()):
+            cell_threshold = float(cell_frame.max())
+        else:
+            cell_threshold = float(threshold_otsu(cell_frame))
+
+        cell_area_mask = cell_frame > cell_threshold
+
+        closing_radius_px = max(
+            1,
+            int(round((cell_closing_diameter_um / 2.0) / pixel_size_um)),
+        )
+        closing_kernel = disk(closing_radius_px)
+
+        cell_area_mask = binary_closing(
+            cell_area_mask,
+            footprint=closing_kernel,
+        )
+
+        dilation_radius_px = max(
+            1,
+            int(round((envelope_dilation_diameter_um / 2.0) / pixel_size_um)),
+        )
+        dilation_kernel = disk(dilation_radius_px)
+
+        cell_envelope_mask = binary_dilation(
+            cell_area_mask,
+            footprint=dilation_kernel,
+        )
+
+        return cell_area_mask, cell_envelope_mask, cell_threshold
+
+    def blockwise_local_otsu_eps_mask(
+            self,
+            eps_image: np.ndarray,
+            threshold_scope_mask: np.ndarray,
+            local_area_percent: int,
+            fixed_eps_threshold=None,
+    ):
+        """
+        Efficient local/adaptive Otsu approximation.
+
+        The image is split into non-overlapping square blocks. Each block gets its own
+        Otsu threshold computed from EPS pixels inside threshold_scope_mask.
+
+        local_area_percent controls the block area relative to the whole frame:
+            0   -> smallest block, 3 x 3 pixels
+            10  -> each local block covers about 10% of the frame area
+            100 -> one block covering the full frame, effectively global Otsu
+
+        This is intentionally much faster than rank.otsu with giant sliding disks,
+        which becomes painfully slow for 2048 x 2048 images at 10-100% coverage.
+        """
+
+        height, width = eps_image.shape
+        frame_area = height * width
+
+        if local_area_percent <= 0:
+            block_side = 3
+        elif local_area_percent >= 100:
+            block_side = max(height, width)
+        else:
+            block_area = frame_area * (local_area_percent / 100.0)
+            block_side = int(round(math.sqrt(block_area)))
+            block_side = max(3, block_side)
+
+        # Make block side odd so the label is stable/readable.
+        if block_side % 2 == 0:
+            block_side += 1
+
+        global_fallback_threshold = self.fixed_or_otsu_threshold(
+            eps_image[threshold_scope_mask],
+            fixed_threshold=fixed_eps_threshold,
+        )
+
+        eps_mask = np.zeros_like(threshold_scope_mask, dtype=bool)
+        used_thresholds = []
+
+        for y0 in range(0, height, block_side):
+            y1 = min(y0 + block_side, height)
+
+            for x0 in range(0, width, block_side):
+                x1 = min(x0 + block_side, width)
+
+                block_image = eps_image[y0:y1, x0:x1]
+                block_scope = threshold_scope_mask[y0:y1, x0:x1]
+                values = block_image[block_scope]
+
+                if values.size < 16 or float(values.max()) == float(values.min()):
+                    threshold = global_fallback_threshold
+                else:
+                    threshold = self.fixed_or_otsu_threshold(
+                        values,
+                        fixed_threshold=fixed_eps_threshold,
+                    )
+
+                used_thresholds.append(threshold)
+                eps_mask[y0:y1, x0:x1] = (block_image > threshold) & block_scope
+
+        mean_threshold = float(np.mean(used_thresholds)) if used_thresholds else 0.0
+        return eps_mask, mean_threshold, block_side
+
+    def apply_eps_channel_morphology(
+            self,
+            eps_mask: np.ndarray,
+            opening_radius_px: int = 0,
+            closing_radius_px: int = 0,
+            dilation_radius_px: int = 0,
+    ):
+        """
+        Optional VPS/EPS morphology after binarization.
+
+        Order is opening -> closing -> dilation.
+        Radius 0 means that operation is skipped.
+        """
+
+        morphed = eps_mask.copy()
+
+        if opening_radius_px > 0:
+            morphed = binary_opening(
+                morphed,
+                footprint=disk(opening_radius_px),
+            )
+
+        if closing_radius_px > 0:
+            morphed = binary_closing(
+                morphed,
+                footprint=disk(closing_radius_px),
+            )
+
+        if dilation_radius_px > 0:
+            morphed = binary_dilation(
+                morphed,
+                footprint=disk(dilation_radius_px),
+            )
+
+        return morphed
+
+    def segment_eps_partaker(
+            self,
+            gaussian_corrected: np.ndarray,
+            image: np.ndarray,
             smoothing_sigma: float = 1.5,
             rolling_ball_fraction: int = 4,
     ):
-        """
-        Process one raw EPS microscopy frame.
-
-        Returns:
-            dict with corrected image, mask, and EPS metrics.
-        """
-
-        # -----------------------------
-        # Validate / prepare image
-        # -----------------------------
-
-        if frame is None:
-            raise ValueError("EPS frame is None.")
-
-        image = frame.astype(float)
-        print(f"Original shape: {image.shape}")
-
-
-        # -----------------------------
-        # 1. Large Gaussian background correction
-        # -----------------------------
-        if self.gaus_back_corr.isChecked():
-            print(f"Starting Gaussian background correction for {self}")
-
-            if time == 0:
-                gaussian_background = gaussian_filter(image, sigma=200)
-                gaussian_corrected = image - gaussian_background
-            else:
-                gaussian_corrected = image.copy()
-
-            gaussian_corrected = np.clip(
-                gaussian_corrected,
-                0,
-                None
-            )
-        else:
-            gaussian_corrected = image.copy()
-        gaussian_corrected = np.clip(gaussian_corrected, 0, None)
-
-        """
-        # -----------------------------
-        # 2. Rolling ball background correction
-        # -----------------------------
-        print(f"Starting Rolling ball correction for {frame}")
-        rolling_background = rolling_ball(
-            gaussian_corrected,
-            radius=rolling_ball_radius
-        )
-
-        rolling_corrected = gaussian_corrected - rolling_background
-
-        rolling_corrected = np.clip(
-            rolling_corrected,
-            0,
-            None
-        )"""
-
         # -----------------------------
         # 3. Light smoothing before segmentation
         # -----------------------------
@@ -1165,7 +1449,7 @@ class EPSAnalysisWidget(QWidget):
         )
 
         eps_mask = smoothed_8bit > global_threshold
-        
+
         """
 
         """# -----------------------------
@@ -1182,6 +1466,228 @@ class EPSAnalysisWidget(QWidget):
 
         eps_mask = binary_closing(eps_mask, footprint=kernel)
         eps_mask = binary_dilation(eps_mask, footprint=kernel)"""
+
+        if self.close_dialate.isChecked():
+            # -----------------------------
+            # 5. Morphological Dilation & Closing
+            # -----------------------------
+
+            from nd2_analyzer.data.image_data import ImageData
+
+            image_data = ImageData.get_instance()
+            pixel_size_um = self.get_pixel_size_um(image_data)
+
+            kernel_radius_px = max(1, int(round((0.65 / 2) / pixel_size_um)))
+            kernel = disk(kernel_radius_px)
+
+            eps_mask = binary_closing(eps_mask, footprint=kernel)
+            eps_mask = binary_dilation(eps_mask, footprint=kernel)
+
+        return smoothed, eps_mask, {
+            "analysis_method": "Partaker",
+            "eps_threshold_used": float(np.mean(local_threshold)),
+            "local_block_side_px": None,
+        }
+
+    def segment_eps_moreau(
+            self,
+            gaussian_corrected: np.ndarray,
+            image: np.ndarray,
+            time: int,
+            position: int,
+    ):
+        """
+        Moreau mode:
+            Local area = 60%
+            Threshold scope = cell envelope
+            EPS opening = 0 px
+            EPS closing = 0 px
+            EPS dilation = 2 px
+            Smoothing sigma = 1.5
+        """
+
+        # -----------------------------
+        # 3. Light smoothing before segmentation
+        # -----------------------------
+
+        smoothed = gaussian_filter(
+            gaussian_corrected,
+            sigma=self.MOREAU_SMOOTHING_SIGMA
+        )
+
+        # -----------------------------
+        # 4. Normalize for Local Otsu
+        # -----------------------------
+        # Moreau mode keeps the smoothed image in float units, because the
+        # blockwise local Otsu threshold is computed directly from EPS values
+        # inside the cell-envelope mask.
+
+        # -----------------------------
+        # 5. Local Otsu segmentation
+        # -----------------------------
+        print(f"Starting Moreau Local OTSU for {self}")
+
+        from nd2_analyzer.data.image_data import ImageData
+
+        image_data = ImageData.get_instance()
+
+        # channel 0 = bacteria / phase image
+        cell_image = image_data.get(
+            time,
+            position,
+            0
+        )
+
+        cell_area_mask, cell_envelope_mask, cell_threshold = self.make_moreau_cell_masks(
+            cell_frame=cell_image
+        )
+
+        if self.MOREAU_THRESHOLD_SCOPE == "cell_envelope":
+            threshold_scope_mask = cell_envelope_mask
+        else:
+            threshold_scope_mask = np.ones_like(cell_envelope_mask, dtype=bool)
+
+        eps_mask, eps_threshold, local_block_side_px = self.blockwise_local_otsu_eps_mask(
+            eps_image=smoothed,
+            threshold_scope_mask=threshold_scope_mask,
+            local_area_percent=self.MOREAU_LOCAL_AREA_PERCENT,
+        )
+
+        if self.close_dialate.isChecked():
+            eps_mask = self.apply_eps_channel_morphology(
+                eps_mask=eps_mask,
+                opening_radius_px=self.MOREAU_EPS_OPENING_RADIUS_PX,
+                closing_radius_px=self.MOREAU_EPS_CLOSING_RADIUS_PX,
+                dilation_radius_px=self.MOREAU_EPS_DILATION_RADIUS_PX,
+            )
+
+        # The paper-style numerator is only the VPS-positive region inside the
+        # dilated cell-envelope mask, even if EPS morphology expands outside it.
+        colocalized_mask = eps_mask & cell_envelope_mask
+        eps_mask = colocalized_mask
+
+        cell_area_pixels = int(np.count_nonzero(cell_area_mask))
+        cell_envelope_pixels = int(np.count_nonzero(cell_envelope_mask))
+        vps_colocalized_pixels = int(np.count_nonzero(colocalized_mask))
+        total_pixels = int(image.size)
+
+        areal_fraction_percent = (
+            100.0 * cell_area_pixels / total_pixels
+            if total_pixels > 0
+            else 0.0
+        )
+
+        fraction_vps_coverage = (
+            100.0 * vps_colocalized_pixels / cell_envelope_pixels
+            if cell_envelope_pixels > 0
+            else 0.0
+        )
+
+        print(
+            f"P={position} T={time} | "
+            f"mode=moreau | "
+            f"local_area={self.MOREAU_LOCAL_AREA_PERCENT} | "
+            f"scope={self.MOREAU_THRESHOLD_SCOPE} | "
+            f"thr={eps_threshold:.3f} | "
+            f"rho={areal_fraction_percent:.2f}% | "
+            f"encased={fraction_vps_coverage:.2f}% | "
+            f"cell_area_px={cell_area_pixels:,} | "
+            f"cell_env_px={cell_envelope_pixels:,} | "
+            f"vps_overlap_px={vps_colocalized_pixels:,}"
+        )
+
+        return smoothed, eps_mask, {
+            "analysis_method": "Moreau",
+            "eps_threshold_used": float(eps_threshold),
+            "local_block_side_px": local_block_side_px,
+            "fraction_vps_coverage": fraction_vps_coverage,
+            "areal_fraction_percent": areal_fraction_percent,
+            "cell_area_pixels": cell_area_pixels,
+            "cell_envelope_pixels": cell_envelope_pixels,
+            "vps_colocalized_pixels": vps_colocalized_pixels,
+            "cell_threshold_used": float(cell_threshold),
+        }
+
+    def process_eps_frame(self,
+            frame: np.ndarray,
+            time: int,
+            position: int,
+            channel: int,
+            background_sigma: float = 200,
+            smoothing_sigma: float = 1.5,
+            rolling_ball_fraction: int = 4,
+    ):
+        """
+        Process one raw EPS microscopy frame.
+
+        Returns:
+            dict with corrected image, mask, and EPS metrics.
+        """
+
+        # -----------------------------
+        # Validate / prepare image
+        # -----------------------------
+
+        if frame is None:
+            raise ValueError("EPS frame is None.")
+
+        image = frame.astype(float)
+        print(f"Original shape: {image.shape}")
+
+
+        # -----------------------------
+        # 1. Large Gaussian background correction
+        # -----------------------------
+        if self.gaus_back_corr.isChecked():
+            print(f"Starting Gaussian background correction for {self}")
+
+            if time == 0:
+                gaussian_background = gaussian_filter(image, sigma=background_sigma)
+                gaussian_corrected = image - gaussian_background
+            else:
+                gaussian_corrected = image.copy()
+
+            gaussian_corrected = np.clip(
+                gaussian_corrected,
+                0,
+                None
+            )
+        else:
+            gaussian_corrected = image.copy()
+        gaussian_corrected = np.clip(gaussian_corrected, 0, None)
+
+        """
+        # -----------------------------
+        # 2. Rolling ball background correction
+        # -----------------------------
+        print(f"Starting Rolling ball correction for {frame}")
+        rolling_background = rolling_ball(
+            gaussian_corrected,
+            radius=rolling_ball_radius
+        )
+
+        rolling_corrected = gaussian_corrected - rolling_background
+
+        rolling_corrected = np.clip(
+            rolling_corrected,
+            0,
+            None
+        )"""
+
+        if self.is_moreau_method():
+            smoothed, eps_mask, extra_metrics = self.segment_eps_moreau(
+                gaussian_corrected=gaussian_corrected,
+                image=image,
+                time=time,
+                position=position,
+            )
+        else:
+            smoothed, eps_mask, extra_metrics = self.segment_eps_partaker(
+                gaussian_corrected=gaussian_corrected,
+                image=image,
+                smoothing_sigma=smoothing_sigma,
+                rolling_ball_fraction=rolling_ball_fraction,
+            )
 
         # Generate results
         from pathlib import Path
@@ -1332,7 +1838,7 @@ class EPSAnalysisWidget(QWidget):
             mean_intensity = 0.0
             integrated_intensity = 0.0
 
-        return {
+        metrics = {
             "smoothed": smoothed,
             "eps_mask": eps_mask,
 
@@ -1342,6 +1848,9 @@ class EPSAnalysisWidget(QWidget):
             "integrated_intensity": integrated_intensity,
             "eps_area_pixels": eps_pixels,
         }
+
+        metrics.update(extra_metrics)
+        return metrics
 
     def analyze_eps_timeseries(self, frames):
         results = []
@@ -1374,6 +1883,9 @@ class EPSAnalysisWidget(QWidget):
 
         from nd2_analyzer.data.image_data import ImageData
 
+        if not self.is_partaker_method():
+            return self.moreau_cell_envelope_analysis()
+
         image_data = ImageData.get_instance()
         segmented_storage = image_data.segmentation_cache
         model_name = image_data.segmentation_cache.model_name
@@ -1394,6 +1906,15 @@ class EPSAnalysisWidget(QWidget):
 
         print(f"Loaded {len(segmented_masks)} segmented cell masks ")
 
+        segmented_masks_by_position_time = {}
+        for (t, p, c), segmented in segmented_masks.items():
+            key = (
+                t,
+                p,
+            )
+            if key not in segmented_masks_by_position_time:
+                segmented_masks_by_position_time[key] = segmented
+
         if not hasattr(self, "eps_results") or len(self.eps_results) == 0:
             QMessageBox.warning(self,"No EPS masks","Run EPS segmentation first.")
             return None
@@ -1411,22 +1932,24 @@ class EPSAnalysisWidget(QWidget):
                 return None
             eps_masks[key] = row["eps_mask"]
 
-        if len(segmented_masks) != len(eps_masks):
-            QMessageBox.warning(self,"Frame mismatch",f"Found {len(segmented_masks)} segmented cell frames "
-                f"but {len(eps_masks)} segmented EPS frames.\n\nPlease resegment regions.")
+        missing_segmented_frames = [
+            key
+            for key in eps_masks
+            if key not in segmented_masks_by_position_time
+        ]
+
+        if missing_segmented_frames:
+            first_missing = missing_segmented_frames[0]
+            QMessageBox.warning(self,"Frame mismatch",
+                f"Missing matching segmented cell mask for T={first_missing[0]}, P={first_missing[1]}.")
             return None
 
         fraction_results = []
 
-        for key, cell_labels in segmented_masks.items():
-            t, p, c = key
-            lookup_key = (t, p)
-            if lookup_key not in eps_masks:
-                QMessageBox.warning(self,"Frame mismatch",
-                    f"Missing matching EPS mask for T={t}, P={p}.")
-                return None
-
-            eps_mask = eps_masks[lookup_key]
+        for lookup_key, eps_mask in eps_masks.items():
+            t, p = lookup_key
+            cell_labels = segmented_masks_by_position_time[lookup_key]
+            c = 0
 
 
 
@@ -1435,7 +1958,7 @@ class EPSAnalysisWidget(QWidget):
 
             image_data = ImageData.get_instance()
             voxel_size = image_data.voxel_size
-            pixel_size_um = voxel_size.x
+            pixel_size_um = self.get_pixel_size_um(image_data)
 
             radius_um = 0.65 / 2
 
@@ -1447,15 +1970,24 @@ class EPSAnalysisWidget(QWidget):
             total_cells = len(cell_ids)
             encased_cells = 0
 
+            for cell_id in cell_ids:
+                single_cell_mask = cell_labels == cell_id
+                cell_pixels = np.count_nonzero(single_cell_mask)
+
+                if cell_pixels == 0:
+                    continue
+
+                eps_overlap_pixels = np.count_nonzero(eps_mask & single_cell_mask)
+                overlap_fraction = eps_overlap_pixels / cell_pixels
+
+                if overlap_fraction >= overlap_threshold:
+                    encased_cells += 1
+
             # ===================================
             # PAPER-STYLE VPS COVERAGE METRIC
             # ===================================
             # Morphological Dilation & Closing
             all_cells_mask = cell_labels > 0
-            if self.close_dialate.isChecked():
-                print("Running cell morphology")
-                all_cells_mask = binary_closing(all_cells_mask, footprint=kernel)
-                all_cells_mask = binary_dilation(all_cells_mask, footprint=kernel)
 
             mask_pixels = np.count_nonzero(all_cells_mask)
 
@@ -1501,6 +2033,50 @@ class EPSAnalysisWidget(QWidget):
 
         return fraction_df
 
+    def moreau_cell_envelope_analysis(self):
+        """
+        Build the Moreau paper-style fraction table without segmented cell masks.
+
+        Moreau mode uses the thresholded cell-envelope mask produced inside
+        process_eps_frame, so it does not need ImageData.segmentation_cache.
+        """
+
+        if not hasattr(self, "eps_results") or len(self.eps_results) == 0:
+            QMessageBox.warning(self,"No EPS masks","Run EPS segmentation first.")
+            return None
+
+        fraction_results = []
+
+        for row in self.eps_results:
+            fraction_results.append({
+                "time": row["time"],
+                "position": row["position"],
+                "channel": row["channel"],
+                "total_cells": 0,
+                "encased_cells": 0,
+                "fraction_cells_encased": row.get(
+                    "fraction_vps_coverage",
+                    row.get("occupancy_percent", 0.0)
+                ),
+                "fraction_vps_coverage": row.get(
+                    "fraction_vps_coverage",
+                    row.get("occupancy_percent", 0.0)
+                ),
+                "areal_fraction_percent": row.get(
+                    "areal_fraction_percent",
+                    0.0
+                ),
+            })
+
+        fraction_df = pl.DataFrame(fraction_results)
+
+        self.fraction_cells_df = fraction_df
+
+        print("\n=== MOREAU EPS-CELL FRACTION RESULTS ===")
+        print(fraction_df)
+
+        return fraction_df
+
     def on_plot_fraction_cells(self):
         """"Plot for Moreau fig 4. comparison """
         if not hasattr(self, "fraction_cells_df"):
@@ -1509,20 +2085,21 @@ class EPSAnalysisWidget(QWidget):
 
         df = self.fraction_cells_df
 
-        if self.close_dialate.isChecked():
-            stats = (df.group_by("time").agg([
-                pl.col("fraction_vps_coverage").mean().alias("mean_fraction"),
-
-                pl.col("fraction_vps_coverage").std().alias("std_fraction")
-            ]).sort("time")
-                     )
+        if self.is_moreau_method():
+            fraction_column = "fraction_vps_coverage"
+            plot_title = "Fraction of Cell-Envelope Mask Encased by EPS"
+            y_label = "Cell-Envelope EPS Coverage (%)"
         else:
-            stats = (df.group_by("time").agg([
-                pl.col("fraction_cells_encased").mean().alias("mean_fraction"),
+            fraction_column = "fraction_cells_encased"
+            plot_title = "Fraction of Cells Encased by EPS"
+            y_label = "Cells Encased (%)"
 
-                pl.col("fraction_cells_encased").std().alias("std_fraction")
-            ]).sort("time")
-                     )
+        stats = (df.group_by("time").agg([
+            pl.col(fraction_column).mean().alias("mean_fraction"),
+
+            pl.col(fraction_column).std().alias("std_fraction")
+        ]).fill_null(0).sort("time")
+                 )
 
 
 
@@ -1562,8 +2139,8 @@ class EPSAnalysisWidget(QWidget):
             alpha=0.25
         )
 
-        ax.set_title("Fraction of Cells Encased by EPS")
-        ax.set_ylabel("Cells Encased (%)")
+        ax.set_title(plot_title)
+        ax.set_ylabel(y_label)
         ax.set_xlabel("Time (hours)")
 
         output_dir = Path("analysis_results")
