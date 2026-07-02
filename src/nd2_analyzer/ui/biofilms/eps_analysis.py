@@ -39,6 +39,11 @@ class EPSAnalysisWidget(QWidget):
     MOREAU_EPS_DILATION_RADIUS_PX = 2
     MOREAU_SMOOTHING_SIGMA = 1.5
 
+    # Fixed best-candidate cell-threshold settings
+    MOREAU_CELL_THRESHOLD = 210
+    MOREAU_CELL_CLOSING_RADIUS_PX = 0
+    MOREAU_CELL_DILATION_RADIUS_PX = 5
+
     def __init__(self, parent=None):
         super().__init__(parent)
 
@@ -148,8 +153,8 @@ class EPSAnalysisWidget(QWidget):
         analysis_mode_group.setLayout(analysis_mode_layout)
         selection_layout.addWidget(analysis_mode_group)
 
-        self.radio_partaker.toggled.connect(self.on_method_changed)
-        self.radio_moreau.toggled.connect(self.on_method_changed)
+        #self.radio_partaker.toggled.connect(self.on_method_changed)
+        #self.radio_moreau.toggled.connect(self.on_method_changed)
 
         selection_layout.addWidget(QLabel("EPS Channel:"))
         self.eps_channel_combo = QComboBox()
@@ -159,6 +164,13 @@ class EPSAnalysisWidget(QWidget):
         selection_layout.addWidget(QLabel("Select Reference Value:"))
         self.ref_combo = QComboBox()
         selection_layout.addWidget(self.ref_combo)
+
+        # Cell view type selection
+        selection_layout.addWidget(QLabel("Select Cell View Type:"))
+        self.cell_view_combo = QComboBox()
+        self.cell_view_combo.addItems(["Fluorescence", "Phase Contrast"])
+        self.cell_view_combo.setCurrentText("Phase Contrast")
+        selection_layout.addWidget(self.cell_view_combo)
 
         # Add image filtering options
         self.gaus_back_corr = QCheckBox("Gaussian Background Subtraction")
@@ -192,15 +204,15 @@ class EPSAnalysisWidget(QWidget):
         """Return True when the Fig. 4b best-compromise parameter method is selected."""
         return self.get_analysis_method() == "Moreau"
 
-    def on_method_changed(self):
-        """Update UI defaults when switching EPS analysis methods."""
+    """def on_method_changed(self):
+        # Update UI defaults when switching EPS analysis methods.
         if self.is_moreau_method():
             # Moreau mode uses the best compromise EPS morphology setting:
-            # EPS opening = 0 px, EPS closing = 0 px, EPS dilation = 2 px.
-            self.close_dialate.setChecked(True)
+            # EPS opening = 0 px, EPS closing = 5 px, EPS dilation = 5 px.
+            # self.close_dialate.setChecked(True)
         else:
             # Partaker is the current implementation and remains the default method.
-            self.close_dialate.setChecked(False)
+            # self.close_dialate.setChecked(False)"""
 
     def select_stage_position(self):
         """Create cube configuration group"""
@@ -339,8 +351,8 @@ class EPSAnalysisWidget(QWidget):
         metric_layout = QHBoxLayout()
         metric_layout.addWidget(QLabel("Analysis Type:"))
         self.metric_combo = QComboBox()
-        self.metric_combo.addItem("Time-Series Line Plot")
-        #self.metric_combo.addItem("NA")
+        self.metric_combo.addItem("EPS Intensity Metrics")
+        self.metric_combo.addItem("EPS-Cell Association Metrics")
         #self.metric_combo.addItem("NA")
         metric_layout.addWidget(self.metric_combo)
         layout.addLayout(metric_layout)
@@ -371,7 +383,7 @@ class EPSAnalysisWidget(QWidget):
 
         return group
 
-
+    # TODO: Remove this if not used
     def get_selected_parameters(self):
         """Get list of selected parameters"""
         params = []
@@ -666,64 +678,7 @@ class EPSAnalysisWidget(QWidget):
             self.status_label.setText(f"Plot export failed: {str(e)}")
             print(f"Plot export error: {e}")
 
-    def on_analysis_error(self, error_msg):
-        """Handle analysis errors"""
-        self.status_label.setText(f"Analysis failed: {error_msg}")
-        self.console_area.append(f"ERROR: {error_msg}")
-        self.cleanup_thread()
 
-    def on_console_output(self, message):
-        """Handle console output from worker"""
-        self.console_area.append(message)
-        self.console_area.ensureCursorVisible()
-
-    def display_results(self):
-        """Display analysis results in the text area"""
-        if not self.analysis_results:
-            return
-
-        results_text = "Analysis Results Summary:\n\n"
-
-        total_squares = 0
-        total_timepoints = 0
-
-        for colony_name, colony_data in self.analysis_results.items():
-            results_text += f"{colony_name}:\n"
-            results_text += f"  Time points analyzed: {len(colony_data)}\n"
-            total_timepoints += len(colony_data)
-
-            # Calculate average squares per timepoint
-            squares_per_timepoint = []
-            for timepoint_data in colony_data.values():
-                squares_count = len(timepoint_data['square_positions'])
-                squares_per_timepoint.append(squares_count)
-                total_squares += squares_count
-
-            if squares_per_timepoint:
-                avg_squares = np.mean(squares_per_timepoint)
-                results_text += f"  Average squares per timepoint: {avg_squares:.1f}\n"
-
-                # Show sample parameter values from first timepoint
-                first_timepoint = list(colony_data.keys())[0]
-                first_data = colony_data[first_timepoint]
-
-                if first_data['local_density'] and any(d > 0 for d in first_data['local_density']):
-                    avg_density = np.mean([d for d in first_data['local_density'] if d > 0])
-                    results_text += f"  Sample local density: {avg_density:.3f}\n"
-
-                if first_data['distance_to_edge'] and any(d > 0 for d in first_data['distance_to_edge']):
-                    avg_edge_dist = np.mean([d for d in first_data['distance_to_edge'] if d > 0])
-                    results_text += f"  Sample distance to edge: {avg_edge_dist:.1f} pixels\n"
-
-            results_text += "\n"
-
-        results_text += f"Total Analysis Summary:\n"
-        results_text += f"  Total squares analyzed: {total_squares}\n"
-        results_text += f"  Total time points: {total_timepoints}\n"
-        if len(self.analysis_results) > 0:
-            results_text += f"  Average squares per colony: {total_squares / len(self.analysis_results):.1f}\n"
-
-        self.results_area.setText(results_text)
 
     def segment_selected_channels(self):
         """Queue segmentation for selected channels, positions, and time range."""
@@ -912,11 +867,20 @@ class EPSAnalysisWidget(QWidget):
         for optional_key in [
             "eps_threshold_used",
             "local_block_side_px",
+
             "fraction_vps_coverage",
             "areal_fraction_percent",
+            "cell_occupancy_fraction",
+            "cell_occupancy_percent",
+
             "cell_area_pixels",
             "cell_envelope_pixels",
             "vps_colocalized_pixels",
+
+            "cell_threshold_used",
+            "cell_polarity_used",
+            "cell_closing_radius_px",
+            "cell_dilation_radius_px",
         ]:
             if optional_key in metrics:
                 result_row[optional_key] = metrics[optional_key]
@@ -976,68 +940,99 @@ class EPSAnalysisWidget(QWidget):
             f"({len(self.eps_results)} frames)"
         )
 
-    def compute_avg_sd_stats(self,df: pl.DataFrame):
+    def compute_avg_sd_stats(self, df: pl.DataFrame):
         """
-        Compute mean ± SD EPS metrics
-        grouped by timepoint.
+        Compute mean ± SD metrics grouped by timepoint.
+
+        This is intentionally flexible:
+        - EPS rows have mean_intensity, integrated_intensity, eps_area_pixels
+        - Cell-association rows have cell_occupancy_fraction, fraction_vps_coverage,
+          fraction_cells_encased
         """
 
-        stats = (
-            df
-            .group_by("time")
-            .agg([
-                # -------------------------
-                # EPS Area Fraction
-                # -------------------------
+        agg_exprs = []
 
-                pl.col("occupancy_percent")
+        if "cell_occupancy_fraction" in df.columns:
+            agg_exprs.extend([
+                pl.col("cell_occupancy_fraction")
                 .mean()
-                .alias("mean_occupancy"),
+                .alias("cell_occupancy"),
 
-                pl.col("occupancy_percent")
+                pl.col("cell_occupancy_fraction")
                 .std()
-                .alias("std_occupancy"),
+                .fill_null(0)
+                .alias("std_cell_occupancy"),
+            ])
 
-                # -------------------------
-                # Mean EPS Intensity
-                # -------------------------
+        if "fraction_vps_coverage" in df.columns:
+            agg_exprs.extend([
+                pl.col("fraction_vps_coverage")
+                .mean()
+                .alias("fraction_vps_coverage"),
 
+                pl.col("fraction_vps_coverage")
+                .std()
+                .fill_null(0)
+                .alias("std_fraction_vps_coverage"),
+            ])
+
+        if "fraction_cells_encased" in df.columns:
+            agg_exprs.extend([
+                pl.col("fraction_cells_encased")
+                .mean()
+                .alias("fraction_cells_encased"),
+
+                pl.col("fraction_cells_encased")
+                .std()
+                .fill_null(0)
+                .alias("std_fraction_cells_encased"),
+            ])
+
+        if "mean_intensity" in df.columns:
+            agg_exprs.extend([
                 pl.col("mean_intensity")
                 .mean()
                 .alias("mean_intensity"),
 
                 pl.col("mean_intensity")
                 .std()
-                .alias("std_intensity"),
+                .fill_null(0)
+                .alias("std_mean_intensity"),
+            ])
 
-                # -------------------------
-                # Integrated EPS Intensity
-                # -------------------------
-
+        if "integrated_intensity" in df.columns:
+            agg_exprs.extend([
                 pl.col("integrated_intensity")
                 .mean()
-                .alias("mean_integrated"),
+                .alias("integrated_intensity"),
 
                 pl.col("integrated_intensity")
                 .std()
-                .alias("std_integrated"),
+                .fill_null(0)
+                .alias("std_integrated_intensity"),
+            ])
 
-                # -------------------------
-                # EPS Area (pixels)
-                # -------------------------
-
+        if "eps_area_pixels" in df.columns:
+            agg_exprs.extend([
                 pl.col("eps_area_pixels")
                 .mean()
                 .alias("mean_area_pixels"),
 
                 pl.col("eps_area_pixels")
                 .std()
+                .fill_null(0)
                 .alias("std_area_pixels"),
             ])
+
+        if not agg_exprs:
+            raise ValueError("No plottable metric columns found in dataframe.")
+
+        return (
+            df
+            .group_by("time")
+            .agg(agg_exprs)
             .sort("time")
         )
-
-        return stats
 
 
     def on_plot_avg_sd(self):
@@ -1051,35 +1046,14 @@ class EPSAnalysisWidget(QWidget):
 
         # Compute stats
         eps_channel = int(self.eps_channel_combo.currentIndex())
-
         df_eps = df.filter(pl.col("channel") == eps_channel)
+        analysis_type = self.metric_combo.currentText()
 
         print("ALL TIMES:", sorted(df["time"].unique()))
         print("EPS TIMES:", sorted(df_eps["time"].unique()))
 
         stats_eps = self.compute_avg_sd_stats(df_eps)
-        print("\n=== STATS ===")
-        print(stats_eps)
 
-        print("\n=== EPS DF CHECK ===")
-        print(
-            df_eps.select(
-                [
-                    "time",
-                    "occupancy_percent",
-                    "mean_intensity",
-                    "integrated_intensity",
-                    "eps_area_pixels"
-                ]
-            ).head(20)
-        )
-
-        print("\n=== GROUPED STATS INPUT ===")
-        print(
-            df_eps.group_by("time").agg(
-                pl.col("occupancy_percent").count()
-            )
-        )
 
 
         # Custom time Mapping
@@ -1113,59 +1087,104 @@ class EPSAnalysisWidget(QWidget):
         fig = self.population_figure
         axs = fig.subplots(2, 1)
 
-        # --- 1. EPS ---
-        mean_int = np.array(stats_eps["mean_integrated"])
-        std_int = np.array(stats_eps["std_integrated"])
+        if analysis_type == "EPS Intensity Metrics":
+            stats = self.compute_avg_sd_stats(df_eps)
 
-        axs[0].plot(
-            time_eps,
-            mean_int,
-            '-o',
-            color='green',
-            linewidth=2
-        )
+            mean_int = np.array(stats["mean_intensity"])
+            mean_std = np.array(stats["std_mean_intensity"])
 
-        axs[0].fill_between(
-            time_eps,
-            mean_int - std_int,
-            mean_int + std_int,
-            color='green',
-            alpha=0.25
-        )
-        axs[0].set_title("EPS Fluorescence")
-        axs[0].set_ylabel("Integrated Intensity")
-        axs[0].set_xlabel("Time (hours)")
+            axs[0].plot(time_eps, mean_int, '-o', color='green', linewidth=2)
 
+            axs[0].fill_between(
+                time_eps,
+                mean_int - mean_std,
+                mean_int + mean_std,
+                color='purple',
+                alpha=0.25
+            )
+            axs[0].set_title("Mean EPS Fluorescence")
+            axs[0].set_ylabel("Intensity")
+            axs[0].set_xlabel("Time (hours)")
 
-        # --- 3. MORPHOLOGY (AREA) ---
-        mean_occ = np.array(stats_eps["mean_occupancy"])
-        std_occ = np.array(stats_eps["std_occupancy"])
-        axs[1].plot(
-            time_eps,
-            mean_occ,
-            '-o',
-            color='goldenrod',
-            linewidth=2
-        )
+            # Integrated Intensity EPS
+            integrated_int = np.array(stats["integrated_intensity"])
+            integrated_std = np.array(stats["std_integrated_intensity"])
 
-        axs[1].fill_between(
-            time_eps,
-            mean_occ - std_occ,
-            mean_occ + std_occ,
-            color='goldenrod',
-            alpha=0.25
-        )
-        axs[1].set_title("EPS Area Fraction")
-        axs[1].set_ylabel("Area Fraction (%)")
-        axs[1].set_xlabel("Time (hours)")
+            axs[1].plot(time_eps, integrated_int, '-o', color='green', linewidth=2)
 
-        fig.subplots_adjust(
-            top=0.92,
-            bottom=0.08,
-            left=0.12,
-            right=0.95,
-            hspace=0.4
-        )
+            axs[1].fill_between(
+                time_eps,
+                integrated_int - integrated_std,
+                integrated_int + integrated_std,
+                color='blue',
+                alpha=0.25
+            )
+            axs[1].set_title("Integrated EPS Fluorescence")
+            axs[1].set_ylabel("Intensity")
+            axs[1].set_xlabel("Time (hours)")
+
+        elif analysis_type == "EPS-Cell Association Metrics":
+            if self.is_partaker_method():
+                cell_df = self.eps_cell_analysis()
+            else:
+                cell_df = self.moreau_cell_envelope_analysis()
+
+            if cell_df is None or cell_df.is_empty():
+                QMessageBox.warning(self, "No cell data", "Could not build EPS-cell association data.")
+                return
+            stats = self.compute_avg_sd_stats(cell_df)
+
+            # Mean Intensity EPS
+            mean_int = np.array(stats_eps["mean_intensity"])
+            mean_std = np.array(stats_eps["std_mean_intensity"])
+
+            axs[0].plot(time_eps, mean_int, '-o', color='green', linewidth=2)
+
+            axs[0].fill_between(
+                time_eps,
+                mean_int - mean_std,
+                mean_int + mean_std,
+                color='purple',
+                alpha=0.25
+            )
+            axs[0].set_title("Mean EPS Fluorescence")
+            axs[0].set_ylabel("Intensity")
+            axs[0].set_xlabel("Time (hours)")
+
+            # Fractional Cell Area
+            cell_occ = np.array(stats["cell_occupancy"])
+            std_cell_occ = np.array(stats["std_cell_occupancy"])
+            axs[1].plot(
+                time_eps,
+                cell_occ,
+                '-o',
+                color='goldenrod',
+                linewidth=2
+            )
+
+            axs[1].fill_between(
+                time_eps,
+                cell_occ - std_cell_occ,
+                cell_occ + std_cell_occ,
+                color='goldenrod',
+                alpha=0.25
+            )
+            axs[1].set_title("Cell Areal Fractional")
+            axs[1].set_ylabel("Area Fraction (ρ)")
+            axs[1].set_xlabel("Time (hours)")
+
+            fig.subplots_adjust(
+                top=0.92,
+                bottom=0.08,
+                left=0.12,
+                right=0.95,
+                hspace=0.4
+            )
+        else:
+            QMessageBox.warning(self,"Unknown analysis type",
+                f"Unknown analysis type selected: {analysis_type}"
+            )
+            return
 
         self.population_canvas.draw()
 
@@ -1181,12 +1200,12 @@ class EPSAnalysisWidget(QWidget):
             bbox_inches="tight"
         )
 
-        if self.is_partaker_method():
+        """if self.is_partaker_method():
             self.eps_cell_analysis()
             self.on_plot_fraction_cells()
         else:
             self.moreau_cell_envelope_analysis()
-            self.on_plot_fraction_cells()
+            self.on_plot_fraction_cells()"""
 
     def fixed_or_otsu_threshold(
             self,
@@ -1218,61 +1237,86 @@ class EPSAnalysisWidget(QWidget):
 
         return 1.0
 
-    def make_moreau_cell_masks(
-            self,
-            cell_frame: np.ndarray,
-            cell_closing_diameter_um: float = 0.65,
-            envelope_dilation_diameter_um: float = 0.65,
-    ):
+    def make_moreau_cell_masks(self, cell_frame: np.ndarray):
         """
-        Return two masks:
+        Moreau fixed-threshold cell mask.
 
-        1. cell_area_mask:
-           fixed-threshold cell area, morphologically closed.
-           This is used for areal fraction rho.
+        Handles either:
+            bright cells: cell_frame >= threshold
+            dark cells: inverted cell_frame >= threshold
 
-        2. cell_envelope_mask:
-           cell_area_mask dilated with a circular kernel matching the VPS envelope.
-           This is used as the denominator for the encased/VPS colocalization metric.
+        Cell occupancy / rho:
+            cell-positive pixels / total original image pixels
         """
-
-        from nd2_analyzer.data.image_data import ImageData
-
-        image_data = ImageData.get_instance()
-        pixel_size_um = self.get_pixel_size_um(image_data)
 
         cell_frame = cell_frame.astype(float)
+        cell_threshold = float(self.MOREAU_CELL_THRESHOLD)
 
-        if float(cell_frame.max()) == float(cell_frame.min()):
-            cell_threshold = float(cell_frame.max())
+        finite_values = cell_frame[np.isfinite(cell_frame)]
+
+        if finite_values.size == 0:
+            cell_mask = np.zeros_like(cell_frame, dtype=bool)
+            return cell_mask, cell_mask.copy(), cell_threshold, "empty"
+
+        image_min = float(finite_values.min())
+        image_max = float(finite_values.max())
+
+        if image_max == image_min:
+            cell_mask = np.zeros_like(cell_frame, dtype=bool)
+            return cell_mask, cell_mask.copy(), cell_threshold, "flat"
+
+        def apply_cell_morphology(mask: np.ndarray) -> np.ndarray:
+            morphed = mask.copy()
+
+            if self.MOREAU_CELL_CLOSING_RADIUS_PX > 0:
+                morphed = binary_closing(
+                    morphed,
+                    footprint=disk(self.MOREAU_CELL_CLOSING_RADIUS_PX)
+                )
+
+            if self.MOREAU_CELL_DILATION_RADIUS_PX > 0:
+                morphed = binary_dilation(
+                    morphed,
+                    footprint=disk(self.MOREAU_CELL_DILATION_RADIUS_PX)
+                )
+
+            return morphed
+
+        # Normal fluorescence-style threshold:
+        low = np.percentile(finite_values, 1)
+        high = np.percentile(finite_values, 99)
+
+        cell_frame = (cell_frame - low) / (high - low)
+        cell_frame = np.clip(cell_frame, 0, 1) * 255.0
+
+        cell_view_type = self.cell_view_combo.currentText()
+
+        if cell_view_type == "Phase Contrast":
+            cell_frame = 255.0 - cell_frame
+            polarity_used = "dark"
         else:
-            cell_threshold = float(threshold_otsu(cell_frame))
+            polarity_used = "bright"
 
-        cell_area_mask = cell_frame > cell_threshold
+        cell_mask = cell_frame >= cell_threshold
+        cell_mask = apply_cell_morphology(cell_mask)
 
-        closing_radius_px = max(
-            1,
-            int(round((cell_closing_diameter_um / 2.0) / pixel_size_um)),
-        )
-        closing_kernel = disk(closing_radius_px)
+        cell_area_mask = cell_mask
+        cell_envelope_mask = cell_mask.copy()
 
-        cell_area_mask = binary_closing(
-            cell_area_mask,
-            footprint=closing_kernel,
-        )
-
-        dilation_radius_px = max(
-            1,
-            int(round((envelope_dilation_diameter_um / 2.0) / pixel_size_um)),
-        )
-        dilation_kernel = disk(dilation_radius_px)
-
-        cell_envelope_mask = binary_dilation(
-            cell_area_mask,
-            footprint=dilation_kernel,
+        cell_occupancy = (
+            np.count_nonzero(cell_mask) / cell_mask.size
+            if cell_mask.size > 0
+            else 0.0
         )
 
-        return cell_area_mask, cell_envelope_mask, cell_threshold
+        print(
+            f"Moreau cell view={cell_view_type} | "
+            f"polarity={polarity_used} | "
+            f"cell_occ={cell_occupancy:.4f} | "
+            f"threshold={cell_threshold}"
+        )
+
+        return cell_area_mask, cell_envelope_mask, cell_threshold, polarity_used
 
     def blockwise_local_otsu_eps_mask(
             self,
@@ -1387,18 +1431,14 @@ class EPSAnalysisWidget(QWidget):
             smoothing_sigma: float = 1.5,
             rolling_ball_fraction: int = 4,
     ):
-        # -----------------------------
-        # 3. Light smoothing before segmentation
-        # -----------------------------
+        # Light smoothing before segmentation
 
         smoothed = gaussian_filter(
             gaussian_corrected,
             sigma=smoothing_sigma
         )
 
-        # -----------------------------
-        # 4. Normalize for Local Otsu
-        # -----------------------------
+        # Normalize for Local Otsu
         print(f"Starting Local OTSU for {self}")
 
         if smoothed.max() > 0:
@@ -1411,9 +1451,7 @@ class EPSAnalysisWidget(QWidget):
                 dtype=np.uint8
             )
 
-        # -----------------------------
-        # 5. Local Otsu segmentation
-        # -----------------------------
+        # Local Otsu segmentation
         image_height, image_width = image.shape[:2]
         local_otsu_radius = (
                 min(image_height, image_width)
@@ -1427,51 +1465,9 @@ class EPSAnalysisWidget(QWidget):
 
         eps_mask = smoothed_8bit > local_threshold
 
-        """
-        if smoothed.max() > 0:
-            smoothed_8bit = img_as_ubyte(
-                smoothed / smoothed.max()
-            )
-        else:
-            smoothed_8bit = np.zeros_like(
-                smoothed,
-                dtype=np.uint8
-            )
 
-        # -----------------------------
-        # 5. Global Otsu segmentation
-        # -----------------------------
-        print(f"Starting Global OTSU for {self}")
-        from skimage.filters import threshold_otsu
-
-        global_threshold = threshold_otsu(
-            smoothed_8bit
-        )
-
-        eps_mask = smoothed_8bit > global_threshold
-
-        """
-
-        """# -----------------------------
-        # 5. Morphological Dilation & Closing
-        # -----------------------------
-
-        from nd2_analyzer.data.image_data import ImageData
-
-        image_data = ImageData.get_instance()
-        pixel_size_um = image_data.voxel_size.x
-
-        kernel_radius_px = max(1, int(round((0.65 / 2) / pixel_size_um)))
-        kernel = disk(kernel_radius_px)
-
-        eps_mask = binary_closing(eps_mask, footprint=kernel)
-        eps_mask = binary_dilation(eps_mask, footprint=kernel)"""
-
+        # Morphological Dilation & Closing
         if self.close_dialate.isChecked():
-            # -----------------------------
-            # 5. Morphological Dilation & Closing
-            # -----------------------------
-
             from nd2_analyzer.data.image_data import ImageData
 
             image_data = ImageData.get_instance()
@@ -1538,7 +1534,7 @@ class EPSAnalysisWidget(QWidget):
             0
         )
 
-        cell_area_mask, cell_envelope_mask, cell_threshold = self.make_moreau_cell_masks(
+        cell_area_mask, cell_envelope_mask, cell_threshold, cell_polarity_used = self.make_moreau_cell_masks(
             cell_frame=cell_image
         )
 
@@ -1571,11 +1567,14 @@ class EPSAnalysisWidget(QWidget):
         vps_colocalized_pixels = int(np.count_nonzero(colocalized_mask))
         total_pixels = int(image.size)
 
-        areal_fraction_percent = (
-            100.0 * cell_area_pixels / total_pixels
+        cell_occupancy_fraction = (
+            cell_area_pixels / total_pixels
             if total_pixels > 0
             else 0.0
         )
+        cell_occupancy_percent = cell_occupancy_fraction * 100.0
+        # Keep this as a backwards-compatible alias.
+        areal_fraction_percent = cell_occupancy_percent
 
         fraction_vps_coverage = (
             100.0 * vps_colocalized_pixels / cell_envelope_pixels
@@ -1589,7 +1588,7 @@ class EPSAnalysisWidget(QWidget):
             f"local_area={self.MOREAU_LOCAL_AREA_PERCENT} | "
             f"scope={self.MOREAU_THRESHOLD_SCOPE} | "
             f"thr={eps_threshold:.3f} | "
-            f"rho={areal_fraction_percent:.2f}% | "
+            f"rho={cell_occupancy_percent:.2f}% | "
             f"encased={fraction_vps_coverage:.2f}% | "
             f"cell_area_px={cell_area_pixels:,} | "
             f"cell_env_px={cell_envelope_pixels:,} | "
@@ -1601,11 +1600,18 @@ class EPSAnalysisWidget(QWidget):
             "eps_threshold_used": float(eps_threshold),
             "local_block_side_px": local_block_side_px,
             "fraction_vps_coverage": fraction_vps_coverage,
+            "cell_occupancy_fraction": cell_occupancy_fraction,
+            "cell_occupancy_percent": cell_occupancy_percent,
             "areal_fraction_percent": areal_fraction_percent,
+
             "cell_area_pixels": cell_area_pixels,
             "cell_envelope_pixels": cell_envelope_pixels,
             "vps_colocalized_pixels": vps_colocalized_pixels,
+
             "cell_threshold_used": float(cell_threshold),
+            "cell_polarity_used": cell_polarity_used,
+            "cell_closing_radius_px": int(self.MOREAU_CELL_CLOSING_RADIUS_PX),
+            "cell_dilation_radius_px": int(self.MOREAU_CELL_DILATION_RADIUS_PX),
         }
 
     def process_eps_frame(self,
@@ -1624,20 +1630,14 @@ class EPSAnalysisWidget(QWidget):
             dict with corrected image, mask, and EPS metrics.
         """
 
-        # -----------------------------
         # Validate / prepare image
-        # -----------------------------
-
         if frame is None:
             raise ValueError("EPS frame is None.")
-
         image = frame.astype(float)
         print(f"Original shape: {image.shape}")
 
 
-        # -----------------------------
         # 1. Large Gaussian background correction
-        # -----------------------------
         if self.gaus_back_corr.isChecked():
             print(f"Starting Gaussian background correction for {self}")
 
@@ -1655,24 +1655,6 @@ class EPSAnalysisWidget(QWidget):
         else:
             gaussian_corrected = image.copy()
         gaussian_corrected = np.clip(gaussian_corrected, 0, None)
-
-        """
-        # -----------------------------
-        # 2. Rolling ball background correction
-        # -----------------------------
-        print(f"Starting Rolling ball correction for {frame}")
-        rolling_background = rolling_ball(
-            gaussian_corrected,
-            radius=rolling_ball_radius
-        )
-
-        rolling_corrected = gaussian_corrected - rolling_background
-
-        rolling_corrected = np.clip(
-            rolling_corrected,
-            0,
-            None
-        )"""
 
         if self.is_moreau_method():
             smoothed, eps_mask, extra_metrics = self.segment_eps_moreau(
@@ -1818,21 +1800,14 @@ class EPSAnalysisWidget(QWidget):
         occupancy_percent = occupancy_fraction * 100
 
         if eps_pixels > 0:
-            #mean_intensity = gaussian_corrected[eps_mask].mean()
             mean_intensity = image[eps_mask].mean()
-            #integrated_intensity = gaussian_corrected[eps_mask].sum()
-            """
-            eps_signal = gaussian_corrected[eps_mask].sum()
+            integrated_intensity = image[eps_mask].sum()
 
-            frame_signal = gaussian_corrected.sum()
-            # relative signal
-            integrated_intensity = eps_signal / frame_signal
-            """
             #eps_signal = gaussian_corrected[eps_mask].sum()
-            eps_signal = image[eps_mask].sum()
+            #eps_signal = image[eps_mask].sum()
 
             # normalized
-            integrated_intensity = (eps_signal / image.size)
+            #integrated_intensity = (eps_signal / image.size)
 
         else:
             mean_intensity = 0.0
@@ -1991,6 +1966,15 @@ class EPSAnalysisWidget(QWidget):
 
             mask_pixels = np.count_nonzero(all_cells_mask)
 
+            total_image_pixels = int(eps_mask.size)
+
+            cell_occupancy_fraction = (
+                mask_pixels / total_image_pixels
+                if total_image_pixels > 0
+                else 0.0
+            )
+            cell_occupancy_percent = cell_occupancy_fraction * 100.0
+
             if mask_pixels > 0:
                 fraction_vps_coverage = (np.count_nonzero(eps_mask & all_cells_mask)
                                                 / mask_pixels) * 100
@@ -2018,6 +2002,8 @@ class EPSAnalysisWidget(QWidget):
                 "encased_cells": encased_cells,
                 "fraction_cells_encased": fraction_cells_encased,
                 "fraction_vps_coverage": fraction_vps_coverage,
+                "cell_occupancy_fraction": cell_occupancy_fraction,
+                "cell_occupancy_percent": cell_occupancy_percent,
             })
 
         fraction_df = pl.DataFrame(fraction_results)
@@ -2062,8 +2048,8 @@ class EPSAnalysisWidget(QWidget):
                     "fraction_vps_coverage",
                     row.get("occupancy_percent", 0.0)
                 ),
-                "areal_fraction_percent": row.get(
-                    "areal_fraction_percent",
+                "cell_occupancy_fraction": row.get(
+                    "cell_occupancy_fraction",
                     0.0
                 ),
             })
