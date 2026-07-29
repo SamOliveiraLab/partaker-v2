@@ -3,12 +3,15 @@ from typing import Optional
 import cv2
 import numpy as np
 from pubsub import pub
-from skimage.measure import label
+from skimage.measure import label, regionprops
 from skimage.segmentation import find_boundaries
 
 
 class SegmentationService:
     """Service handling image segmentation and cache management"""
+
+    REMOVE_EDGE_CENTROID_LABELS = True
+    EDGE_CENTROID_MARGIN_PX = 15
 
     def __init__(self, cache, models, data_getter):
         """
@@ -49,28 +52,47 @@ class SegmentationService:
         self.crop_coordinates = None
 
     def handle_image_request(self, time, position, channel, mode, model=None):
-        """Handle image requests requiring segmentation"""
+        """Handle image requests requiring segmentation."""
         if mode == "normal":
-            return  # Let ImageData handle normal requests
+            return
 
         if not model:
             raise ValueError(
                 "Segmentation model must be specified for non-normal modes"
             )
 
-        # Request cached, which will segment if not present
+        model_cache = self.cache.with_model(model)
         cache_key = (time, position, channel, model)
-        segmented = self.cache.with_model(model)[cache_key]
 
-        # Crop/Scale if we have it
+        # This retrieves an existing segmentation or generates and caches a new one.
+        segmented = np.asarray(model_cache[cache_key])
+
+        # Apply the edge rule to the FULL-SIZED segmentation and save the
+        # filtered result directly back into the segmentation cache.
+        if self.REMOVE_EDGE_CENTROID_LABELS:
+            segmented = self._remove_labels_with_centroids_near_edge(
+                segmented=segmented,
+                border_px=self.EDGE_CENTROID_MARGIN_PX,
+            )
+
+            self._save_segmentation_to_cache(
+                model_cache=model_cache,
+                model=model,
+                time=time,
+                position=position,
+                channel=channel,
+                segmented=segmented,
+            )
+
+        # Crop only the display copy. Do not save a cropped result into the cache.
         if self.crop_coordinates is not None:
             x, y, width, height = self.crop_coordinates
-            segmented = segmented[y: y + height, x: x + width]
+            segmented = segmented[y:y + height, x:x + width]
 
+        # ROI filtering remains temporary because the selected ROI can change.
         if self.roi_mask is not None:
             segmented = self._apply_roi_mask(segmented)
 
-        # Post-process based on mode
         processed_image = self._post_process(
             raw_image=self.get_raw_image(time, position, channel),
             segmented=segmented,
@@ -246,3 +268,152 @@ class SegmentationService:
             self.overlay_color = overlay_color
         if colormap:
             self.label_colormap = colormap
+
+    def _remove_labels_with_centroids_near_edge(self,
+            segmented: np.ndarray,
+            border_px: int,
+    ) -> np.ndarray:
+        """
+        Remove an entire object only when its centroid lies within the outer
+        border band.
+
+        Merely touching one or multiple image edges does not remove the object.
+        """
+        segmented = np.asarray(segmented)
+
+        if segmented.ndim != 2:
+            raise ValueError(
+                f"Expected a 2D segmentation, received shape {segmented.shape}."
+            )
+
+        unique_values = np.unique(segmented)
+
+        is_binary = (
+                unique_values.size <= 2
+                and set(unique_values.tolist()).issubset({0, 1, 255})
+        )
+
+        if is_binary:
+            labeled_frame = label(segmented > 0)
+        else:
+            # Omnipose and Cellpose masks are already individually labeled.
+            labeled_frame = segmented.astype(np.int32, copy=True)
+
+        height, width = labeled_frame.shape
+
+        border_px = max(
+            1,
+            min(
+                int(border_px),
+                height // 2,
+                width // 2,
+            ),
+        )
+
+        filtered = labeled_frame.copy()
+        removed_labels = []
+
+        for region in regionprops(labeled_frame):
+            centroid_y, centroid_x = region.centroid
+
+            centroid_inside_border_band = (
+                    centroid_y < border_px
+                    or centroid_y >= height - border_px
+                    or centroid_x < border_px
+                    or centroid_x >= width - border_px
+            )
+
+            if centroid_inside_border_band:
+                filtered[labeled_frame == region.label] = 0
+                removed_labels.append(int(region.label))
+
+                print(
+                    f"Removed edge label {region.label} | "
+                    f"centroid x={centroid_x:.2f}, "
+                    f"y={centroid_y:.2f}"
+                )
+
+        print(
+            f"Centroid edge filter removed {len(removed_labels)} labels "
+            f"using a {border_px}-pixel margin."
+        )
+
+        if is_binary:
+            foreground_value = 255 if segmented.max() > 1 else 1
+
+            return ((filtered > 0).astype(segmented.dtype) * foreground_value)
+
+        return filtered.astype(
+            segmented.dtype,
+            copy=False,
+        )
+
+    def _save_segmentation_to_cache(
+            self,
+            model_cache,
+            model: str,
+            time: int,
+            position: int,
+            channel: int,
+            segmented: np.ndarray,
+    ) -> None:
+        """
+        Replace one cached segmentation frame with a post-processed segmentation.
+
+        The cache stores one full-sized labeled image at each T, P, C coordinate.
+        """
+        if not hasattr(model_cache, "mmap_arrays_idx"):
+            raise RuntimeError(
+                "Segmentation cache does not expose mmap_arrays_idx."
+            )
+
+        if model not in model_cache.mmap_arrays_idx:
+            raise RuntimeError(
+                f"No cached segmentation array exists for model '{model}'."
+            )
+
+        mmap_array, _index_set = model_cache.mmap_arrays_idx[model]
+
+        cached_frame = mmap_array[
+            int(time),
+            int(position),
+            int(channel),
+        ]
+
+        segmented = np.asarray(segmented)
+
+        if segmented.shape != cached_frame.shape:
+            raise ValueError(
+                "Filtered segmentation shape does not match cached frame: "
+                f"{segmented.shape} != {cached_frame.shape}"
+            )
+
+        if not np.can_cast(
+                segmented.dtype,
+                cached_frame.dtype,
+                casting="safe",
+        ):
+            raise TypeError(
+                "Filtered segmentation dtype cannot be safely stored in the cache: "
+                f"{segmented.dtype} -> {cached_frame.dtype}"
+            )
+
+        mmap_array[
+            int(time),
+            int(position),
+            int(channel),
+        ] = segmented.astype(
+            cached_frame.dtype,
+            copy=False,
+        )
+
+        # Persist immediately when the backing array is a NumPy memmap.
+        flush = getattr(mmap_array, "flush", None)
+        if callable(flush):
+            flush()
+
+        print(
+            "Saved edge-filtered cell segmentation | "
+            f"T={time} P={position} C={channel} "
+            f"model={model} margin={self.EDGE_CENTROID_MARGIN_PX}px"
+        )
