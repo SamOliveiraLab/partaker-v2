@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                QGroupBox, QListWidget, QProgressBar,
                                QCheckBox, QFrame, QTextEdit, QSplitter,
                                QFileDialog, QAbstractItemView, QMessageBox,
-                               QDoubleSpinBox, QRadioButton, QButtonGroup, QDialog)
+                               QDoubleSpinBox, QRadioButton, QButtonGroup)
 from PySide6.QtCore import Qt, Signal, QThread, QObject
 from PySide6.QtGui import QFont
 import os
@@ -50,6 +50,16 @@ class EPSAnalysisWidget(QWidget):
     MOREAU_MORPHOLOGY_KERNEL_DIAMETER_UM = 0.65
     MOREAU_FALLBACK_PIXEL_SIZE_UM = 0.064971092928405
 
+    # Fixed EPS intensity rules
+    PARTAKER_EPS_LOW_UNION_MAX = 140.0
+    PARTAKER_EPS_HIGH_CAP_MAX = 180.0
+
+    MOREAU_EPS_LOW_UNION_MAX = 140.0
+    MOREAU_EPS_HIGH_CAP_MAX = 180.0
+    # Temporary fixed EPS threshold mode
+    USE_FIXED_UPPER_EPS_THRESHOLD_DEFAULT = False
+    FIXED_UPPER_EPS_THRESHOLD = 50.0
+
     # Dominant-bound EPS base mask rule
     EPS_DOMINANT_BOUND_INTENSITY_MIN = 90.0
     EPS_DOMINANT_BOUND_INTENSITY_MAX = 255.0
@@ -63,12 +73,6 @@ class EPSAnalysisWidget(QWidget):
     # Export options
     EXPORT_VISUALS_ONLY_FOR_ONE_POSITION = True
     EXPORT_VISUAL_POSITION = 0  # zero-based, so Position 0, Position 1, etc.
-    EPS_OVERLAY_COLOR_RGB = {
-        "red": (255, 0, 0),
-        "blue": (0, 153, 255),
-        "yellow": (255, 221, 0),
-        "green": (0, 255, 0),
-    }
 
     # Raw-intensity mode DISPLAY choice only.
     # Both whole-frame and cell-integrated graphs are always exported.
@@ -90,19 +94,6 @@ class EPSAnalysisWidget(QWidget):
         self.cancel_requested = False
         self.queue = []
         self.eps_results = []
-
-        # Partaker fixed-EPS calibration state. The setup dialog returns one
-        # threshold and one shared raw-to-uint8 mapping that must be reused by
-        # the complete run so the accepted preview matches exported masks.
-        self.partaker_eps_setup = None
-        self.partaker_eps_threshold = 40
-        self.partaker_eps_smoothing_sigma = 1.5
-        self.partaker_drop_frame_zero = False
-        self.eps_overlay_color_name = "green"
-
-        # Captures the frame-zero decision used by the current run, regardless
-        # of whether it came from the Partaker setup dialog or the main widget.
-        self.drop_frame_zero_for_current_run = False
 
         # Run-level EPS preprocessing state. These values are recalculated when
         # a new segmented EPS analysis starts.
@@ -224,40 +215,31 @@ class EPSAnalysisWidget(QWidget):
         self.cell_view_combo.setCurrentText("Phase Contrast")
         selection_layout.addWidget(self.cell_view_combo)
 
-        # EPS filtering options used by non-Partaker segmentation modes.
+        # Add image filtering options
         self.gaus_back_corr = QCheckBox("Gaussian Background Subtraction")
         self.gaus_back_corr.setChecked(False)
-        self.close_dialate = QCheckBox(
-            "Morphologically Close & Dilate EPS Channel"
-        )
+        self.close_dialate = QCheckBox("Morphologically Close & Dilate EPS Channel")
         self.close_dialate.setChecked(False)
+        self.inclusion_mask = QCheckBox("Include Lower-EPS Values")
+        self.inclusion_mask.setChecked(False)
+        self.exclusion_mask = QCheckBox("Exclude Higher-EPS Values")
+        self.exclusion_mask.setChecked(False)
 
-        self.drop_frame_zero_checkbox = QCheckBox(
-            "Drop frame 0 from analysis"
-        )
-        self.drop_frame_zero_checkbox.setChecked(False)
-        self.drop_frame_zero_checkbox.setToolTip(
-            "Exclude T=0 from processing, exported metrics, plots, and GIFs. "
-            "Partaker provides this option inside its threshold setup dialog."
+        # TODO: Verify functionality details and remove as necessary
+        self.fixed_upper_eps_threshold = QCheckBox("Fixed Upper EPS Threshold")
+        self.fixed_upper_eps_threshold.setChecked(
+            self.USE_FIXED_UPPER_EPS_THRESHOLD_DEFAULT
         )
 
-        # These are true EPS filtering controls. Raw-intensity mode disables
-        # them, but the frame-zero option remains available.
         self.eps_filter_checkboxes = [
             self.gaus_back_corr,
             self.close_dialate,
+            self.inclusion_mask,
+            self.exclusion_mask,
+            self.fixed_upper_eps_threshold,
         ]
 
-        # Every item here disappears in Partaker mode because Partaker exposes
-        # its frame-zero option in EPSSetupDialog and does not use the other
-        # two main-widget filtering controls.
-        self.partaker_disappearing_checkboxes = [
-            self.gaus_back_corr,
-            self.close_dialate,
-            self.drop_frame_zero_checkbox,
-        ]
-
-        for checkbox in self.partaker_disappearing_checkboxes:
+        for checkbox in self.eps_filter_checkboxes:
             # Keep disabled text readable instead of allowing the platform theme
             # to fade it almost completely into the background.
             checkbox.setStyleSheet(
@@ -265,14 +247,9 @@ class EPSAnalysisWidget(QWidget):
             )
             selection_layout.addWidget(checkbox)
 
-        for radio_button in [
-            self.radio_partaker,
-            self.radio_moreau,
-            self.radio_otsu,
-            self.radio_raw_intensities,
-        ]:
-            radio_button.toggled.connect(self.on_analysis_method_changed)
-
+        self.radio_raw_intensities.toggled.connect(
+            self.on_analysis_method_changed
+        )
         self.on_analysis_method_changed()
 
         layout.addLayout(selection_layout)
@@ -280,29 +257,13 @@ class EPSAnalysisWidget(QWidget):
         return group
 
     def on_analysis_method_changed(self):
-        """Update EPS controls and the Start button for the selected mode."""
-        partaker_mode = self.is_partaker_method()
+        """Enable EPS filtering only for modes that actually segment EPS."""
         raw_mode = self.is_raw_intensity_method()
 
-        for checkbox in getattr(
-                self,
-                "partaker_disappearing_checkboxes",
-                [],
-        ):
-            checkbox.setVisible(not partaker_mode)
-
-        # Raw-intensity mode bypasses EPS filtering, but dropping T=0 is still
-        # a valid run-scope choice and therefore stays enabled.
         for checkbox in getattr(self, "eps_filter_checkboxes", []):
-            if partaker_mode or raw_mode:
+            if raw_mode:
                 checkbox.setChecked(False)
             checkbox.setEnabled(not raw_mode)
-
-        if hasattr(self, "drop_frame_zero_checkbox"):
-            self.drop_frame_zero_checkbox.setEnabled(True)
-
-        if hasattr(self, "start_segmentation_btn"):
-            self.start_segmentation_btn.setText("Start")
 
     def get_analysis_method(self):
         """Return selected EPS analysis method."""
@@ -396,7 +357,6 @@ class EPSAnalysisWidget(QWidget):
         self.start_segmentation_btn.setStyleSheet(
             "background-color: #2196F3; color: white; font-weight: bold; padding: 5px;")
         self.start_segmentation_btn.setEnabled(False)
-        self.on_analysis_method_changed()
 
         # Cancel button
         self.cancel_analysis_btn = QPushButton("Cancel")
@@ -463,7 +423,7 @@ class EPSAnalysisWidget(QWidget):
         self.frame_interval_value = QDoubleSpinBox()
         self.frame_interval_value.setDecimals(3)
         self.frame_interval_value.setRange(0.001, 1e9)
-        self.frame_interval_value.setValue(24)  # default = 1 hr
+        self.frame_interval_value.setValue(0.5)  # default = 1 hr
         self.frame_interval_value.setSingleStep(0.1)
         interval_layout.addWidget(self.frame_interval_value)
         # Unit dropdown
@@ -971,129 +931,7 @@ class EPSAnalysisWidget(QWidget):
             return
 
         self.build_eps_reference_backgrounds(frame_keys)
-
-        # Partaker must reuse the exact intensity window accepted in the setup
-        # dialog. Re-estimating it here could make the full-run masks differ
-        # from the previews the user approved.
-        if self.is_partaker_method() and self.partaker_eps_setup is not None:
-            self.eps_processing_black_point_raw = float(
-                self.partaker_eps_setup.processing_black_point_raw
-            )
-            self.eps_processing_white_point_raw = float(
-                self.partaker_eps_setup.processing_white_point_raw
-            )
-            self.eps_processing_window_source = str(
-                self.partaker_eps_setup.processing_window_source
-            )
-            print(
-                "Using Partaker dialog EPS processing window | "
-                f"black_raw={self.eps_processing_black_point_raw:.3f} | "
-                f"white_raw={self.eps_processing_white_point_raw:.3f}"
-            )
-            return
-
         self.estimate_eps_processing_window(frame_keys)
-
-    def open_partaker_eps_setup_dialog(
-            self,
-            *,
-            selected_positions,
-            t_start: int,
-            t_end: int,
-            eps_channel: int,
-    ):
-        """Open Partaker fixed-threshold calibration and return its result."""
-        from nd2_analyzer.data.image_data import ImageData
-        from nd2_analyzer.ui.biofilms.eps_setup_dialog import EPSSetupDialog
-
-        image_data = ImageData.get_instance()
-        if image_data is None or image_data.data is None:
-            QMessageBox.warning(
-                self,
-                "No image data",
-                "Load image data before configuring fixed EPS thresholding."
-            )
-            return None
-
-        dialog = EPSSetupDialog(
-            image_data=image_data,
-            eps_channel=eps_channel,
-            selected_positions=selected_positions,
-            time_start=t_start,
-            time_end=t_end,
-            initial_drop_frame_zero=self.partaker_drop_frame_zero,
-            initial_threshold=self.partaker_eps_threshold,
-            smoothing_sigma=self.partaker_eps_smoothing_sigma,
-            initial_overlay_color=self.eps_overlay_color_name,
-            initial_capture_interval_value=self.frame_interval_value.value(),
-            initial_capture_interval_unit=self.time_unit_combo.currentText(),
-            parent=self,
-        )
-
-        if dialog.exec() != QDialog.Accepted or dialog.result is None:
-            return None
-
-        return dialog.result
-
-    def apply_partaker_eps_setup(self, setup) -> None:
-        """Copy accepted setup values into the EPS widget and its controls."""
-        self.partaker_eps_setup = setup
-        self.partaker_eps_threshold = int(setup.threshold_uint8)
-        self.partaker_eps_smoothing_sigma = float(setup.smoothing_sigma)
-        self.partaker_drop_frame_zero = bool(setup.drop_frame_zero)
-        self.drop_frame_zero_for_current_run = bool(setup.drop_frame_zero)
-        self.eps_overlay_color_name = self.normalize_eps_overlay_color_name(
-            getattr(setup, "overlay_color_name", "green")
-        )
-
-        self.time_start_spin.setValue(int(setup.time_start))
-        self.time_end_spin.setValue(int(setup.time_end))
-        self.eps_channel_combo.setCurrentIndex(int(setup.eps_channel))
-        self.frame_interval_value.setValue(
-            float(getattr(setup, "capture_interval_value", self.frame_interval_value.value()))
-        )
-        capture_interval_unit = str(
-            getattr(setup, "capture_interval_unit", self.time_unit_combo.currentText())
-        )
-        capture_interval_index = self.time_unit_combo.findText(
-            capture_interval_unit
-        )
-        if capture_interval_index >= 0:
-            self.time_unit_combo.setCurrentIndex(capture_interval_index)
-
-        selected_positions = set(int(value) for value in setup.positions)
-        for index in range(self.position_list.count()):
-            self.position_list.item(index).setSelected(
-                index in selected_positions
-            )
-
-        self.status_label.setText(
-            "Partaker EPS setup accepted: "
-            f"threshold={self.partaker_eps_threshold}, "
-            f"overlay={self.eps_overlay_color_name}, "
-            f"interval={self.frame_interval_value.value():g} {self.time_unit_combo.currentText()}, "
-            f"T={setup.time_start}..{setup.time_end}, "
-            f"drop_T0={bool(setup.drop_frame_zero)}, "
-            f"positions={list(setup.positions)}"
-        )
-
-    @classmethod
-    def normalize_eps_overlay_color_name(cls, value) -> str:
-        color_name = str(value or "green").strip().lower()
-        if color_name not in cls.EPS_OVERLAY_COLOR_RGB:
-            return "green"
-        return color_name
-
-    @classmethod
-    def eps_overlay_rgb_from_name(cls, color_name) -> tuple[int, int, int]:
-        return cls.EPS_OVERLAY_COLOR_RGB[
-            cls.normalize_eps_overlay_color_name(color_name)
-        ]
-
-    def current_eps_overlay_color_name(self) -> str:
-        return self.normalize_eps_overlay_color_name(
-            getattr(self, "eps_overlay_color_name", "green")
-        )
 
     def eps_processed_value_to_raw(self, value):
         """Convert a scalar 0-255 EPS processing value back to raw units."""
@@ -1144,35 +982,7 @@ class EPSAnalysisWidget(QWidget):
 
         eps_channel = self.eps_channel_combo.currentIndex()
 
-        # Non-Partaker modes use the main-widget checkbox. Partaker replaces
-        # this value with the setting accepted in EPSSetupDialog.
-        drop_frame_zero = bool(
-            self.drop_frame_zero_checkbox.isChecked()
-        )
-
-        if self.is_partaker_method():
-            setup = self.open_partaker_eps_setup_dialog(
-                selected_positions=selected_positions,
-                t_start=t_start,
-                t_end=t_end,
-                eps_channel=eps_channel,
-            )
-            if setup is None:
-                self.status_label.setText("Partaker EPS setup cancelled")
-                self.start_segmentation_btn.setEnabled(True)
-                self.cancel_analysis_btn.setEnabled(False)
-                return
-
-            self.apply_partaker_eps_setup(setup)
-            selected_positions = list(setup.positions)
-            t_start = int(setup.time_start)
-            t_end = int(setup.time_end)
-            eps_channel = int(setup.eps_channel)
-            drop_frame_zero = bool(setup.drop_frame_zero)
-
-        self.drop_frame_zero_for_current_run = bool(drop_frame_zero)
-
-        # Skip focus-loss frames and any explicitly excluded frame zero.
+        # Skip focus loss frames
         focus_loss_skip = set()
 
         try:
@@ -1191,10 +1001,6 @@ class EPSAnalysisWidget(QWidget):
         except Exception:
             pass
 
-        frames_to_skip = set(focus_loss_skip)
-        if drop_frame_zero and t_start <= 0 <= t_end:
-            frames_to_skip.add(0)
-
         otsu_phase_uses_partaker_cells = (
                 self.is_otsu_method()
                 and self.cell_view_combo.currentText() == "Phase Contrast"
@@ -1212,7 +1018,7 @@ class EPSAnalysisWidget(QWidget):
                 selected_positions=selected_positions,
                 t_start=t_start,
                 t_end=t_end,
-                focus_loss_skip=frames_to_skip,
+                focus_loss_skip=focus_loss_skip,
         ):
             self.start_segmentation_btn.setEnabled(True)
             self.cancel_analysis_btn.setEnabled(False)
@@ -1223,7 +1029,7 @@ class EPSAnalysisWidget(QWidget):
         for p in selected_positions:
             for t in range(t_start, t_end + 1):
 
-                if t in frames_to_skip:
+                if t in focus_loss_skip:
                     continue
 
                 frames_to_analyze.append(
@@ -1231,10 +1037,7 @@ class EPSAnalysisWidget(QWidget):
                 )
 
         if not frames_to_analyze:
-            self.status_label.setText(
-                "No valid frames remain to analyze. Check the selected time "
-                "range, focus-loss intervals, and frame-zero exclusion."
-            )
+            self.status_label.setText("No valid frames to analyze")
             self.start_segmentation_btn.setEnabled(True)
             self.cancel_analysis_btn.setEnabled(False)
             return
@@ -1253,8 +1056,7 @@ class EPSAnalysisWidget(QWidget):
 
         self.queue = frames_to_analyze
         print(
-            f"Queue length: {len(frames_to_analyze)} | "
-            f"drop_frame_zero={self.drop_frame_zero_for_current_run}"
+            f"Queue length: {len(frames_to_analyze)}"
         )
 
         self.progress_bar.setMaximum(len(self.queue))
@@ -1266,13 +1068,8 @@ class EPSAnalysisWidget(QWidget):
         self.start_segmentation_btn.setEnabled(False)
         self.cancel_analysis_btn.setEnabled(True)
 
-        frame_zero_note = (
-            " Frame 0 is excluded."
-            if self.drop_frame_zero_for_current_run
-            else ""
-        )
         self.status_label.setText(
-            f"Processing {len(self.queue)} frames...{frame_zero_note}"
+            f"Processing {len(self.queue)} frames..."
         )
         self.process_next_in_queue()
 
@@ -1280,12 +1077,6 @@ class EPSAnalysisWidget(QWidget):
         if image_data is None or image_data.data is None:
             return
 
-        # A calibration result belongs to one loaded dataset only.
-        self.partaker_eps_setup = None
-        self.partaker_drop_frame_zero = False
-        self.drop_frame_zero_for_current_run = False
-        if hasattr(self, "drop_frame_zero_checkbox"):
-            self.drop_frame_zero_checkbox.setChecked(False)
         self.start_segmentation_btn.setEnabled(True)
 
         # Get dimensions from image_data
@@ -1365,11 +1156,11 @@ class EPSAnalysisWidget(QWidget):
             "analysis_method",
             self.get_analysis_method()
         )
+        fixed_eps_bounds_used = analysis_method in ["Partaker", "Moreau"]
+
         result_row = {
             "time": time,
             "time_hours": self.get_time_hours(time),
-            "capture_interval_value": float(self.frame_interval_value.value()),
-            "capture_interval_unit": str(self.time_unit_combo.currentText()),
             "position": position,
 
             "eps_channel": channel,
@@ -1384,9 +1175,9 @@ class EPSAnalysisWidget(QWidget):
 
             "background_filtering_used": bool(self.gaus_back_corr.isChecked()),
             "eps_morphology_used": bool(self.close_dialate.isChecked()),
-            "frame_zero_dropped": bool(
-                self.drop_frame_zero_for_current_run
-            ),
+
+            "low_union_used": bool(self.inclusion_mask.isChecked() and fixed_eps_bounds_used),
+            "high_cap_used": bool(self.exclusion_mask.isChecked() and fixed_eps_bounds_used),
 
             "occupancy_fraction": metrics["occupancy_fraction"],
             "occupancy_percent": metrics["occupancy_percent"],
@@ -1398,6 +1189,7 @@ class EPSAnalysisWidget(QWidget):
         for optional_key in [
             "eps_threshold_used",
             "eps_thresholding_type",
+            "eps_fixed_upper_threshold",
             "eps_dominant_lower_bound",
             "eps_dominant_upper_bound",
             "eps_processing_black_point_raw",
@@ -1405,10 +1197,10 @@ class EPSAnalysisWidget(QWidget):
             "eps_processing_window_source",
             "eps_processing_intensity_space",
             "eps_threshold_used_raw",
+            "eps_fixed_upper_threshold_raw",
             "eps_dominant_lower_bound_raw",
             "eps_dominant_upper_bound_raw",
 
-            "partaker_gaussian_sigma",
             "otsu_gaussian_sigma",
             "otsu_local_block_size_px",
             "otsu_local_neighborhood_fraction",
@@ -1539,16 +1331,10 @@ class EPSAnalysisWidget(QWidget):
         self.start_segmentation_btn.setEnabled(True)
         self.cancel_analysis_btn.setEnabled(False)
 
-        frame_zero_note = (
-            " Frame 0 was excluded."
-            if self.drop_frame_zero_for_current_run
-            else ""
-        )
-
         if gif_path is not None or overlay_gif_paths or summary_plot_paths:
             self.status_label.setText(
                 f"EPS analysis complete "
-                f"({len(self.eps_results)} frames).{frame_zero_note} "
+                f"({len(self.eps_results)} frames). "
                 f"Outputs saved to {output_dir}; "
                 f"summary GIF saved: {gif_path is not None}; "
                 f"overlay GIFs saved: {len(overlay_gif_paths)}; "
@@ -1557,7 +1343,7 @@ class EPSAnalysisWidget(QWidget):
         else:
             self.status_label.setText(
                 f"EPS analysis complete "
-                f"({len(self.eps_results)} frames).{frame_zero_note} "
+                f"({len(self.eps_results)} frames). "
                 f"Outputs saved to {output_dir}"
             )
 
@@ -2619,9 +2405,26 @@ class EPSAnalysisWidget(QWidget):
             self,
             eps_image: np.ndarray,
     ):
-        eps_mask, _eps_for_thresholding, dominant_lower_bound, dominant_upper_bound = (
+        eps_mask, eps_for_thresholding, dominant_lower_bound, dominant_upper_bound = (
             self.make_dominant_bound_base_eps_mask(eps_image)
         )
+
+        if self.inclusion_mask.isChecked():
+            low_union_mask = (
+                    np.isfinite(eps_for_thresholding)
+                    & (eps_for_thresholding >= self.EPS_DOMINANT_BOUND_INTENSITY_MIN)
+                    & (eps_for_thresholding <= self.PARTAKER_EPS_LOW_UNION_MAX)
+            )
+
+            eps_mask = eps_mask | low_union_mask
+
+        if self.exclusion_mask.isChecked():
+            high_keep_mask = (
+                    eps_for_thresholding
+                    <= self.PARTAKER_EPS_HIGH_CAP_MAX
+            )
+
+            eps_mask = eps_mask & high_keep_mask
 
         return eps_mask, dominant_lower_bound, dominant_upper_bound
 
@@ -2629,9 +2432,28 @@ class EPSAnalysisWidget(QWidget):
             self,
             eps_image: np.ndarray,
     ):
-        eps_mask, _eps_for_thresholding, dominant_lower_bound, dominant_upper_bound = (
+        eps_mask, eps_for_thresholding, dominant_lower_bound, dominant_upper_bound = (
             self.make_dominant_bound_base_eps_mask(eps_image)
         )
+
+        finite = np.isfinite(eps_for_thresholding)
+
+        if self.inclusion_mask.isChecked():
+            low_union_mask = (
+                    finite
+                    & (eps_for_thresholding >= self.EPS_DOMINANT_BOUND_INTENSITY_MIN)
+                    & (eps_for_thresholding <= self.MOREAU_EPS_LOW_UNION_MAX)
+            )
+
+            eps_mask = eps_mask | low_union_mask
+
+        if self.exclusion_mask.isChecked():
+            high_keep_mask = (
+                    finite
+                    & (eps_for_thresholding <= self.MOREAU_EPS_HIGH_CAP_MAX)
+            )
+
+            eps_mask = eps_mask & high_keep_mask
 
         return eps_mask, dominant_lower_bound, dominant_upper_bound
 
@@ -2789,20 +2611,17 @@ class EPSAnalysisWidget(QWidget):
             cmap="gray"
         )
 
-        overlay_rgb = self.eps_overlay_rgb_from_name(
-            self.current_eps_overlay_color_name()
-        )
         ax.imshow(
             self.make_single_mask_rgba(
                 eps_mask,
-                (*overlay_rgb, 64),
+                (0, 255, 0, 64),
             )
         )
 
         ax.contour(
             eps_mask,
             levels=[0.5],
-            colors=[tuple(channel / 255.0 for channel in overlay_rgb)],
+            colors="green",
             linewidths=0.7
         )
 
@@ -3156,6 +2975,50 @@ class EPSAnalysisWidget(QWidget):
         np.rint(work, out=work)
         return work.astype(np.uint8, copy=False)
 
+    def segment_eps_fixed_upper_threshold(
+            self,
+            eps_processing_image: np.ndarray,
+            time: int,
+            position: int,
+    ):
+        """
+        Temporary EPS segmentation mode.
+
+        Rule:
+            pixels >= FIXED_UPPER_EPS_THRESHOLD are kept as EPS foreground
+            pixels < FIXED_UPPER_EPS_THRESHOLD are treated as background
+
+        Uses the shared uint8 EPS processing image.
+        """
+        eps_for_thresholding = np.asarray(eps_processing_image, dtype=float)
+
+        threshold = float(self.FIXED_UPPER_EPS_THRESHOLD)
+
+        eps_mask = (
+                np.isfinite(eps_for_thresholding)
+                & (eps_for_thresholding >= threshold)
+        )
+
+        if self.close_dialate.isChecked():
+            eps_mask = self.apply_eps_channel_morphology(
+                eps_mask=eps_mask,
+                closing_radius_px=self.MOREAU_EPS_CLOSING_RADIUS_PX,
+                dilation_radius_px=self.MOREAU_EPS_DILATION_RADIUS_PX,
+            )
+
+        print(
+            f"Starting TEMP fixed EPS threshold | "
+            f"P={position} T={time} | "
+            f"threshold>={threshold}"
+        )
+
+        return eps_for_thresholding, eps_mask, {
+            "analysis_method": "FixedThreshold",
+            "eps_threshold_used": float(threshold),
+            "eps_thresholding_type": "fixed_threshold_above",
+            "eps_fixed_upper_threshold": float(threshold),
+        }
+
     def segment_eps_partaker(
             self,
             gaussian_corrected: np.ndarray,
@@ -3177,8 +3040,11 @@ class EPSAnalysisWidget(QWidget):
             output=smoothed,
         )
 
-        threshold = int(self.partaker_eps_threshold)
-        eps_mask = smoothed >= threshold
+        eps_mask, dominant_lower_bound, dominant_upper_bound = (
+            self.apply_partaker_fixed_eps_thresholding(
+                eps_image=smoothed,
+            )
+        )
 
         # Morphological Dilation & Closing
         if self.close_dialate.isChecked():
@@ -3195,9 +3061,9 @@ class EPSAnalysisWidget(QWidget):
 
         return smoothed, eps_mask, {
             "analysis_method": "Partaker",
-            "eps_threshold_used": float(threshold),
-            "eps_thresholding_type": "fixed_global_uint8",
-            "partaker_gaussian_sigma": float(smoothing_sigma),
+            "eps_threshold_used": float(dominant_upper_bound),
+            "eps_dominant_lower_bound": float(dominant_lower_bound),
+            "eps_dominant_upper_bound": float(dominant_upper_bound),
         }
 
     def segment_eps_moreau(
@@ -3261,7 +3127,9 @@ class EPSAnalysisWidget(QWidget):
         print(
             f"P={position} T={time} | "
             f"mode=moreau | "
-            f"thr={eps_threshold:.3f}"
+            f"eps_fixed_low<={self.MOREAU_EPS_LOW_UNION_MAX} | "
+            f"eps_fixed_high<={self.MOREAU_EPS_HIGH_CAP_MAX} | "
+            f"thr={eps_threshold:.3f} | "
         )
 
         return smoothed, eps_mask, {
@@ -4246,7 +4114,15 @@ class EPSAnalysisWidget(QWidget):
                 f"max={eps_processing_image.max()}"
             )
 
-            if self.is_moreau_method():
+            if self.fixed_upper_eps_threshold.isChecked():
+                smoothed, eps_mask, extra_metrics = (
+                    self.segment_eps_fixed_upper_threshold(
+                        eps_processing_image=eps_processing_image,
+                        time=time,
+                        position=position,
+                    )
+                )
+            elif self.is_moreau_method():
                 smoothed, eps_mask, extra_metrics = self.segment_eps_moreau(
                     gaussian_corrected=eps_processing_image,
                     image=image,
@@ -4264,7 +4140,7 @@ class EPSAnalysisWidget(QWidget):
                 smoothed, eps_mask, extra_metrics = self.segment_eps_partaker(
                     gaussian_corrected=eps_processing_image,
                     image=image,
-                    smoothing_sigma=self.partaker_eps_smoothing_sigma,
+                    smoothing_sigma=smoothing_sigma,
                 )
 
             extra_metrics.update({
@@ -4286,6 +4162,7 @@ class EPSAnalysisWidget(QWidget):
 
             raw_equivalent_keys = {
                 "eps_threshold_used": "eps_threshold_used_raw",
+                "eps_fixed_upper_threshold": "eps_fixed_upper_threshold_raw",
                 "eps_dominant_lower_bound": "eps_dominant_lower_bound_raw",
                 "eps_dominant_upper_bound": "eps_dominant_upper_bound_raw",
             }
