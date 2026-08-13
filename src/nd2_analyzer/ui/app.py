@@ -124,9 +124,9 @@ class App(QMainWindow):
         self.eps_analysis_tab = EPSAnalysisWidget()
 
         self.tab_widget.addTab(self.segmentation_tab, "Segmentation")
+        self.tab_widget.addTab(self.eps_analysis_tab, "EPS Analysis")
         self.tab_widget.addTab(self.colony_separation_tab, "Colony Separation")
         self.tab_widget.addTab(self.cube_analysis_tab, "Colony Analysis")
-        self.tab_widget.addTab(self.eps_analysis_tab, "EPS Analysis")
 
     # ── Drag & Drop ──────────────────────────────────────────────────
 
