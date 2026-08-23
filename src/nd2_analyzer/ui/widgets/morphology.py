@@ -26,6 +26,7 @@ class MorphologyWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.cell_mapping = {}
+        self.displayed_metrics_df = pd.DataFrame()
         self.selected_cell_id = None
         self.tracked_cell_lineage = {}
 
@@ -350,6 +351,8 @@ class MorphologyWidget(QWidget):
     def on_table_item_click(self, item):
         """Handle clicks on the metrics table to select and track cells"""
         try:
+            if self.metrics_table.horizontalHeaderItem(0).text() != "ID":
+                return
             row = item.row()
             cell_id = self.metrics_table.item(row, 0).text()
             cell_id = int(cell_id)
@@ -718,17 +721,22 @@ class MorphologyWidget(QWidget):
             loc="best",
         )
 
-    def populate_metrics_table(self):
+    def populate_metrics_table(self, metrics_df=None):
         """Populate the metrics table with cell data, showing only classification-relevant columns"""
-        if not self.cell_mapping:
-            return
+        if metrics_df is None:
+            if not self.cell_mapping:
+                return
 
-        # Convert cell mapping to a DataFrame
-        metrics_data = [
-            {**{"ID": cell_id}, **data["metrics"]}
-            for cell_id, data in self.cell_mapping.items()
-        ]
-        metrics_df = pd.DataFrame(metrics_data)
+            # Convert cell mapping to a DataFrame
+            metrics_data = [
+                {**{"ID": cell_id}, **data["metrics"]}
+                for cell_id, data in self.cell_mapping.items()
+            ]
+            metrics_df = pd.DataFrame(metrics_data)
+        else:
+            metrics_df = metrics_df.copy()
+            if "cell_id" in metrics_df.columns and "ID" not in metrics_df.columns:
+                metrics_df = metrics_df.rename(columns={"cell_id": "ID"})
 
         print(f"Created metrics dataframe with columns: {metrics_df.columns}")
 
@@ -736,6 +744,7 @@ class MorphologyWidget(QWidget):
         # Include "ID" first, then morphology class, then relevant metrics
         columns_to_show = [
             "ID",
+            "time",
             "morphology_class",
             "area",
             "perimeter",
@@ -751,7 +760,7 @@ class MorphologyWidget(QWidget):
         ]
 
         # Filter dataframe to show only selected columns
-        metrics_df = metrics_df[available_columns]
+        metrics_df = metrics_df[available_columns].copy()
 
         # Round numeric columns to 2 decimal places (excluding ID and morphology_class)
         numeric_columns = [
@@ -760,6 +769,9 @@ class MorphologyWidget(QWidget):
 
         if numeric_columns:
             metrics_df[numeric_columns] = metrics_df[numeric_columns].round(2)
+
+        # Keep the displayed data so CSV export matches the table exactly.
+        self.displayed_metrics_df = metrics_df
 
         # Update QTableWidget
         self.metrics_table.setRowCount(metrics_df.shape[0])
@@ -786,18 +798,21 @@ class MorphologyWidget(QWidget):
                             else QColor(0, 0, 0)
                         )
 
+    def populate_time_series_table(self, metrics_df):
+        """Populate the table with the values plotted over time."""
+        self.displayed_metrics_df = metrics_df
+        self.metrics_table.setRowCount(metrics_df.shape[0])
+        self.metrics_table.setColumnCount(metrics_df.shape[1])
+        self.metrics_table.setHorizontalHeaderLabels(metrics_df.columns)
+
+        for row in range(metrics_df.shape[0]):
+            for col, value in enumerate(metrics_df.iloc[row]):
+                self.metrics_table.setItem(row, col, QTableWidgetItem(str(value)))
+
     def export_metrics_to_csv(self):
         """Exports the metrics table data to a CSV file."""
         try:
-            if not self.cell_mapping:
-                QMessageBox.warning(self, "Error", "No cell data available.")
-                return
-
-            metrics_data = [
-                {**{"ID": cell_id}, **data["metrics"]}
-                for cell_id, data in self.cell_mapping.items()
-            ]
-            metrics_df = pd.DataFrame(metrics_data)
+            metrics_df = self.displayed_metrics_df
 
             if metrics_df.empty:
                 QMessageBox.warning(self, "Error", "No data available to export.")
@@ -1046,6 +1061,16 @@ class MorphologyWidget(QWidget):
             except Exception:
                 interval_hours = None
         times_plot = [t * interval_hours for t in times] if interval_hours else times
+
+        # Show exactly the statistics plotted below: one row per time point.
+        time_column = "Time (h)" if interval_hours else "Time (frame)"
+        time_series_data = {time_column: times_plot}
+        for morph in all_morphologies:
+            time_series_data[f"{morph} Fraction"] = morphology_fractions[morph]
+        for morph in all_morphologies:
+            time_series_data[f"{morph} Count"] = morphology_counts[morph]
+        time_series_data["Total Cells"] = total_cells
+        self.populate_time_series_table(pd.DataFrame(time_series_data))
 
         # Clear and set up the large figure (16×10 inches) with two subplots
         self.figure_annot_scatter.clf()
