@@ -9,11 +9,11 @@ import os
 from pathlib import Path
 import numpy as np
 import cv2
-from scipy.spatial.distance import cdist
-from scipy.ndimage import gaussian_filter, distance_transform_edt
 from skimage import measure
 import tifffile
 import traceback
+
+from nd2_analyzer.analysis.biofilm_metric_service import BiofilmMetricService
 
 
 class AnalysisWorker(QObject):
@@ -199,200 +199,16 @@ class AnalysisWorker(QObject):
             return binary_mask, []
     
     def calculate_square_parameters(self, image_data, colony_mask_and_boxes, square_size):
-        """Calculate parameters for each square in the colony region with offset support"""
-        if len(image_data.shape) == 3:
-            gray_image = cv2.cvtColor(image_data, cv2.COLOR_RGB2GRAY)
-        else:
-            gray_image = image_data
-        
-        # Handle both old and new return formats
-        if isinstance(colony_mask_and_boxes, tuple):
-            colony_mask, detected_boxes = colony_mask_and_boxes
-        else:
-            colony_mask = colony_mask_and_boxes
-            detected_boxes = []
-        
-        height, width = gray_image.shape
-        results = {
-            'square_positions': [],
-            'local_density': [],
-            'distance_to_edge': [],
-            'distance_to_center': [],
-            'shape_area': [],
-            'intensity_mean': [],
-            'local_thickness': []
-        }
-        
-        # Calculate colony center of mass
-        colony_center = self.calculate_colony_center_of_mass(colony_mask)
-        
-        # Create distance transform for edge calculations
-        distance_transform = distance_transform_edt(colony_mask)
-        
-        # Use larger steps for speed
-        step_size = max(square_size // 2, 5)
-        
-        squares_processed = 0
-        
-        # If we have detected boxes, focus analysis on those regions
-        if detected_boxes:
-            for box_idx, (box_x, box_y, box_w, box_h) in enumerate(detected_boxes):
-                self.console_output.emit(f"      Analyzing box {box_idx+1}/{len(detected_boxes)}")
-                
-                # Validate box dimensions and ensure we have room for squares
-                if box_w < square_size or box_h < square_size:
-                    self.console_output.emit(f"      Skipping box {box_idx+1}: too small for {square_size}px squares")
-                    continue
-                
-                # Calculate safe bounds for analysis
-                end_y = min(box_y + box_h - square_size + 1, height - square_size + 1)
-                end_x = min(box_x + box_w - square_size + 1, width - square_size + 1)
-                
-                if end_y <= box_y or end_x <= box_x:
-                    self.console_output.emit(f"      Skipping box {box_idx+1}: insufficient space for analysis")
-                    continue
-                
-                # Analyze within this box only
-                for y in range(box_y, end_y, step_size):
-                    for x in range(box_x, end_x, step_size):
-                        if self.should_stop:
-                            break
-                            
-                        square_center = (x + square_size//2, y + square_size//2)
-                        
-                        # Quick check - only process if square center is in biofilm
-                        # Validate square center coordinates
-                        if (0 <= square_center[1] < height and 
-                            0 <= square_center[0] < width and
-                            colony_mask[square_center[1], square_center[0]] > 0):
-                            # Extract square regions
-                            image_square = gray_image[y:y+square_size, x:x+square_size]
-                            mask_square = colony_mask[y:y+square_size, x:x+square_size]
-                            
-                            # Only detailed analysis if significant biofilm present
-                            if np.sum(mask_square) > square_size * square_size * 0.1:
-                                # Store global coordinates
-                                results['square_positions'].append(square_center)
-                                
-                                # Calculate parameters based on selection
-                                if 'Local Density' in self.selected_params:
-                                    results['local_density'].append(
-                                        np.sum(mask_square) / (square_size * square_size)
-                                    )
-                                else:
-                                    results['local_density'].append(0)
-                                
-                                if 'Distance to Edge' in self.selected_params:
-                                    results['distance_to_edge'].append(
-                                        distance_transform[square_center[1], square_center[0]]
-                                    )
-                                else:
-                                    results['distance_to_edge'].append(0)
-                                
-                                if 'Distance to Center' in self.selected_params:
-                                    results['distance_to_center'].append(
-                                        self.calc_distance_to_center(square_center, colony_center)
-                                    )
-                                else:
-                                    results['distance_to_center'].append(0)
-                                
-                                results['shape_area'].append(np.sum(mask_square))
-                                
-                                if 'Fluorescence Intensity' in self.selected_params:
-                                    results['intensity_mean'].append(
-                                        self.calc_intensity_mean(image_square, mask_square)
-                                    )
-                                else:
-                                    results['intensity_mean'].append(0)
-                                
-                                if 'Local Texture' in self.selected_params:
-                                    results['local_thickness'].append(
-                                        results['distance_to_edge'][-1]
-                                    )
-                                else:
-                                    results['local_thickness'].append(0)
-                                
-                                squares_processed += 1
-        else:
-            # Fallback to original full-image analysis
-            for y in range(0, height - square_size + 1, step_size):
-                for x in range(0, width - square_size + 1, step_size):
-                    if self.should_stop:
-                        break
-                        
-                    square_center = (x + square_size//2, y + square_size//2)
-                    
-                    # Quick check - only process if square center is in biofilm
-                    if colony_mask[square_center[1], square_center[0]] > 0:
-                        # Extract square regions
-                        image_square = gray_image[y:y+square_size, x:x+square_size]
-                        mask_square = colony_mask[y:y+square_size, x:x+square_size]
-                        
-                        # Only detailed analysis if significant biofilm present
-                        if np.sum(mask_square) > square_size * square_size * 0.1:
-                            results['square_positions'].append(square_center)
-                            
-                            # Calculate parameters based on selection
-                            if 'Local Density' in self.selected_params:
-                                results['local_density'].append(
-                                    np.sum(mask_square) / (square_size * square_size)
-                                )
-                            else:
-                                results['local_density'].append(0)
-                            
-                            if 'Distance to Edge' in self.selected_params:
-                                results['distance_to_edge'].append(
-                                    distance_transform[square_center[1], square_center[0]]
-                                )
-                            else:
-                                results['distance_to_edge'].append(0)
-                            
-                            if 'Distance to Center' in self.selected_params:
-                                results['distance_to_center'].append(
-                                    self.calc_distance_to_center(square_center, colony_center)
-                                )
-                            else:
-                                results['distance_to_center'].append(0)
-                            
-                            results['shape_area'].append(np.sum(mask_square))
-                            
-                            if 'Fluorescence Intensity' in self.selected_params:
-                                results['intensity_mean'].append(
-                                    self.calc_intensity_mean(image_square, mask_square)
-                                )
-                            else:
-                                results['intensity_mean'].append(0)
-                            
-                            if 'Local Texture' in self.selected_params:
-                                results['local_thickness'].append(
-                                    results['distance_to_edge'][-1]
-                                )
-                            else:
-                                results['local_thickness'].append(0)
-                            
-                            squares_processed += 1
-        
-        return results
-    
-    def calc_distance_to_center(self, square_center, colony_center):
-        """Distance to colony centroid"""
-        return np.sqrt((square_center[0] - colony_center[0])**2 + (square_center[1] - colony_center[1])**2)
-    
-    def calc_intensity_mean(self, image_square, mask_square):
-        """Mean intensity of pixels within square"""
-        biofilm_pixels = image_square[mask_square > 0]
-        return np.mean(biofilm_pixels) if len(biofilm_pixels) > 0 else 0
-    
-    def calculate_colony_center_of_mass(self, colony_mask):
-        """Calculate center of mass of colony"""
-        y_coords, x_coords = np.where(colony_mask > 0)
-        if len(x_coords) == 0:
-            return (0, 0)
-        
-        center_x = np.mean(x_coords)
-        center_y = np.mean(y_coords)
-        return (center_x, center_y)
-    
+        """Delegate pure cube metric calculation to BiofilmMetricService."""
+        return BiofilmMetricService.calculate_cube_frame_metrics(
+            image=image_data,
+            colony_mask_and_boxes=colony_mask_and_boxes,
+            square_size=square_size,
+            selected_parameters=self.selected_params,
+            should_stop=lambda: self.should_stop,
+            log=self.console_output.emit,
+        )
+
     def extract_colony_region_direct(self, image_data):
         """Direct red pixel detection for exported colony images"""
         self.console_output.emit(f"      Processing exported image: {image_data.shape}, dtype: {image_data.dtype}")
@@ -1146,6 +962,12 @@ class CubeAnalysisWidget(QWidget):
     def on_analysis_finished(self, all_results):
         """Handle completion of entire analysis"""
         self.analysis_results = all_results
+        from nd2_analyzer.data.image_data import ImageData
+
+        image_data = ImageData.get_instance()
+        if image_data is not None:
+            # Central storage only after worker has been handed results back
+            image_data.biofilm_metric_service.replace_cube_results(all_results)
         self.display_results()
         
         # Populate time point dropdown
@@ -1494,10 +1316,12 @@ class CubeAnalysisWidget(QWidget):
 
             # Get Cell Data
             cell_data = exporter.return_cell_metrics()
-            cell_data = exporter.track_cells_hungarian(cell_data) # TODO: Change to UNETSF
 
             # Convert to cube format
             self.analysis_results = self.convert_cells_to_cube_format(cell_data)
+            image_data.biofilm_metric_service.replace_cube_results(
+                self.analysis_results
+            )
 
             # Update UI
             self.populate_time_combo()

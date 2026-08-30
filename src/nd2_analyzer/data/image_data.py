@@ -11,6 +11,7 @@ import nd2
 import numpy as np
 from pubsub import pub
 
+from nd2_analyzer.analysis.biofilm_metric_service import BiofilmMetricService
 from nd2_analyzer.analysis.segmentation.segmentation_cache import SegmentationCache
 from nd2_analyzer.analysis.segmentation.segmentation_models import SegmentationModels
 from nd2_analyzer.analysis.segmentation.segmentation_service import SegmentationService
@@ -42,6 +43,11 @@ class ImageData:
             cache=self.segmentation_cache,
             models=SegmentationModels(),
             data_getter=self.get,
+        )
+        self.biofilm_metric_service = BiofilmMetricService(
+            segmentation_cache=self.segmentation_cache,
+            image_getter=self.get,
+            voxel_size_getter=lambda: getattr(self, "voxel_size", None),
         )
 
         pub.subscribe(self.on_crop_selected, "crop_selected")
@@ -397,6 +403,8 @@ class ImageData:
             cache_path = base_dir / "segmentation_cache.h5"
             self.segmentation_cache.save(str(cache_path))
 
+        self.biofilm_metric_service.save(base_dir / "biofilm_metrics")
+
         # Save other container data
         container_data = {"image_filename": self.image_filename, "is_image": self.is_image}
 
@@ -494,6 +502,21 @@ class ImageData:
                             models=SegmentationModels(),
                             data_getter=image_data.get,
                         )
+
+                        # Point at the restored cache
+                        image_data.biofilm_metric_service.rebind(
+                            segmentation_cache=image_data.segmentation_cache,
+                            image_getter=image_data.get,
+                            voxel_size_getter=lambda: getattr(
+                                image_data,
+                                "voxel_size",
+                                None,
+                            ),
+                        )
+
+                    image_data.biofilm_metric_service.load(
+                        base_dir / "biofilm_metrics"
+                    )
 
                     return image_data
                 else:
