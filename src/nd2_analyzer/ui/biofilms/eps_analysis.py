@@ -24,7 +24,7 @@ import shutil
 
 
 class EPSAnalysisWidget(QWidget):
-    """Widget for cube-based analysis of exported colony time series"""
+    """Widget for EPS analysis based off of fluorescence frames and colony metrics"""
 
     # Moreau mode uses the best compromise parameters from the Fig. 4b match.
     MOREAU_EPS_CLOSING_RADIUS_PX = 0

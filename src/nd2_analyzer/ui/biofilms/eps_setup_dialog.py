@@ -317,8 +317,8 @@ class EPSSetupDialog(QDialog):
         self.play_timer.setInterval(500)
         self.play_timer.timeout.connect(self.advance_playback)
 
-        print(f"EPS setup dialog layout: vertical_v4_drop_frame_zero | file={__file__}")
-        self.setWindowTitle("EPS Fixed Threshold Setup — Vertical v4")
+        print(f"EPS setup dialog layout: | file={__file__}")
+        self.setWindowTitle("EPS Fixed Threshold Setup")
         self.setMinimumSize(980, 700)
         self.resize(1220, 900)
 
