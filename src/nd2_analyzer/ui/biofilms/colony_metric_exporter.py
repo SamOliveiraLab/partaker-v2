@@ -4,7 +4,6 @@ from typing import List, Dict, Tuple, Optional
 
 from nd2_analyzer.data.experiment import Experiment
 from nd2_analyzer.data.image_data import ImageData
-from nd2_analyzer.analysis.metrics_service import MetricsService
 from nd2_analyzer.ui.biofilms.colony_separator import ColonySeparator
 
 from nd2_analyzer.ui.widgets import SegmentationWidget
@@ -23,20 +22,15 @@ class ColonyMetricExporter:
         self.segmented_storage = segmentation_storage
         self.model_name = model_name
         self.voxel_size = voxel_size
+        self.biofilm_metric_service = image_data.biofilm_metric_service
 
     def build_table(self):
         """Build a table of colony and cell metrics to export to CSV"""
-        cell_data = self.return_cell_metrics()
-        # cell_data = self.track_cells_hungarian(cell_data)
-        #TODO: Add cell tracking to cell data
-        colony_cell_map = self.assign_cells_to_colonies(cell_data, self.colonies)
-        rows = []
-        for colony in self.colonies:
-            rows.append(
-                self.flatten_colony(colony, colony_cell_map, self.voxel_size)
-            )
-            print(f"Processed {len(rows)} colonies in table")
-        return pl.DataFrame(rows)
+        return self.biofilm_metric_service.build_colony_table(
+            self.colonies,
+            model_name=self.model_name,
+            voxel_size=self.voxel_size,
+        )
 
     def export_csv(self, path: str):
         """Exports metrics to CSV"""
@@ -64,271 +58,39 @@ class ColonyMetricExporter:
     def flatten_colony(self, colony: Dict, colony_cell_map: Dict, voxel_size) -> Dict:
         """Summarizes microcolony cluster contour and the cells assigned
         to it, into numerical measurements in dictionary"""
-
-        # records shape of contour around cluster
-        contour = np.array(colony["contour"], dtype=np.int32)
-        area = float(cv2.contourArea(contour))
-        perimeter = float(cv2.arcLength(contour, True))
-        x, y, w, h = cv2.boundingRect(contour)
-
-        # records center of microcolony cluster
-        M = cv2.moments(contour)
-        if M["m00"] != 0:
-            cx = M["m10"] / M["m00"]
-            cy = M["m01"] / M["m00"]
-        else:
-            cx, cy = x + w / 2, y + h / 2
-
-        # records convex hull area & solidity: how compact colony is
-        hull = cv2.convexHull(contour)
-        hull_area = cv2.contourArea(hull)
-        # solidity close to 1 implies compacted cluster, solidity closer to 0 implies branching/irregular colony
-        solidity = area / hull_area if hull_area > 0 else 0
-
-
-        # Generate cell statistics per microcolony cluster
-        cid = colony["colony_id"]
-        cells = colony_cell_map.get(cid, [])
-
-        # checks if voxel size is present
-        has_vox = voxel_size is not None
-
-        if cells:
-            if has_vox:
-                mean_density = np.mean([c["local_density"] for c in cells])
-                #total_biomass = np.sum([c["volume"] for c in cells])
-        else:
-            mean_density = 0
-            #total_biomass = 0
-        cell_count = len(cells)
-
-        #TODO: Refactor and optimize for voxel existence, default should be for voxel if they exist
-        # Change back to oringinal because cell tracking may rely on this, but maybe not
-
-        density = cell_count / area
-
-        # OUTPUT
-        flat = {
-            "colony_id": cid,
-
-            "area": area,
-            "perimeter": perimeter,
-            "solidity": solidity,
-
-            "centroid_x": cx,
-            "centroid_y": cy,
-
-            "bbox_x1": x,
-            "bbox_y1": y,
-            "bbox_x2": x + w,
-            "bbox_y2": y + h,
-
-            "cells_per_colony": cell_count,
-            "cell_density": density,
-            "has_vox": has_vox,
-        }
-
-        area_um2 = area * voxel_size.x * voxel_size.y if has_vox else 0
-        perimeter_um = perimeter * ((voxel_size.x + voxel_size.y) / 2) if has_vox else 0
-        density_um = cell_count / area_um2 if has_vox else 0
-        centroid_x_um = cx * voxel_size.x if has_vox else 0
-        centroid_y_um = cy * voxel_size.y if has_vox else 0
-        mean_density_um = mean_density / cell_count if cell_count > 0 else 0 #check
-
-        flat.update({
-            "area_um2": area_um2,
-            "perimeter_um": perimeter_um,
-            "density_um": density_um,
-            "centroid_x_um": centroid_x_um,
-            "centroid_y_um": centroid_y_um,
-
-            "mean_biofilm_density": mean_density
-        }) #"biomass_um3": total_biomass,
-
-        #if cells:
-        #    times = [c["t"] for c in cells]
-        #    t_span = max(times) - min(times) if len(times) > 1 else 1
-        #    growth_rate = total_biomass / t_span
-        #else:
-        #    growth_rate = 0
-
-        #flat["growth_rate"] = growth_rate
-
-        return flat
+        colony_id = int(colony["colony_id"])
+        return self.biofilm_metric_service.calculate_colony_metrics(
+            colony,
+            colony_cell_map.get(colony_id, []),
+            voxel_size,
+        )
 
     def return_cell_metrics(self):
         """Return metrics for every cell in (later) specified region"""
-        cache = self.segmented_storage.with_model(self.model_name)
-        mmap_array, index_set = cache.mmap_arrays_idx[cache.model_name]
-        from skimage.measure import label, regionprops
-
-        cells = []
-        print("Index set:", len(index_set))
-
-        # process frame-by-frame (not all at once mentally)
-        for idx in index_set:
-            print("Processing idx:", idx)
-            if len(idx) == 3:
-                t, p, c = idx
-            else:
-                t, p = idx
-                c = self.image_data.channel_n
-
-            # get segmented images
-            segmented = cache[(t, p, c, self.model_name)]
-            raw_img = self.image_data.get(t, p, c)
-
-            # get segmented labels and masks
-            labeled = label(segmented)
-            regions = regionprops(labeled)
-
-            # Create TEMP frame list (small)
-            frame_cells = []
-
-            # get individual cell metrics
-            for region in regions:
-                # cell position
-                cx = region.centroid[1]
-                cy = region.centroid[0]
-                # cell area
-                area_px = region.area
-                if self.voxel_size is not None and self.voxel_size.x:
-                    area_um2 = area_px * self.voxel_size.x * self.voxel_size.y
-
-                    # TODO: implement volume for Partaker v3
-                    #volume_um3 = (
-                    #    area_um2 * self.voxel_size.z
-                    #    if self.voxel_size.z else area_um2
-                    #)
-                else:
-                    # fallback to pixel units
-                    area_um2 = area_px
-                    volume_um3 = area_px
-
-
-                # FIXED PATCH EXTRACTION FOR MASK SIZE
-
-                PATCH_SIZE = 64
-                half = PATCH_SIZE // 2
-                cx_int = int(cx)
-                cy_int = int(cy)
-
-                # centered crop coordinates
-                y1 = max(0, cy_int - half)
-                y2 = min(raw_img.shape[0], cy_int + half)
-
-                x1 = max(0, cx_int - half)
-                x2 = min(raw_img.shape[1], cx_int + half)
-
-                # full-cell mask first
-                cell_mask_full = (labeled == region.label).astype(np.uint8)
-
-                # crop local patch
-                cropped_img = raw_img[y1:y2, x1:x2]
-                cropped_mask = cell_mask_full[y1:y2, x1:x2]
-
-
-                # PAD TO 64x64
-                cropped_img = self.pad_to_size(cropped_img, PATCH_SIZE)
-                cropped_mask = self.pad_to_size(cropped_mask, PATCH_SIZE)
-
-                cropped_img = cropped_img[:PATCH_SIZE, :PATCH_SIZE]
-                cropped_mask = cropped_mask[:PATCH_SIZE, :PATCH_SIZE]
-
-                frame_cells.append({
-                    "t": t,
-                    "p": p,
-                    "c": c,
-                    "cell_id": region.label,
-                    "centroid_x": cx,
-                    "centroid_y": cy,
-                    "area_px": area_px,
-                    "area_um2": area_um2,
-                    "mask": cropped_mask,
-                    "raw_img": cropped_img,
-                })
-
-                #frame_cells.append({"volume_um3": volume_um3,})
-
-            # compute density per frame (NOT global)
-            densities = self.compute_local_density(frame_cells)
-
-            for i in range(len(frame_cells)):
-                frame_cells[i]["local_density"] = densities[i]
-
-            # append AFTER processing frame
-            cells.extend(frame_cells)
-
-        print("Successfully returned Cells!")
-        return cells
+        return self.biofilm_metric_service.get_cell_metrics_from_cache(
+            model_name=self.model_name,
+            voxel_size=self.voxel_size,
+            include_patches=True,
+        )
 
     def compute_local_density(self, cells, radius_fraction=0.10):
-        densities = [0] * len(cells)
-
-        first_frame = cells[0]["raw_img"]
-        h, w = first_frame.shape
-        neighborhood_radius = min(h, w) * radius_fraction
-
-        neighborhood_area = np.pi * (neighborhood_radius ** 2)
-
-        # group by time
-        from collections import defaultdict
-        frames = defaultdict(list)
-
-
-        for i, c in enumerate(cells):
-            frames[c["t"]].append((i, c))
-
-        for t, frame_cells in frames.items():
-
-            indices, frame_cells = zip(*frame_cells)
-
-            cells_at_t = frames[t]
-
-            coords = np.array([[c["centroid_x"], c["centroid_y"]] for c in frame_cells])
-            cell_areas = np.array([cell["area_um2"] if self.voxel_size is not None else cell["area_px"] for cell in frame_cells])
-            #volumes = np.array([c["volume_um3"] for c in frame_cells])
-
-            for i, center in enumerate(coords):
-
-                dists = np.linalg.norm(coords - center, axis=1)
-                neighbors = dists <= neighborhood_radius
-                total_neighbor_area = cell_areas[neighbors].sum()
-
-                #total_biomass = volumes[neighbors].sum()
-                #if self.voxel_size is not None and self.voxel_size.z:
-                #        sphere_vol = (4 / 3) * np.pi * (radius_um ** 3)
-                #else:
-                #    sphere_vol = np.pi * (radius_um ** 2)
-                #density_3 = total_biomass / sphere_vol if sphere_vol > 0 else 0
-
-                density = (total_neighbor_area / neighborhood_area if neighborhood_area > 0 else 0)
-
-                densities[indices[i]] = density
-
-        return densities
+        image_shape = (
+            np.asarray(cells[0]["raw_img"]).shape[:2]
+            if cells
+            else None
+        )
+        return self.biofilm_metric_service.calculate_local_density(
+            cells,
+            image_shape=image_shape,
+            voxel_size=self.voxel_size,
+            radius_fraction=radius_fraction,
+        )
 
     def assign_cells_to_colonies(self, cell_data, colonies):
-
-        colony_cell_map = {c["colony_id"]: [] for c in colonies}
-
-        for cell in cell_data:
-
-            x = cell["centroid_x"]
-            y = cell["centroid_y"]
-
-            for colony in colonies:
-
-                contour = np.array(colony["contour"], dtype=np.int32)
-
-                # inside = +1, outside = -1, boundary = 0
-                inside = cv2.pointPolygonTest(contour, (x, y), False)
-
-                if inside >= 0:
-                    colony_cell_map[colony["colony_id"]].append(cell)
-                    break  # assume cell belongs to only one colony
-
-        return colony_cell_map
+        return self.biofilm_metric_service.assign_cells_to_colonies(
+            cell_data,
+            colonies,
+        )
 
     def density_to_grid(self, cells, shape):
 
