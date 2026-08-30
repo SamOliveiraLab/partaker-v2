@@ -1,9 +1,5 @@
 """Batch automatic colony calibration and frame-by-frame verification dialog.
 
-This is a replacement for the original single-frame ``VerifyColoniesDialog``.
-It keeps the legacy constructor and ``colonies_verified`` signal working, while
-adding:
-
 * position and time-range selection
 * optional frame-zero exclusion
 * lazy automatic detection for each selected frame
