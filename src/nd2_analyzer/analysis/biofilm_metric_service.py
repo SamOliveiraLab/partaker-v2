@@ -24,7 +24,11 @@ class BiofilmMetricService:
     EPS_FILENAME = "eps.parquet"
     CELL_FILENAME = "cells.parquet"
     COLONY_FILENAME = "colonies.parquet"
+    COLONY_FRAME_FILENAME = "colony_frames.parquet"
+    COLONY_CELL_FILENAME = "colony_cells.parquet"
+    COLONY_EPS_FILENAME = "colony_eps.parquet"
     CUBE_FILENAME = "cube.parquet"
+    DEFAULT_NEIGHBOR_RADIUS_PX = 150.0
 
     def __init__(
             self,
@@ -39,6 +43,10 @@ class BiofilmMetricService:
         self._eps_rows: dict[tuple, dict] = {}
         self._cell_df = pl.DataFrame()
         self._colony_df = pl.DataFrame()
+        self._colony_frame_df = pl.DataFrame()
+        self._colony_cell_df = pl.DataFrame()
+        self._colony_eps_rows: dict[tuple, dict] = {}
+        self._colonies_by_frame: dict[tuple[int, int, int], list[dict]] = {}
         self._cube_df = pl.DataFrame()
 
     def rebind(
@@ -310,10 +318,20 @@ class BiofilmMetricService:
         rows = []
         for region in regionprops(labeled_image):
             area_px = float(region.area)
+            perimeter_px = float(region.perimeter)
+            roundness = (
+                4.0 * np.pi * area_px / perimeter_px ** 2
+                if perimeter_px > 0
+                else 0.0
+            )
             area_um2 = (
                 area_px * float(voxel_size.x) * float(voxel_size.y)
                 if has_voxel
                 else area_px
+            )
+            perimeter_um = (perimeter_px * (float(voxel_size.x) + float(voxel_size.y)) / 2.0
+                if has_voxel
+                else perimeter_px
             )
             rows.append({
                 "t": int(time),
@@ -324,6 +342,15 @@ class BiofilmMetricService:
                 "centroid_y": float(region.centroid[0]),
                 "area_px": area_px,
                 "area_um2": area_um2,
+                "perimeter_px": perimeter_px,
+                "perimeter_um": perimeter_um,
+                "roundness": float(roundness),
+                "eccentricity": float(region.eccentricity),
+                "solidity": float(region.solidity),
+                "major_axis_length_px": float(region.major_axis_length),
+                "minor_axis_length_px": float(region.minor_axis_length),
+                "equivalent_diameter_px": float(region.equivalent_diameter_area),
+                "orientation": float(region.orientation),
             })
         return rows
 
@@ -466,6 +493,12 @@ class BiofilmMetricService:
         return contour
 
     @classmethod
+    def _colony_mask(cls, colony: dict, image_shape: tuple[int, int]) -> np.ndarray:
+        mask = np.zeros(image_shape, dtype=np.uint8)
+        cv2.fillPoly(mask, [cls._colony_contour(colony)], 1)
+        return mask.astype(bool)
+
+    @classmethod
     def assign_cells_to_colonies(
             cls,
             cells: Iterable[dict],
@@ -500,9 +533,22 @@ class BiofilmMetricService:
         else:
             center_x, center_y = x + width / 2, y + height / 2
 
+        # Reports Geometric Shape of Micro-colony structures
         hull_area = float(cv2.contourArea(cv2.convexHull(contour)))
         solidity = area / hull_area if hull_area else 0.0
+        roundness = 4.0 * np.pi * area / perimeter ** 2 if perimeter else 0.0
+
+        local_contour = contour - np.asarray([x, y], dtype=np.int32)
+        local_mask = np.zeros((max(height, 1), max(width, 1)), dtype=np.uint8)
+        cv2.fillPoly(local_mask, [local_contour], 1)
+        regions = regionprops(local_mask)
+        eccentricity = float(regions[0].eccentricity) if regions else 0.0
+
+        # Reports Cell counts in each Micro-colony
         cell_count = len(assigned_cells)
+        cell_biomass_area_px = float(sum(float(cell.get("area_px", 0.0)) for cell in assigned_cells))
+        # Reports proxy biomass for each Micro-colony if available
+        cell_biomass_area_um2 = float(sum(float(cell.get("area_um2", 0.0)) for cell in assigned_cells))
         mean_density = (
             float(np.mean([cell.get("local_density", 0.0) for cell in assigned_cells]))
             if assigned_cells
@@ -524,11 +570,15 @@ class BiofilmMetricService:
             if has_voxel
             else 0.0
         )
-        return {
+        metrics = {
             "colony_id": int(colony["colony_id"]),
             "area": area,
+            "area_px": area,
             "perimeter": perimeter,
+            "perimeter_px": perimeter,
+            "roundness": float(roundness),
             "solidity": solidity,
+            "eccentricity": eccentricity,
             "centroid_x": float(center_x),
             "centroid_y": float(center_y),
             "bbox_x1": int(x),
@@ -537,6 +587,9 @@ class BiofilmMetricService:
             "bbox_y2": int(y + height),
             "cells_per_colony": cell_count,
             "cell_density": cell_count / area if area else 0.0,
+            "cell_biomass_area_px": cell_biomass_area_px,
+            "cell_biomass_area_um2": cell_biomass_area_um2,
+            "cell_biomass_fraction": cell_biomass_area_px / area if area else 0.0,
             "has_vox": bool(has_voxel),
             "area_um2": area_um2,
             "perimeter_um": perimeter_um,
@@ -545,6 +598,289 @@ class BiofilmMetricService:
             "centroid_y_um": center_y * float(voxel_size.y) if has_voxel else 0.0,
             "mean_biofilm_density": mean_density,
         }
+        for key in ("position", "time", "channel", "source"):
+            if key in colony:
+                metrics[key] = colony[key]
+        return metrics
+
+    @staticmethod
+    def _add_colony_spatial_metrics(
+            rows: list[dict],
+            *,
+            neighbor_radius_px: float,
+            voxel_size=None,
+    ) -> None:
+        """Add within-frame nearest-neighbor distance and neighbor counts."""
+        if not rows:
+            return
+
+        coordinates = np.asarray([
+            [row["centroid_x"], row["centroid_y"]] for row in rows
+        ], dtype=np.float64)
+        deltas = coordinates[:, np.newaxis, :] - coordinates[np.newaxis, :, :]
+        distances_px = np.linalg.norm(deltas, axis=2)
+        np.fill_diagonal(distances_px, np.inf)
+
+        has_voxel = (
+            voxel_size is not None
+            and getattr(voxel_size, "x", None)
+            and getattr(voxel_size, "y", None)
+        )
+        distances_um = None
+        if has_voxel:
+            physical_coordinates = coordinates * np.asarray([
+                float(voxel_size.x),
+                float(voxel_size.y),
+            ])
+            physical_deltas = (
+                physical_coordinates[:, np.newaxis, :]
+                - physical_coordinates[np.newaxis, :, :]
+            )
+            distances_um = np.linalg.norm(physical_deltas, axis=2)
+            np.fill_diagonal(distances_um, np.inf)
+
+        for index, row in enumerate(rows):
+            nearest_px = float(np.min(distances_px[index]))
+            row["nearest_colony_distance_px"] = (
+                nearest_px if np.isfinite(nearest_px) else None
+            )
+            row["neighbor_count"] = int(
+                np.count_nonzero(distances_px[index] <= neighbor_radius_px)
+            )
+            row["neighbor_radius_px"] = float(neighbor_radius_px)
+            if distances_um is not None:
+                nearest_um = float(np.min(distances_um[index]))
+                row["nearest_colony_distance_um"] = (
+                    nearest_um if np.isfinite(nearest_um) else None
+                )
+            else:
+                row["nearest_colony_distance_um"] = None
+
+    @staticmethod
+    def _membership_row(colony: dict, cell: dict) -> dict:
+        """Create one scalar row linking a segmented cell to a microcolony."""
+        row = {
+            "position": int(colony["position"]),
+            "time": int(colony["time"]),
+            "colony_channel": int(colony["channel"]),
+            "colony_id": int(colony["colony_id"]),
+            "cell_channel": int(cell.get("c", 0)),
+            "cell_id": int(cell["cell_id"]),
+        }
+        for key, value in cell.items():
+            if key in {"t", "p", "c", "cell_id", "raw_img", "mask"}:
+                continue
+            if not isinstance(value, np.ndarray):
+                row[key] = value
+        return row
+
+    def replace_microcolony_candidates(
+            self,
+            colonies_by_frame: dict[tuple[int, int, int], Iterable[dict]],
+            *,
+            model_name: str,
+            voxel_size=None,
+            neighbor_radius_px: float = DEFAULT_NEIGHBOR_RADIUS_PX,
+    ) -> pl.DataFrame:
+        """Replace candidates and calculate time-resolved microcolony metrics.
+
+        Input keys use the verifier's canonical order: ``(position, time, channel)``.
+        Colony identifiers are frame-local and are never treated as track IDs.
+        """
+        voxel_size = voxel_size if voxel_size is not None else self.get_voxel_size()
+        normalized: dict[tuple[int, int, int], list[dict]] = {}
+        for raw_key, raw_colonies in colonies_by_frame.items():
+            if len(raw_key) != 3:
+                raise ValueError("Microcolony frame keys must be (position, time, channel).")
+            position, time, channel = (int(value) for value in raw_key)
+            frame_colonies = []
+            for index, raw_colony in enumerate(raw_colonies, start=1):
+                colony = dict(raw_colony)
+                colony["position"] = position
+                colony["time"] = time
+                colony["channel"] = channel
+                colony["colony_id"] = int(colony.get("colony_id") or index)
+                if isinstance(colony.get("contour"), np.ndarray):
+                    colony["contour"] = colony["contour"].copy()
+                if isinstance(colony.get("mask"), np.ndarray):
+                    colony["mask"] = colony["mask"].copy()
+                frame_colonies.append(colony)
+            normalized[(position, time, channel)] = frame_colonies
+
+        all_cells = self.get_cell_metrics_from_cache(
+            model_name=model_name,
+            voxel_size=voxel_size,
+            include_patches=True,
+        )
+        cells_by_frame: dict[tuple[int, int], list[dict]] = defaultdict(list)
+        for cell in all_cells:
+            cells_by_frame[(int(cell["t"]), int(cell["p"]))].append(cell)
+
+        cache = self.segmentation_cache.with_model(model_name)
+        _mmap_array, index_set = cache.mmap_arrays_idx[cache.model_name]
+        cell_masks_by_frame: dict[tuple[int, int], np.ndarray] = {}
+        for index in sorted(index_set):
+            if len(index) == 3:
+                cell_time, cell_position, cell_channel = index
+            else:
+                cell_time, cell_position = index
+                cell_channel = 0
+            segmented = np.asarray(
+                cache[(cell_time, cell_position, cell_channel, model_name)]
+            ) > 0
+            mask_key = (int(cell_time), int(cell_position))
+            if mask_key in cell_masks_by_frame:
+                cell_masks_by_frame[mask_key] |= segmented
+            else:
+                cell_masks_by_frame[mask_key] = segmented.copy()
+
+        frame_rows = []
+        colony_rows = []
+        membership_rows = []
+        for (position, time, channel), colonies in sorted(normalized.items()):
+            frame_rows.append({
+                "position": position,
+                "time": time,
+                "channel": channel,
+                "colony_count": len(colonies),
+                "neighbor_radius_px": float(neighbor_radius_px),
+            })
+            frame_cells = cells_by_frame.get((time, position), [])
+            colony_cell_map = self.assign_cells_to_colonies(frame_cells, colonies)
+            current_rows = []
+            for colony in colonies:
+                assigned_cells = colony_cell_map[int(colony["colony_id"])]
+                colony_row = self.calculate_colony_metrics(
+                    colony, assigned_cells, voxel_size
+                )
+                cell_mask = cell_masks_by_frame.get((time, position))
+                if cell_mask is not None:
+                    colony_mask = self._colony_mask(colony, cell_mask.shape)
+                    cell_biomass_area_px = int(
+                        np.count_nonzero(cell_mask & colony_mask)
+                    )
+                    colony_area_pixels = int(np.count_nonzero(colony_mask))
+                    colony_row["cell_biomass_area_px"] = cell_biomass_area_px
+                    colony_row["cell_biomass_area_um2"] = (
+                        cell_biomass_area_px
+                        * float(voxel_size.x)
+                        * float(voxel_size.y)
+                        if voxel_size is not None
+                        and getattr(voxel_size, "x", None)
+                        and getattr(voxel_size, "y", None)
+                        else float(cell_biomass_area_px)
+                    )
+                    colony_row["cell_biomass_fraction"] = (
+                        cell_biomass_area_px / colony_area_pixels
+                        if colony_area_pixels else 0.0
+                    )
+                current_rows.append(colony_row)
+                membership_rows.extend(
+                    self._membership_row(colony, cell) for cell in assigned_cells
+                )
+            self._add_colony_spatial_metrics(
+                current_rows,
+                neighbor_radius_px=float(neighbor_radius_px),
+                voxel_size=voxel_size,
+            )
+            colony_rows.extend(current_rows)
+
+        self._colonies_by_frame = normalized
+        self._colony_frame_df = self._dataframe_from_rows(frame_rows)
+        self._colony_df = self._dataframe_from_rows(colony_rows)
+        self._colony_cell_df = self._dataframe_from_rows(membership_rows)
+        # Colony IDs can change after a new verification pass, so old local EPS
+        # associations are no longer valid and must be recomputed.
+        self._colony_eps_rows.clear()
+        return self._colony_df.clone()
+
+    def calculate_microcolony_eps_metrics(
+            self,
+            *,
+            time: int,
+            position: int,
+            eps_channel: int,
+            analysis_method: str,
+            raw_eps_frame: np.ndarray,
+            eps_mask: np.ndarray | None,
+            voxel_size=None,
+    ) -> list[dict]:
+        """Measure local EPS signal for verified microcolonies in one frame."""
+        raw_eps = np.asarray(raw_eps_frame, dtype=np.float32)
+        if raw_eps.ndim != 2:
+            raise ValueError("Local microcolony EPS metrics require a 2-D frame.")
+        if eps_mask is not None and np.asarray(eps_mask).shape != raw_eps.shape:
+            raise ValueError("EPS mask and raw EPS frame must have identical shapes.")
+
+        voxel_size = voxel_size if voxel_size is not None else self.get_voxel_size()
+        has_voxel = (
+            voxel_size is not None
+            and getattr(voxel_size, "x", None)
+            and getattr(voxel_size, "y", None)
+        )
+        pixel_area_um2 = (
+            float(voxel_size.x) * float(voxel_size.y) if has_voxel else 0.0
+        )
+        matching_frames = [
+            (frame_key, colonies)
+            for frame_key, colonies in self._colonies_by_frame.items()
+            if frame_key[0] == int(position) and frame_key[1] == int(time)
+        ]
+
+        rows = []
+        for (_position, _time, colony_channel), colonies in matching_frames:
+            for colony in colonies:
+                colony_mask = self._colony_mask(colony, raw_eps.shape)
+                finite_colony_mask = colony_mask & np.isfinite(raw_eps)
+
+                if eps_mask is None:
+                    local_mask = finite_colony_mask
+                    eps_area_px = None
+                    eps_fraction = None
+                else:
+                    local_mask = (
+                        colony_mask
+                        & np.asarray(eps_mask, dtype=bool)
+                        & np.isfinite(raw_eps)
+                    )
+                    eps_area_px = int(np.count_nonzero(local_mask))
+                    colony_area_px = int(np.count_nonzero(colony_mask))
+                    eps_fraction = (
+                        eps_area_px / colony_area_px if colony_area_px else 0.0
+                    )
+
+                values = raw_eps[local_mask]
+                row = {
+                    "position": int(position),
+                    "time": int(time),
+                    "colony_channel": int(colony_channel),
+                    "colony_id": int(colony["colony_id"]),
+                    "eps_channel": int(eps_channel),
+                    "analysis_method": str(analysis_method),
+                    "eps_biomass_area_px": eps_area_px,
+                    "eps_biomass_area_um2": (
+                        eps_area_px * pixel_area_um2
+                        if eps_area_px is not None and has_voxel
+                        else None
+                    ),
+                    "eps_fraction_of_colony": eps_fraction,
+                    "eps_mean_intensity": (
+                        float(np.mean(values, dtype=np.float64))
+                        if values.size else 0.0
+                    ),
+                    "eps_integrated_intensity": (
+                        float(np.sum(values, dtype=np.float64))
+                        if values.size else 0.0
+                    ),
+                    "eps_mask_used": eps_mask is not None,
+                }
+                key = (
+                    row["position"], row["time"], row["colony_channel"],
+                    row["colony_id"], row["eps_channel"], row["analysis_method"],
+                )
+                self._colony_eps_rows[key] = row
+                rows.append(dict(row))
+        return rows
 
     def build_colony_table(
             self,
@@ -553,6 +889,13 @@ class BiofilmMetricService:
             model_name: str,
             voxel_size=None,
     ) -> pl.DataFrame:
+        if isinstance(colonies, dict):
+            return self.replace_microcolony_candidates(
+                colonies,
+                model_name=model_name,
+                voxel_size=voxel_size,
+            )
+
         colonies = list(colonies)
         voxel_size = voxel_size if voxel_size is not None else self.get_voxel_size()
         cells = self.get_cell_metrics_from_cache(
@@ -577,6 +920,17 @@ class BiofilmMetricService:
 
     def get_colony_results(self) -> pl.DataFrame:
         return self._colony_df.clone()
+
+    def get_colony_frame_results(self) -> pl.DataFrame:
+        return self._colony_frame_df.clone()
+
+    def get_colony_cell_results(self) -> pl.DataFrame:
+        return self._colony_cell_df.clone()
+
+    def get_colony_eps_results(self) -> pl.DataFrame:
+        return self._dataframe_from_rows(
+            self._colony_eps_rows[key] for key in sorted(self._colony_eps_rows)
+        )
 
     # ------------------------------------------------------------------
     # Cube calculations and storage
@@ -745,6 +1099,9 @@ class BiofilmMetricService:
             self.EPS_FILENAME: self.get_eps_results(),
             self.CELL_FILENAME: self._cell_df,
             self.COLONY_FILENAME: self._colony_df,
+            self.COLONY_FRAME_FILENAME: self._colony_frame_df,
+            self.COLONY_CELL_FILENAME: self._colony_cell_df,
+            self.COLONY_EPS_FILENAME: self.get_colony_eps_results(),
             self.CUBE_FILENAME: self._cube_df,
         }
         nonempty = {name: table for name, table in tables.items() if not table.is_empty()}
@@ -765,11 +1122,27 @@ class BiofilmMetricService:
         for filename, attribute in (
             (self.CELL_FILENAME, "_cell_df"),
             (self.COLONY_FILENAME, "_colony_df"),
+            (self.COLONY_FRAME_FILENAME, "_colony_frame_df"),
+            (self.COLONY_CELL_FILENAME, "_colony_cell_df"),
             (self.CUBE_FILENAME, "_cube_df"),
         ):
             path = folder / filename
             if path.exists():
                 setattr(self, attribute, pl.read_parquet(path))
+        colony_eps_path = folder / self.COLONY_EPS_FILENAME
+        if colony_eps_path.exists():
+            rows = pl.read_parquet(colony_eps_path).to_dicts()
+            self._colony_eps_rows = {
+                (
+                    int(row["position"]),
+                    int(row["time"]),
+                    int(row["colony_channel"]),
+                    int(row["colony_id"]),
+                    int(row["eps_channel"]),
+                    str(row["analysis_method"]),
+                ): row
+                for row in rows
+            }
 
     @staticmethod
     def _dataframe_from_rows(rows: Iterable[dict]) -> pl.DataFrame:

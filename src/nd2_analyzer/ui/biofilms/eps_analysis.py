@@ -4456,6 +4456,16 @@ class EPSAnalysisWidget(QWidget):
             }
 
         metrics.update(extra_metrics)
+        self.biofilm_metric_service.calculate_microcolony_eps_metrics(
+            time=time,
+            position=position,
+            eps_channel=channel,
+            analysis_method=str(
+                metrics.get("analysis_method", self.get_analysis_method())
+            ),
+            raw_eps_frame=image,
+            eps_mask=None if raw_intensity_mode else eps_mask,
+        )
         return metrics
 
     def should_export_visuals_for_position(self, position: int) -> bool:
