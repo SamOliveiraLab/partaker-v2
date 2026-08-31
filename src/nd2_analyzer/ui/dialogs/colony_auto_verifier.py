@@ -1,9 +1,5 @@
 """Batch automatic colony calibration and frame-by-frame verification dialog.
 
-This is a replacement for the original single-frame ``VerifyColoniesDialog``.
-It keeps the legacy constructor and ``colonies_verified`` signal working, while
-adding:
-
 * position and time-range selection
 * optional frame-zero exclusion
 * lazy automatic detection for each selected frame
@@ -13,7 +9,7 @@ adding:
 * undo and reset-current-frame controls
 * reviewed / edited / automatic frame status
 * batch output keyed by ``(position, time, channel)``
-* export of one overlay image per accepted frame
+* export of one overlay image per accepted frame and one GIF per position
 
 The dialog deliberately preserves manually edited frames when global detection
 sliders change. Unedited frames are recalculated with the new parameters.
@@ -28,6 +24,7 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 import cv2
+import imageio.v2 as imageio
 import numpy as np
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (
@@ -2077,8 +2074,10 @@ class VerifyColoniesDialog(QDialog):
                 self.progress_bar.setValue(int(round(index / len(keys) * 90)))
 
             exported_paths = self.export_colony_overlays(results)
+            gif_paths = list(getattr(self, "last_overlay_gif_paths", ()))
             params = self.final_params()
             params["overlay_paths"] = tuple(str(path) for path in exported_paths)
+            params["overlay_gif_paths"] = tuple(str(path) for path in gif_paths)
             self.progress_bar.setValue(100)
 
             current_key = self.current_frame_key()
@@ -2092,7 +2091,8 @@ class VerifyColoniesDialog(QDialog):
             self.colonies_verified.emit(current_colonies, params)
             self.status_label.setText(
                 f"Accepted {len(results)} frames and exported "
-                f"{len(exported_paths)} colony overlays."
+                f"{len(exported_paths)} colony overlays plus "
+                f"{len(gif_paths)} position GIF(s)."
             )
             self.accept()
         except Exception as error:
@@ -2109,9 +2109,11 @@ class VerifyColoniesDialog(QDialog):
     def export_colony_overlays(
         self, results: dict[FrameKey, list[dict]]
     ) -> list[Path]:
-        output_dir = Path("analysis_results") / "auto_colony_selector"
+        project_root = Path(__file__).resolve().parents[4]
+        output_dir = project_root / "analysis_results" / "auto_colony_selector"
         output_dir.mkdir(parents=True, exist_ok=True)
         saved: list[Path] = []
+        frames_by_position: dict[tuple[int, int], list[tuple[int, np.ndarray]]] = {}
 
         for key, colonies in results.items():
             state = self.get_state(key)
@@ -2126,6 +2128,28 @@ class VerifyColoniesDialog(QDialog):
             save_path = output_dir / f"pos{position}_t{time}_c{channel}.png"
             cv2.imwrite(str(save_path), cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
             saved.append(save_path)
+            frames_by_position.setdefault((position, channel), []).append(
+                (time, rgb.copy())
+            )
+
+        gif_paths = []
+        for (position, channel), timed_frames in sorted(frames_by_position.items()):
+            frames = [
+                frame
+                for _time, frame in sorted(timed_frames, key=lambda item: item[0])
+            ]
+            if not frames:
+                continue
+            gif_path = output_dir / f"pos{position}_c{channel}_colony_overlays.gif"
+            imageio.mimsave(
+                gif_path,
+                frames,
+                duration=0.5,
+                loop=0,
+            )
+            gif_paths.append(gif_path)
+
+        self.last_overlay_gif_paths = tuple(gif_paths)
         return saved
 
     # Backward-compatible method name retained for callers/tests.

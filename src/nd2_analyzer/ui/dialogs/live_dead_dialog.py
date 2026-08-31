@@ -1,12 +1,12 @@
-"""Interactive calibration dialog for Partaker fixed EPS thresholding.
+"""Interactive calibration dialog for Partaker fixed Intensity thresholding.
 
 The dialog previews a single, globally consistent fixed threshold without
 creating masks for every selected frame.  It estimates one shared raw-to-uint8
 mapping from representative frames, then reuses that mapping for the large
 preview and the five validation thumbnails.
 
-The accepted :class:`EPSSetupResult` is intended to be passed back to
-``EPSAnalysisWidget`` so the full analysis uses the exact same positions, time
+The accepted :class:`LiveDeadResult` is intended to be passed back to
+``LiveDeadAnalysisWidget`` so the full analysis uses the exact same positions, time
 range, threshold, smoothing, and intensity mapping that the user approved.
 """
 
@@ -47,14 +47,15 @@ from PySide6.QtWidgets import (
 
 
 @dataclass(frozen=True)
-class EPSSetupResult:
-    """Settings approved in :class:`EPSSetupDialog`."""
+class LiveDeadResult:
+    """Settings approved in :class:`LiveDeadDialog`."""
 
     positions: tuple[int, ...]
     time_start: int
     time_end: int
     drop_frame_zero: bool
-    eps_channel: int
+    live_channel: int
+    dead_channel: int
     threshold_uint8: int
     processing_black_point_raw: float
     processing_white_point_raw: float
@@ -62,7 +63,6 @@ class EPSSetupResult:
     preview_position: int
     representative_timepoints: tuple[int, ...]
     sampled_frame_keys: tuple[tuple[int, int, int], ...]
-    overlay_color_name: str = "green"
     capture_interval_value: float = 24.0
     capture_interval_unit: str = "hr"
     processing_window_source: str = (
@@ -194,35 +194,30 @@ class ZoomableImageView(QGraphicsView):
         event.accept()
 
 
-class EPSSetupDialog(QDialog):
-    """Calibrate a fixed Partaker EPS threshold on representative frames."""
+class LiveDeadDialog(QDialog):
+    """Calibrate a fixed Partaker live fluorescence intensity threshold on representative frames."""
 
     setup_accepted = Signal(object)
 
     DEFAULT_THRESHOLD = 40
     DEFAULT_OVERLAY_ALPHA_PERCENT = 45
     DEFAULT_PREVIEW_COUNT = 5
-    OVERLAY_COLOR_OPTIONS = ("Red", "Blue", "Yellow", "Green")
-    OVERLAY_COLOR_RGB = {
-        "red": (255, 0, 0),
-        "blue": (0, 153, 255),
-        "yellow": (255, 221, 0),
-        "green": (0, 255, 0),
-    }
+    LIVE_OVERLAY_RGB = (0, 255, 0)
+    DEAD_OVERLAY_RGB = (255, 0, 0)
     TIME_UNIT_OPTIONS = ("ms", "sec", "min", "hr", "day")
 
     def __init__(
         self,
         *,
         image_data,
-        eps_channel: int,
+        live_channel: int,
+        dead_channel: int,
         selected_positions: Sequence[int] | None = None,
         time_start: int = 0,
         time_end: int | None = None,
         initial_drop_frame_zero: bool = False,
         initial_threshold: int = DEFAULT_THRESHOLD,
         smoothing_sigma: float = 1.5,
-        initial_overlay_color: str = "Green",
         initial_capture_interval_value: float = 24.0,
         initial_capture_interval_unit: str = "hr",
         parent: QWidget | None = None,
@@ -230,7 +225,7 @@ class EPSSetupDialog(QDialog):
         super().__init__(parent)
 
         if image_data is None or getattr(image_data, "data", None) is None:
-            raise ValueError("EPSSetupDialog requires loaded image data.")
+            raise ValueError("LiveDeadDialog requires loaded image data.")
 
         shape = tuple(int(value) for value in image_data.data.shape)
         if len(shape) < 3:
@@ -243,20 +238,22 @@ class EPSSetupDialog(QDialog):
         self.time_count = shape[0]
         self.position_count = shape[1]
         self.channel_count = shape[2]
-        self.eps_channel = int(eps_channel)
+        self.live_channel = int(live_channel)
+        self.dead_channel = int(dead_channel)
 
-        if not 0 <= self.eps_channel < self.channel_count:
+        if not 0 <= self.live_channel < self.channel_count:
             raise ValueError(
-                f"EPS channel {self.eps_channel} is outside 0.."
+                f"Live Fluorescence channel {self.live_channel} is outside 0.."
                 f"{self.channel_count - 1}."
             )
-
+        if not 0 <= self.dead_channel < self.channel_count:
+            raise ValueError(
+                f"Dead Fluorescence channel {self.dead_channel} is outside 0.."
+                f"{self.channel_count - 1}."
+            )
         self.initial_threshold = int(np.clip(initial_threshold, 0, 255))
         self.initial_drop_frame_zero = bool(initial_drop_frame_zero)
         self.smoothing_sigma = float(max(0.0, smoothing_sigma))
-        self.initial_overlay_color = self.normalize_overlay_color_name(
-            initial_overlay_color
-        ).title()
         self.initial_capture_interval_value = float(
             max(0.001, initial_capture_interval_value)
         )
@@ -289,7 +286,7 @@ class EPSSetupDialog(QDialog):
         self.processing_white_point_raw: float | None = None
         self.sampled_frame_keys: tuple[tuple[int, int, int], ...] = ()
         self.representative_timepoints: tuple[int, ...] = ()
-        self.result: EPSSetupResult | None = None
+        self.result: LiveDeadResult | None = None
 
         # The cache holds only a small number of on-demand raw frames.
         self._raw_frame_cache: OrderedDict[
@@ -317,8 +314,8 @@ class EPSSetupDialog(QDialog):
         self.play_timer.setInterval(500)
         self.play_timer.timeout.connect(self.advance_playback)
 
-        print(f"EPS setup dialog layout: | file={__file__}")
-        self.setWindowTitle("EPS Fixed Threshold Setup")
+        print(f"Live-Dead dialog layout: | file={__file__}")
+        self.setWindowTitle("Live-Dead Fixed Threshold Setup")
         self.setMinimumSize(980, 700)
         self.resize(1220, 900)
 
@@ -327,23 +324,6 @@ class EPSSetupDialog(QDialog):
         self.run_button.setEnabled(False)
         QTimer.singleShot(0, self.refresh_scope)
 
-    @classmethod
-    def normalize_overlay_color_name(cls, value: str | None) -> str:
-        color_name = str(value or "green").strip().lower()
-        if color_name not in cls.OVERLAY_COLOR_RGB:
-            return "green"
-        return color_name
-
-    def current_overlay_color_name(self) -> str:
-        if not hasattr(self, "overlay_color_combo"):
-            return self.normalize_overlay_color_name(self.initial_overlay_color)
-        return self.normalize_overlay_color_name(
-            self.overlay_color_combo.currentText()
-        )
-
-    def current_overlay_color_rgb(self) -> tuple[int, int, int]:
-        return self.OVERLAY_COLOR_RGB[self.current_overlay_color_name()]
-
     # ------------------------------------------------------------------
     # UI construction
     # ------------------------------------------------------------------
@@ -351,16 +331,16 @@ class EPSSetupDialog(QDialog):
     def init_ui(self) -> None:
         main_layout = QVBoxLayout(self)
 
-        heading = QLabel("Partaker EPS Fixed Threshold Calibration")
+        heading = QLabel("Live-Dead Fluorescence Intensity Threshold")
         heading.setStyleSheet(
             "font-size: 16px; font-weight: bold; color: #2196F3;"
         )
         main_layout.addWidget(heading)
 
         explanation = QLabel(
-            "Choose the analysis scope, inspect a fixed EPS mask on individual "
-            "frames, and validate it on five evenly spaced timepoints. The "
-            "selected frames are scanned once to establish one shared min/max "
+            "Choose the analysis scope, inspect paired fixed-threshold Live and "
+            "Dead masks, and validate them on five evenly spaced timepoints. Both "
+            "channels are scanned together to establish one shared min/max "
             "intensity mapping, but masks are generated only for previews until "
             "you confirm and run the analysis."
         )
@@ -374,7 +354,7 @@ class EPSSetupDialog(QDialog):
         main_layout.addWidget(self.create_time_navigation_group())
         main_layout.addWidget(self.create_validation_group())
 
-        self.status_label = QLabel("Preparing representative EPS previews...")
+        self.status_label = QLabel("Preparing representative Live-Dead previews...")
         self.status_label.setStyleSheet(
             "color: #666; font-style: italic; padding: 4px;"
         )
@@ -462,9 +442,9 @@ class EPSSetupDialog(QDialog):
             "Exclude frame 0 from previews and analysis"
         )
         self.drop_frame_zero_checkbox.setToolTip(
-            "When enabled, T=0 is not used to estimate the shared EPS "
+            "When enabled, T=0 is not used to estimate the shared Live-Dead "
             "intensity window, is not shown in the preview controls, and is "
-            "not sent to the full Partaker EPS processing queue."
+            "not sent to the full Live-Dead processing queue."
         )
         self.drop_frame_zero_checkbox.toggled.connect(
             self.schedule_scope_refresh
@@ -499,8 +479,10 @@ class EPSSetupDialog(QDialog):
         )
         scope_form.addRow("Preview position:", self.preview_position_combo)
 
-        eps_channel_label = QLabel(f"Channel {self.eps_channel}")
-        scope_form.addRow("EPS preview:", eps_channel_label)
+        live_channel_label = QLabel(f"Channel {self.live_channel}")
+        scope_form.addRow("Live preview:", live_channel_label)
+        dead_channel_label = QLabel(f"Channel {self.dead_channel}")
+        scope_form.addRow("Dead preview:", dead_channel_label)
 
         layout.addLayout(scope_form)
         layout.addStretch(1)
@@ -518,20 +500,11 @@ class EPSSetupDialog(QDialog):
         toolbar.addWidget(QLabel("View:"))
 
         self.view_mode_combo = QComboBox()
-        self.view_mode_combo.addItems(["Overlay", "Raw EPS", "Mask"])
+        self.view_mode_combo.addItems(["Overlay", "Raw Fluorescence", "Mask"])
         self.view_mode_combo.currentTextChanged.connect(
             self.schedule_preview_update
         )
         toolbar.addWidget(self.view_mode_combo)
-
-        toolbar.addWidget(QLabel("Overlay color:"))
-        self.overlay_color_combo = QComboBox()
-        self.overlay_color_combo.addItems(list(self.OVERLAY_COLOR_OPTIONS))
-        self.overlay_color_combo.setCurrentText(self.initial_overlay_color)
-        self.overlay_color_combo.currentTextChanged.connect(
-            self.on_overlay_color_changed
-        )
-        toolbar.addWidget(self.overlay_color_combo)
 
         fit_button = QPushButton("Fit Image")
         fit_button.setToolTip(
@@ -545,9 +518,36 @@ class EPSSetupDialog(QDialog):
         toolbar.addWidget(self.frame_info_label, 1)
         layout.addLayout(toolbar)
 
-        self.image_view = ZoomableImageView()
-        self.image_view.setMinimumSize(520, 320)
-        layout.addWidget(self.image_view, 1)
+        paired_view = QWidget()
+        paired_layout = QHBoxLayout(paired_view)
+        paired_layout.setContentsMargins(0, 0, 0, 0)
+        paired_layout.setSpacing(6)
+
+        live_panel = QWidget()
+        live_layout = QVBoxLayout(live_panel)
+        live_layout.setContentsMargins(0, 0, 0, 0)
+        live_label = QLabel("Live")
+        live_label.setStyleSheet("font-weight: bold; color: #00aa00;")
+        live_label.setAlignment(Qt.AlignCenter)
+        live_layout.addWidget(live_label)
+        self.live_image_view = ZoomableImageView()
+        self.live_image_view.setMinimumSize(250, 320)
+        live_layout.addWidget(self.live_image_view, 1)
+
+        dead_panel = QWidget()
+        dead_layout = QVBoxLayout(dead_panel)
+        dead_layout.setContentsMargins(0, 0, 0, 0)
+        dead_label = QLabel("Dead")
+        dead_label.setStyleSheet("font-weight: bold; color: #cc0000;")
+        dead_label.setAlignment(Qt.AlignCenter)
+        dead_layout.addWidget(dead_label)
+        self.dead_image_view = ZoomableImageView()
+        self.dead_image_view.setMinimumSize(250, 320)
+        dead_layout.addWidget(self.dead_image_view, 1)
+
+        paired_layout.addWidget(live_panel, 1)
+        paired_layout.addWidget(dead_panel, 1)
+        layout.addWidget(paired_view, 1)
         return widget
 
     def create_threshold_panel(self) -> QGroupBox:
@@ -590,7 +590,7 @@ class EPSSetupDialog(QDialog):
 
         options_row = QHBoxLayout()
         options_row.setSpacing(7)
-        options_row.addWidget(QLabel("Gaussian sigma:"))
+        options_row.addWidget(QLabel("Gaussian sigma (0 = off):"))
 
         self.sigma_spin = QDoubleSpinBox()
         self.sigma_spin.setRange(0.0, 20.0)
@@ -620,26 +620,33 @@ class EPSSetupDialog(QDialog):
         readout_row = QHBoxLayout()
         readout_row.setSpacing(8)
 
-        self.foreground_label = QLabel("Foreground: —")
-        self.foreground_label.setWordWrap(True)
-        self.foreground_label.setStyleSheet(
+        self.live_foreground_label = QLabel("Live foreground: —")
+        self.live_foreground_label.setWordWrap(True)
+        self.live_foreground_label.setStyleSheet(
             "padding: 4px; border: 1px solid #555;"
         )
-        readout_row.addWidget(self.foreground_label, 2)
+        readout_row.addWidget(self.live_foreground_label, 2)
+
+        self.dead_foreground_label = QLabel("Dead foreground: —")
+        self.dead_foreground_label.setWordWrap(True)
+        self.dead_foreground_label.setStyleSheet(
+            "padding: 4px; border: 1px solid #555;"
+        )
+        readout_row.addWidget(self.dead_foreground_label, 2)
 
         self.raw_threshold_label = QLabel("Raw-equivalent threshold: —")
         self.raw_threshold_label.setWordWrap(True)
         self.raw_threshold_label.setStyleSheet(
             "padding: 4px; border: 1px solid #555;"
         )
-        readout_row.addWidget(self.raw_threshold_label, 1)
+        readout_row.addWidget(self.raw_threshold_label, 2)
 
         self.window_label = QLabel("Shared intensity window: —")
         self.window_label.setWordWrap(True)
         self.window_label.setStyleSheet(
             "color: #888; padding: 4px; border: 1px solid #555;"
         )
-        readout_row.addWidget(self.window_label, 2)
+        readout_row.addWidget(self.window_label, 3)
         outer_layout.addLayout(readout_row)
 
         group.setMaximumHeight(150)
@@ -696,8 +703,8 @@ class EPSSetupDialog(QDialog):
         for index in range(self.DEFAULT_PREVIEW_COUNT):
             button = QToolButton()
             button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-            button.setIconSize(QPixmap(78, 52).size())
-            button.setMinimumSize(120, 60)
+            button.setIconSize(QPixmap(132, 52).size())
+            button.setMinimumSize(168, 60)
             button.setMaximumHeight(66)
             button.setEnabled(False)
             button.clicked.connect(
@@ -732,7 +739,6 @@ class EPSSetupDialog(QDialog):
             self.capture_interval_unit_combo.setCurrentText(
                 self.initial_capture_interval_unit
             )
-            self.overlay_color_combo.setCurrentText(self.initial_overlay_color)
             self.threshold_slider.setValue(self.initial_threshold)
             self.threshold_spin.setValue(self.initial_threshold)
         finally:
@@ -807,7 +813,8 @@ class EPSSetupDialog(QDialog):
             self.sampled_frame_keys = ()
             self.representative_timepoints = ()
             self.preview_position_combo.clear()
-            self.image_view.set_image(QPixmap())
+            self.live_image_view.set_image(QPixmap())
+            self.dead_image_view.set_image(QPixmap())
             self.status_label.setText("Select at least one position.")
             self.run_button.setEnabled(False)
             self.clear_thumbnails()
@@ -826,7 +833,8 @@ class EPSSetupDialog(QDialog):
             self.processing_white_point_raw = None
             self.sampled_frame_keys = ()
             self.representative_timepoints = ()
-            self.image_view.set_image(QPixmap())
+            self.live_image_view.set_image(QPixmap())
+            self.dead_image_view.set_image(QPixmap())
             self.clear_thumbnails()
             self.run_button.setEnabled(False)
             self.status_label.setText(
@@ -875,7 +883,7 @@ class EPSSetupDialog(QDialog):
             else ""
         )
         self.status_label.setText(
-            "Estimating one shared EPS intensity window from considered "
+            "Estimating one shared Live-Dead intensity window from considered "
             f"frames...{excluded_note}"
         )
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -909,8 +917,8 @@ class EPSSetupDialog(QDialog):
             self.status_label.setText(f"Could not prepare previews: {error}")
             QMessageBox.warning(
                 self,
-                "EPS preview setup failed",
-                f"Could not prepare the shared EPS preview window:\n{error}",
+                "Live-Dead preview setup failed",
+                f"Could not prepare the shared Live-Dead preview window:\n{error}",
             )
         finally:
             QApplication.restoreOverrideCursor()
@@ -940,9 +948,10 @@ class EPSSetupDialog(QDialog):
         timepoints: Sequence[int],
     ) -> None:
         frame_keys = [
-            (int(time), int(position), self.eps_channel)
+            (int(time), int(position), int(channel))
             for position in positions
             for time in timepoints
+            for channel in (self.live_channel, self.dead_channel)
         ]
         if not frame_keys:
             raise ValueError("No frames are available in the selected scope.")
@@ -968,7 +977,7 @@ class EPSSetupDialog(QDialog):
             raise ValueError("Selected frames contain no finite values.")
         if global_max <= global_min:
             raise ValueError(
-                "The selected EPS frames have no usable intensity range: "
+                "The selected Live-Dead fluorescence frames have no usable intensity range: "
                 f"min={global_min}, max={global_max}."
             )
 
@@ -999,7 +1008,7 @@ class EPSSetupDialog(QDialog):
         frame = np.squeeze(frame)
         if frame.ndim != 2:
             raise ValueError(
-                f"Expected a 2D EPS frame for T={time}, P={position}, "
+                f"Expected a 2D frame for T={time}, P={position}, "
                 f"C={channel}; received shape {frame.shape}."
             )
 
@@ -1013,7 +1022,7 @@ class EPSSetupDialog(QDialog):
         black = self.processing_black_point_raw
         white = self.processing_white_point_raw
         if black is None or white is None or white <= black:
-            raise RuntimeError("The shared EPS intensity window is unavailable.")
+            raise RuntimeError("The shared Live-Dead intensity window is unavailable.")
 
         work = np.asarray(frame, dtype=np.float32).copy()
         np.nan_to_num(
@@ -1034,8 +1043,9 @@ class EPSSetupDialog(QDialog):
         self,
         time: int,
         position: int,
+        channel: int,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        raw_frame = self.get_raw_frame(time, position, self.eps_channel)
+        raw_frame = self.get_raw_frame(time, position, channel)
         normalized = self.normalize_to_shared_uint8(raw_frame)
 
         smoothed = np.empty_like(normalized, dtype=np.uint8)
@@ -1051,11 +1061,12 @@ class EPSSetupDialog(QDialog):
         self,
         normalized: np.ndarray,
         mask: np.ndarray,
+        overlay_color: tuple[int, int, int],
         view_mode: str | None = None,
     ) -> np.ndarray:
         mode = self.view_mode_combo.currentText() if view_mode is None else view_mode
 
-        if mode == "Raw EPS":
+        if mode == "Raw Fluorescence":
             return np.repeat(normalized[..., None], 3, axis=2)
         if mode == "Mask":
             mask_uint8 = mask.astype(np.uint8) * 255
@@ -1063,10 +1074,7 @@ class EPSSetupDialog(QDialog):
 
         rgb = np.repeat(normalized[..., None], 3, axis=2).astype(np.float32)
         alpha = self.opacity_slider.value() / 100.0
-        overlay_color = np.asarray(
-            self.current_overlay_color_rgb(),
-            dtype=np.float32,
-        )
+        overlay_color = np.asarray(overlay_color, dtype=np.float32)
         rgb[mask] = (1.0 - alpha) * rgb[mask] + alpha * overlay_color
         return np.clip(rgb, 0, 255).astype(np.uint8)
 
@@ -1095,27 +1103,42 @@ class EPSSetupDialog(QDialog):
 
         time = self.time_slider.value()
         try:
-            normalized, _smoothed, mask = self.create_processed_preview(
-                time, position
+            live_normalized, _live_smoothed, live_mask = self.create_processed_preview(
+                time, position, self.live_channel
             )
-            rgb = self.make_display_rgb(normalized, mask)
-            self.image_view.set_image(self.rgb_to_pixmap(rgb))
+            dead_normalized, _dead_smoothed, dead_mask = self.create_processed_preview(
+                time, position, self.dead_channel
+            )
 
-            foreground_pixels = int(np.count_nonzero(mask))
-            total_pixels = int(mask.size)
-            foreground_percent = (
-                100.0 * foreground_pixels / total_pixels
-                if total_pixels
-                else 0.0
+            live_rgb = self.make_display_rgb(
+                live_normalized, live_mask, self.LIVE_OVERLAY_RGB
             )
-            self.foreground_label.setText(
-                f"Foreground: {foreground_percent:.2f}% "
-                f"({foreground_pixels:,}/{total_pixels:,} pixels)"
+            dead_rgb = self.make_display_rgb(
+                dead_normalized, dead_mask, self.DEAD_OVERLAY_RGB
             )
+            self.live_image_view.set_image(self.rgb_to_pixmap(live_rgb))
+            self.dead_image_view.set_image(self.rgb_to_pixmap(dead_rgb))
+
+            for label, name, mask in (
+                (self.live_foreground_label, "Live", live_mask),
+                (self.dead_foreground_label, "Dead", dead_mask),
+            ):
+                foreground_pixels = int(np.count_nonzero(mask))
+                total_pixels = int(mask.size)
+                foreground_percent = (
+                    100.0 * foreground_pixels / total_pixels
+                    if total_pixels
+                    else 0.0
+                )
+                label.setText(
+                    f"{name} foreground: {foreground_percent:.2f}% "
+                    f"({foreground_pixels:,}/{total_pixels:,} pixels)"
+                )
+
             self.frame_info_label.setText(
                 f"Position {position} • Timepoint {time} • "
-                f"EPS Channel {self.eps_channel} • "
-                f"Threshold {self.threshold_spin.value()}"
+                f"Live C{self.live_channel} / Dead C{self.dead_channel} • "
+                f"Shared threshold {self.threshold_spin.value()}"
             )
             self.time_value_label.setText(f"T={time}")
             self.update_raw_threshold_label()
@@ -1123,8 +1146,9 @@ class EPSSetupDialog(QDialog):
             self.status_label.setText(f"Preview failed: {error}")
 
     def fit_preview(self) -> None:
-        self.image_view._auto_fit_enabled = True
-        self.image_view.request_fit()
+        for image_view in (self.live_image_view, self.dead_image_view):
+            image_view._auto_fit_enabled = True
+            image_view.request_fit()
 
     def update_thumbnails(self) -> None:
         self.clear_thumbnails()
@@ -1136,12 +1160,35 @@ class EPSSetupDialog(QDialog):
             if index >= len(self.thumbnail_buttons):
                 break
             try:
-                normalized, _smoothed, mask = self.create_processed_preview(
-                    time, position
+                live_normalized, _live_smoothed, live_mask = self.create_processed_preview(
+                    time, position, self.live_channel
                 )
-                rgb = self.make_display_rgb(normalized, mask, "Overlay")
-                pixmap = self.rgb_to_pixmap(rgb).scaled(
-                    78,
+                dead_normalized, _dead_smoothed, dead_mask = self.create_processed_preview(
+                    time, position, self.dead_channel
+                )
+                live_rgb = self.make_display_rgb(
+                    live_normalized,
+                    live_mask,
+                    self.LIVE_OVERLAY_RGB,
+                    "Overlay",
+                )
+                dead_rgb = self.make_display_rgb(
+                    dead_normalized,
+                    dead_mask,
+                    self.DEAD_OVERLAY_RGB,
+                    "Overlay",
+                )
+                spacer = np.full(
+                    (live_rgb.shape[0], 4, 3),
+                    255,
+                    dtype=np.uint8,
+                )
+                paired_rgb = np.concatenate(
+                    (live_rgb, spacer, dead_rgb),
+                    axis=1,
+                )
+                pixmap = self.rgb_to_pixmap(paired_rgb).scaled(
+                    132,
                     52,
                     Qt.KeepAspectRatio,
                     Qt.SmoothTransformation,
@@ -1149,7 +1196,7 @@ class EPSSetupDialog(QDialog):
                 button = self.thumbnail_buttons[index]
                 button.setVisible(True)
                 button.setIcon(QIcon(pixmap))
-                button.setText(f"T={time}")
+                button.setText(f"T={time}\nL | D")
                 button.setProperty("timepoint", int(time))
                 button.setEnabled(True)
             except Exception as error:
@@ -1214,10 +1261,6 @@ class EPSSetupDialog(QDialog):
         self.schedule_preview_update()
         self.schedule_thumbnail_update()
 
-    def on_overlay_color_changed(self, _value: str) -> None:
-        self.schedule_preview_update()
-        self.schedule_thumbnail_update()
-
     def schedule_thumbnail_update(self) -> None:
         if self._updating_controls:
             return
@@ -1258,7 +1301,6 @@ class EPSSetupDialog(QDialog):
         self.set_threshold(self.initial_threshold)
         self.opacity_slider.setValue(self.DEFAULT_OVERLAY_ALPHA_PERCENT)
         self.view_mode_combo.setCurrentText("Overlay")
-        self.overlay_color_combo.setCurrentText(self.initial_overlay_color)
         self.sigma_spin.setValue(1.5)
 
     def on_time_slider_changed(self, value: int) -> None:
@@ -1311,7 +1353,7 @@ class EPSSetupDialog(QDialog):
             QMessageBox.warning(
                 self,
                 "No positions selected",
-                "Select at least one position before running EPS analysis.",
+                "Select at least one position before running Live-Dead analysis.",
             )
             return
 
@@ -1323,8 +1365,8 @@ class EPSSetupDialog(QDialog):
         ):
             QMessageBox.warning(
                 self,
-                "EPS preview not ready",
-                "The shared EPS intensity window could not be prepared.",
+                "Live-Dead preview not ready",
+                "The shared Live-Dead intensity window could not be prepared.",
             )
             return
 
@@ -1332,14 +1374,15 @@ class EPSSetupDialog(QDialog):
         if preview_position is None:
             preview_position = positions[0]
 
-        self.result = EPSSetupResult(
+        self.result = LiveDeadResult(
             positions=tuple(positions),
             time_start=int(self.time_start_spin.value()),
             time_end=int(self.time_end_spin.value()),
             drop_frame_zero=bool(
                 self.drop_frame_zero_checkbox.isChecked()
             ),
-            eps_channel=int(self.eps_channel),
+            live_channel=int(self.live_channel),
+            dead_channel=int(self.dead_channel),
             threshold_uint8=int(self.threshold_spin.value()),
             processing_black_point_raw=float(
                 self.processing_black_point_raw
@@ -1351,7 +1394,6 @@ class EPSSetupDialog(QDialog):
             preview_position=int(preview_position),
             representative_timepoints=tuple(self.representative_timepoints),
             sampled_frame_keys=tuple(self.sampled_frame_keys),
-            overlay_color_name=self.current_overlay_color_name(),
             capture_interval_value=float(self.capture_interval_spin.value()),
             capture_interval_unit=str(
                 self.capture_interval_unit_combo.currentText()

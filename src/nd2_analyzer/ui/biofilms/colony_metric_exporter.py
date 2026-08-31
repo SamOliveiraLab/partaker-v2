@@ -1,10 +1,11 @@
 import json
 import os
+from pathlib import Path
+import re
 from typing import List, Dict, Tuple, Optional
 
 from nd2_analyzer.data.experiment import Experiment
 from nd2_analyzer.data.image_data import ImageData
-from nd2_analyzer.analysis.metrics_service import MetricsService
 from nd2_analyzer.ui.biofilms.colony_separator import ColonySeparator
 
 from nd2_analyzer.ui.widgets import SegmentationWidget
@@ -23,25 +24,615 @@ class ColonyMetricExporter:
         self.segmented_storage = segmentation_storage
         self.model_name = model_name
         self.voxel_size = voxel_size
+        self.biofilm_metric_service = image_data.biofilm_metric_service
 
     def build_table(self):
         """Build a table of colony and cell metrics to export to CSV"""
-        cell_data = self.return_cell_metrics()
-        # cell_data = self.track_cells_hungarian(cell_data)
-        #TODO: Add cell tracking to cell data
-        colony_cell_map = self.assign_cells_to_colonies(cell_data, self.colonies)
-        rows = []
-        for colony in self.colonies:
-            rows.append(
-                self.flatten_colony(colony, colony_cell_map, self.voxel_size)
+        if isinstance(self.colonies, dict):
+            stored_frames = self.biofilm_metric_service.get_colony_frame_results()
+            stored_keys = {
+                (row["position"], row["time"], row["channel"])
+                for row in stored_frames.to_dicts()
+            }
+            requested_keys = {
+                tuple(int(value) for value in key) for key in self.colonies
+            }
+            expected_radius = float(
+                getattr(
+                    self.biofilm_metric_service,
+                    "DEFAULT_NEIGHBOR_RADIUS_PX",
+                    150.0,
+                )
             )
-            print(f"Processed {len(rows)} colonies in table")
-        return pl.DataFrame(rows)
+            stored_radii = {
+                float(row["neighbor_radius_px"])
+                for row in stored_frames.to_dicts()
+                if row.get("neighbor_radius_px") is not None
+            }
+            if (
+                stored_keys == requested_keys
+                and stored_radii == {expected_radius}
+            ):
+                return self.biofilm_metric_service.get_colony_results()
+        return self.biofilm_metric_service.build_colony_table(
+            self.colonies,
+            model_name=self.model_name,
+            voxel_size=self.voxel_size,
+        )
 
     def export_csv(self, path: str):
-        """Exports metrics to CSV"""
+        """Export colony metrics and their time-resolved companion tables."""
+        output_path = Path(path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         df = self.build_table()
-        df.write_csv(path)
+        df.write_csv(output_path)
+
+        companion_tables = {
+            "frames": self.biofilm_metric_service.get_colony_frame_results(),
+            "cells": self.biofilm_metric_service.get_colony_cell_results(),
+            "eps": self.biofilm_metric_service.get_colony_eps_results(),
+        }
+        for suffix, table in companion_tables.items():
+            if table.is_empty():
+                continue
+            companion_path = output_path.with_name(
+                f"{output_path.stem}_{suffix}{output_path.suffix}"
+            )
+            table.write_csv(companion_path)
+
+    @staticmethod
+    def _safe_filename(value) -> str:
+        text = re.sub(r"[^a-zA-Z0-9]+", "_", str(value).strip().lower())
+        return text.strip("_") or "unknown"
+
+    @staticmethod
+    def _plot_time_distribution(
+            ax,
+            frame: pd.DataFrame,
+            value_column: str,
+            *,
+            color: str,
+            label: str | None = None,
+            max_points_per_time: int = 2000,
+    ) -> pd.DataFrame:
+        """Draw individual observations with a median line and IQR band."""
+        import seaborn as sns
+
+        data = frame[["time", value_column]].dropna().copy()
+        if data.empty:
+            return pd.DataFrame()
+
+        sampled_parts = []
+        for _time, time_rows in data.groupby("time", sort=True):
+            if len(time_rows) > max_points_per_time:
+                time_rows = time_rows.sample(
+                    n=max_points_per_time,
+                    random_state=0,
+                )
+            sampled_parts.append(time_rows)
+        sampled = pd.concat(sampled_parts, ignore_index=True)
+
+        sns.scatterplot(
+            data=sampled,
+            x="time",
+            y=value_column,
+            color=color,
+            alpha=0.22,
+            s=18,
+            linewidth=0,
+            legend=False,
+            ax=ax,
+        )
+
+        grouped = data.groupby("time", sort=True)[value_column]
+        summary = grouped.agg(
+            median="median",
+            q25=lambda values: values.quantile(0.25),
+            q75=lambda values: values.quantile(0.75),
+            count="size",
+        ).reset_index()
+        sns.lineplot(
+            data=summary,
+            x="time",
+            y="median",
+            color=color,
+            marker="o",
+            linewidth=2.2,
+            label=label,
+            ax=ax,
+        )
+        ax.fill_between(
+            summary["time"].to_numpy(dtype=float),
+            summary["q25"].to_numpy(dtype=float),
+            summary["q75"].to_numpy(dtype=float),
+            color=color,
+            alpha=0.18,
+        )
+        ax.set_xlabel("Timepoint (frame)")
+        return summary
+
+    @staticmethod
+    def _add_count_note(
+            ax,
+            summary: pd.DataFrame,
+            item_name: str,
+            counts_by_time: pd.Series | None = None,
+    ) -> None:
+        if counts_by_time is not None:
+            annotation_rows = counts_by_time.rename("count").reset_index()
+        else:
+            annotation_rows = summary
+        if annotation_rows.empty or "count" not in annotation_rows:
+            return
+        for row in annotation_rows.itertuples(index=False):
+            ax.text(
+                float(row.time),
+                0.98,
+                f"n={int(row.count)}",
+                transform=ax.get_xaxis_transform(),
+                ha="center",
+                va="top",
+                fontsize=7,
+                color="#444444",
+            )
+
+    def _uses_physical_units(self) -> bool:
+        return bool(
+            self.voxel_size is not None
+            and getattr(self.voxel_size, "x", None)
+            and getattr(self.voxel_size, "y", None)
+        )
+
+    def _plot_local_biomass(
+            self,
+            colonies: pd.DataFrame,
+            eps_rows: pd.DataFrame,
+            output_path: Path,
+            *,
+            position: int,
+            colony_channel: int,
+            eps_channel: int,
+            analysis_method: str,
+    ) -> bool:
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+
+        joined = colonies.merge(
+            eps_rows,
+            left_on=["position", "time", "channel", "colony_id"],
+            right_on=["position", "time", "colony_channel", "colony_id"],
+            how="inner",
+        )
+        if joined.empty:
+            return False
+
+        use_physical = self._uses_physical_units()
+        cell_area = "cell_biomass_area_um2" if use_physical else "cell_biomass_area_px"
+        eps_area = "eps_biomass_area_um2" if use_physical else "eps_biomass_area_px"
+        if cell_area not in joined or eps_area not in joined:
+            return False
+        joined = joined.dropna(subset=[cell_area, eps_area]).copy()
+        if joined.empty:
+            return False
+        joined["cell_coverage_percent"] = joined["cell_biomass_fraction"] * 100.0
+        joined["eps_coverage_percent"] = joined["eps_fraction_of_colony"] * 100.0
+
+        with sns.axes_style("whitegrid"), sns.plotting_context("notebook"):
+            fig, axes = plt.subplots(2, 1, figsize=(10, 10), sharex=True)
+            self._plot_time_distribution(
+                axes[0], joined, cell_area, color="#4C78A8", label="Cells"
+            )
+            area_summary = self._plot_time_distribution(
+                axes[0], joined, eps_area, color="#F58518", label="EPS"
+            )
+            axes[0].set_title("Cell and EPS Biomass Area")
+            axes[0].set_ylabel(f"Biomass Area ({'µm²' if use_physical else 'px²'})")
+            axes[0].legend(title="Biomass source")
+            self._add_count_note(axes[0], area_summary, "Colonies")
+
+            self._plot_time_distribution(
+                axes[1], joined, "cell_coverage_percent",
+                color="#72B7B2", label="Cells",
+            )
+            coverage_summary = self._plot_time_distribution(
+                axes[1], joined, "eps_coverage_percent",
+                color="#ECA82C", label="EPS",
+            )
+            axes[1].set_title("Fraction of Microcolony Occupied by Biomass")
+            axes[1].set_ylabel("Microcolony Coverage (%)")
+            axes[1].set_ylim(bottom=0)
+            axes[1].legend(title="Biomass source")
+            self._add_count_note(
+                axes[1], coverage_summary, "Colonies"
+            )
+
+            fig.suptitle(
+                "Local Biomass per Microcolony Over Time — "
+                f"P{position}, Colony C{colony_channel}, "
+                f"EPS C{eps_channel} ({analysis_method})",
+                fontsize=14,
+                fontweight="bold",
+            )
+            fig.text(
+                0.5,
+                0.01,
+                "n is the number of microcolonies represented in each frame.",
+                ha="center",
+                fontsize=8,
+                color="#555555",
+            )
+            fig.tight_layout(rect=(0, 0.03, 1, 0.96))
+            fig.savefig(output_path, dpi=300, bbox_inches="tight")
+            plt.close(fig)
+        return True
+
+    def _plot_spatial_context(
+            self,
+            colonies: pd.DataFrame,
+            output_path: Path,
+            *,
+            position: int,
+            colony_channel: int,
+    ) -> bool:
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+
+        required = {"nearest_colony_distance_px", "neighbor_count", "time"}
+        if colonies.empty or not required.issubset(colonies.columns):
+            return False
+        neighbor_radius_px = 150.0
+        if "neighbor_radius_px" in colonies:
+            stored_radii = colonies["neighbor_radius_px"].dropna()
+            if not stored_radii.empty:
+                neighbor_radius_px = float(stored_radii.iloc[0])
+        radius_label = f"{neighbor_radius_px:g}"
+        colony_counts = colonies.groupby("time", sort=True).size()
+
+        with sns.axes_style("whitegrid"), sns.plotting_context("notebook"):
+            fig, axes = plt.subplots(2, 1, figsize=(10, 10), sharex=True)
+            distance_summary = self._plot_time_distribution(
+                axes[0],
+                colonies,
+                "nearest_colony_distance_px",
+                color="#2A9D8F",
+            )
+            axes[0].axhline(
+                neighbor_radius_px,
+                color="#E45756",
+                linestyle="--",
+                linewidth=1.6,
+                label=f"{radius_label} px neighbor radius",
+            )
+            axes[0].set_title("Nearest Microcolony Centroid Distance")
+            axes[0].set_ylabel("Nearest Centroid Distance (px)")
+            axes[0].legend()
+            self._add_count_note(
+                axes[0],
+                distance_summary,
+                "Colonies",
+                counts_by_time=colony_counts,
+            )
+
+            neighbor_summary = self._plot_time_distribution(
+                axes[1],
+                colonies,
+                "neighbor_count",
+                color="#287271",
+            )
+            axes[1].set_title(
+                f"Neighboring Microcolonies Within {radius_label} Pixels"
+            )
+            axes[1].set_ylabel("Neighbor Count")
+            axes[1].set_ylim(bottom=0)
+            self._add_count_note(
+                axes[1],
+                neighbor_summary,
+                "Colonies",
+                counts_by_time=colony_counts,
+            )
+
+            fig.suptitle(
+                "Microcolony Spatial Context Over Time — "
+                f"P{position}, Colony C{colony_channel}",
+                fontsize=14,
+                fontweight="bold",
+            )
+            fig.text(
+                0.5,
+                0.01,
+                "Nearest distance uses centroid-to-centroid distance; "
+                f"neighbor count uses the {radius_label}-pixel radius. "
+                "n is the number of microcolonies in each frame.",
+                ha="center",
+                fontsize=8,
+                color="#555555",
+            )
+            fig.tight_layout(rect=(0, 0.03, 1, 0.96))
+            fig.savefig(output_path, dpi=300, bbox_inches="tight")
+            plt.close(fig)
+        return True
+
+    def _plot_single_cell_measurements(
+            self,
+            cells: pd.DataFrame,
+            output_dir: Path,
+            *,
+            position: int,
+            colony_channel: int,
+    ) -> list[Path]:
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+
+        if cells.empty:
+            return []
+        use_physical = self._uses_physical_units()
+        measurement_pairs = [
+            (
+                "area_perimeter",
+                "Single-Cell Area and Perimeter Within Microcolonies Over Time",
+                [
+                    (
+                        "area_um2" if use_physical else "area_px",
+                        "Cell Area",
+                        f"Area ({'µm²' if use_physical else 'px²'})",
+                        "#4C78A8",
+                    ),
+                    (
+                        "perimeter_um" if use_physical else "perimeter_px",
+                        "Cell Perimeter",
+                        f"Perimeter ({'µm' if use_physical else 'px'})",
+                        "#B279A2",
+                    ),
+                ],
+            ),
+            (
+                "roundness_solidity",
+                "Single-Cell Roundness and Solidity Within Microcolonies Over Time",
+                [
+                    ("roundness", "Cell Roundness", "Roundness", "#59A14F"),
+                    ("solidity", "Cell Solidity", "Solidity", "#ECA82C"),
+                ],
+            ),
+            (
+                "eccentricity_density",
+                "Single-Cell Eccentricity and Density Within Microcolonies Over Time",
+                [
+                    (
+                        "eccentricity",
+                        "Cell Eccentricity",
+                        "Eccentricity",
+                        "#E45756",
+                    ),
+                    (
+                        "local_density",
+                        "Cell Local Density",
+                        "Local Density",
+                        "#72B7B2",
+                    ),
+                ],
+            ),
+        ]
+        all_measurements = [
+            measurement
+            for _slug, _title, pair in measurement_pairs
+            for measurement in pair
+        ]
+        if not any(column in cells for column, *_rest in all_measurements):
+            return []
+
+        counts = cells.groupby("time", sort=True).agg(
+            cell_count=("cell_id", "size"),
+            colony_count=("colony_id", "nunique"),
+        )
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        exported_paths = []
+        for slug, figure_title, pair in measurement_pairs:
+            if not any(column in cells for column, *_rest in pair):
+                continue
+            with sns.axes_style("whitegrid"), sns.plotting_context("notebook"):
+                fig, axes = plt.subplots(2, 1, figsize=(10, 10), sharex=True)
+                for ax, (column, title, ylabel, color) in zip(axes, pair):
+                    if column not in cells:
+                        ax.set_visible(False)
+                        continue
+                    self._plot_time_distribution(
+                        ax,
+                        cells,
+                        column,
+                        color=color,
+                        max_points_per_time=2000,
+                    )
+                    ax.set_title(title)
+                    ax.set_ylabel(ylabel)
+                    self._add_count_note(
+                        ax,
+                        pd.DataFrame(),
+                        "Colonies",
+                        counts_by_time=counts["colony_count"],
+                    )
+
+                fig.suptitle(
+                    f"{figure_title} — P{position}, Colony C{colony_channel}",
+                    fontsize=14,
+                    fontweight="bold",
+                )
+                fig.text(
+                    0.5,
+                    0.01,
+                    "Cell membership uses centroid-inside-colony assignment. "
+                    "The 150-pixel radius applies only to microcolony neighbor count; "
+                    "n is the number of microcolonies represented in each frame.",
+                    ha="center",
+                    fontsize=8,
+                    color="#555555",
+                )
+                fig.tight_layout(rect=(0, 0.03, 1, 0.96))
+                output_path = output_dir / f"single_cell_{slug}_over_time.png"
+                fig.savefig(output_path, dpi=300, bbox_inches="tight")
+                plt.close(fig)
+                exported_paths.append(output_path)
+        return exported_paths
+
+    def _plot_per_colony_eps(
+            self,
+            eps_rows: pd.DataFrame,
+            output_path: Path,
+            *,
+            position: int,
+            eps_channel: int,
+            analysis_method: str,
+    ) -> bool:
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+
+        if eps_rows.empty:
+            return False
+        use_physical = self._uses_physical_units()
+        area_column = "eps_biomass_area_um2" if use_physical else "eps_biomass_area_px"
+        if area_column not in eps_rows or "eps_fraction_of_colony" not in eps_rows:
+            return False
+        plot_rows = eps_rows.dropna(
+            subset=[area_column, "eps_fraction_of_colony"]
+        ).copy()
+        if plot_rows.empty:
+            return False
+        plot_rows["eps_coverage_percent"] = (
+            plot_rows["eps_fraction_of_colony"] * 100.0
+        )
+
+        with sns.axes_style("whitegrid"), sns.plotting_context("notebook"):
+            fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharex=True)
+            area_summary = self._plot_time_distribution(
+                axes[0], plot_rows, area_column, color="#F58518"
+            )
+            axes[0].set_title("EPS Area Within Each Microcolony")
+            axes[0].set_ylabel(f"EPS Area ({'µm²' if use_physical else 'px²'})")
+            self._add_count_note(axes[0], area_summary, "Colonies")
+
+            coverage_summary = self._plot_time_distribution(
+                axes[1], plot_rows, "eps_coverage_percent", color="#ECA82C"
+            )
+            axes[1].set_title("Microcolony Area Covered by EPS")
+            axes[1].set_ylabel("EPS Coverage (%)")
+            axes[1].set_ylim(bottom=0)
+            self._add_count_note(
+                axes[1], coverage_summary, "Colonies"
+            )
+
+            fig.suptitle(
+                "Per-Microcolony EPS Measurements Over Time — "
+                f"P{position}, EPS C{eps_channel} ({analysis_method})",
+                fontsize=14,
+                fontweight="bold",
+            )
+            fig.text(
+                0.5,
+                0.01,
+                "n is the number of microcolonies represented in each frame.",
+                ha="center",
+                fontsize=8,
+                color="#555555",
+            )
+            fig.tight_layout(rect=(0, 0.03, 1, 0.93))
+            fig.savefig(output_path, dpi=300, bbox_inches="tight")
+            plt.close(fig)
+        return True
+
+    def export_time_resolved_graphs(self, output_dir: str | Path) -> list[Path]:
+        """Export time-resolved microcolony summaries from centralized tables."""
+        output_root = Path(output_dir)
+        output_root.mkdir(parents=True, exist_ok=True)
+
+        colony_table = self.biofilm_metric_service.get_colony_results()
+        if colony_table.is_empty():
+            return []
+        colonies = colony_table.to_pandas()
+
+        cell_table = self.biofilm_metric_service.get_colony_cell_results()
+        cells = cell_table.to_pandas() if not cell_table.is_empty() else pd.DataFrame()
+        eps_table = self.biofilm_metric_service.get_colony_eps_results()
+        eps_rows = eps_table.to_pandas() if not eps_table.is_empty() else pd.DataFrame()
+
+        exported_paths = []
+        group_columns = ["position", "channel"]
+        for (position, colony_channel), colony_rows in colonies.groupby(
+                group_columns, sort=True
+        ):
+            group_dir = (
+                output_root
+                / f"position_{int(position):03d}"
+                / f"colony_channel_{int(colony_channel)}"
+            )
+            group_dir.mkdir(parents=True, exist_ok=True)
+
+            spatial_path = group_dir / "microcolony_spatial_context_over_time.png"
+            if self._plot_spatial_context(
+                colony_rows,
+                spatial_path,
+                position=int(position),
+                colony_channel=int(colony_channel),
+            ):
+                exported_paths.append(spatial_path)
+
+            if not cells.empty:
+                cell_rows = cells[
+                    (cells["position"] == position)
+                    & (cells["colony_channel"] == colony_channel)
+                ]
+                legacy_cell_plot = group_dir / "single_cell_measurements_over_time.png"
+                if legacy_cell_plot.exists():
+                    legacy_cell_plot.unlink()
+                exported_paths.extend(
+                    self._plot_single_cell_measurements(
+                        cell_rows,
+                        group_dir,
+                        position=int(position),
+                        colony_channel=int(colony_channel),
+                    )
+                )
+
+            if eps_rows.empty:
+                continue
+            mask_based_rows = eps_rows["eps_mask_used"].fillna(False).astype(bool)
+            matching_eps = eps_rows[
+                (eps_rows["position"] == position)
+                & (eps_rows["colony_channel"] == colony_channel)
+                & mask_based_rows
+            ]
+            for (eps_channel, method), method_rows in matching_eps.groupby(
+                    ["eps_channel", "analysis_method"], sort=True
+            ):
+                method_slug = self._safe_filename(method)
+                biomass_path = group_dir / (
+                    f"local_biomass_over_time_epsC{int(eps_channel)}_"
+                    f"{method_slug}.png"
+                )
+                if self._plot_local_biomass(
+                    colony_rows,
+                    method_rows,
+                    biomass_path,
+                    position=int(position),
+                    colony_channel=int(colony_channel),
+                    eps_channel=int(eps_channel),
+                    analysis_method=str(method),
+                ):
+                    exported_paths.append(biomass_path)
+
+                eps_path = group_dir / (
+                    f"per_colony_eps_metrics_over_time_epsC{int(eps_channel)}_"
+                    f"{method_slug}.png"
+                )
+                if self._plot_per_colony_eps(
+                    method_rows,
+                    eps_path,
+                    position=int(position),
+                    eps_channel=int(eps_channel),
+                    analysis_method=str(method),
+                ):
+                    exported_paths.append(eps_path)
+
+        return exported_paths
 
     def print_metrics(self):
         """Debugging function: prints metrics to console"""
@@ -64,271 +655,39 @@ class ColonyMetricExporter:
     def flatten_colony(self, colony: Dict, colony_cell_map: Dict, voxel_size) -> Dict:
         """Summarizes microcolony cluster contour and the cells assigned
         to it, into numerical measurements in dictionary"""
-
-        # records shape of contour around cluster
-        contour = np.array(colony["contour"], dtype=np.int32)
-        area = float(cv2.contourArea(contour))
-        perimeter = float(cv2.arcLength(contour, True))
-        x, y, w, h = cv2.boundingRect(contour)
-
-        # records center of microcolony cluster
-        M = cv2.moments(contour)
-        if M["m00"] != 0:
-            cx = M["m10"] / M["m00"]
-            cy = M["m01"] / M["m00"]
-        else:
-            cx, cy = x + w / 2, y + h / 2
-
-        # records convex hull area & solidity: how compact colony is
-        hull = cv2.convexHull(contour)
-        hull_area = cv2.contourArea(hull)
-        # solidity close to 1 implies compacted cluster, solidity closer to 0 implies branching/irregular colony
-        solidity = area / hull_area if hull_area > 0 else 0
-
-
-        # Generate cell statistics per microcolony cluster
-        cid = colony["colony_id"]
-        cells = colony_cell_map.get(cid, [])
-
-        # checks if voxel size is present
-        has_vox = voxel_size is not None
-
-        if cells:
-            if has_vox:
-                mean_density = np.mean([c["local_density"] for c in cells])
-                #total_biomass = np.sum([c["volume"] for c in cells])
-        else:
-            mean_density = 0
-            #total_biomass = 0
-        cell_count = len(cells)
-
-        #TODO: Refactor and optimize for voxel existence, default should be for voxel if they exist
-        # Change back to oringinal because cell tracking may rely on this, but maybe not
-
-        density = cell_count / area
-
-        # OUTPUT
-        flat = {
-            "colony_id": cid,
-
-            "area": area,
-            "perimeter": perimeter,
-            "solidity": solidity,
-
-            "centroid_x": cx,
-            "centroid_y": cy,
-
-            "bbox_x1": x,
-            "bbox_y1": y,
-            "bbox_x2": x + w,
-            "bbox_y2": y + h,
-
-            "cells_per_colony": cell_count,
-            "cell_density": density,
-            "has_vox": has_vox,
-        }
-
-        area_um2 = area * voxel_size.x * voxel_size.y if has_vox else 0
-        perimeter_um = perimeter * ((voxel_size.x + voxel_size.y) / 2) if has_vox else 0
-        density_um = cell_count / area_um2 if has_vox else 0
-        centroid_x_um = cx * voxel_size.x if has_vox else 0
-        centroid_y_um = cy * voxel_size.y if has_vox else 0
-        mean_density_um = mean_density / cell_count if cell_count > 0 else 0 #check
-
-        flat.update({
-            "area_um2": area_um2,
-            "perimeter_um": perimeter_um,
-            "density_um": density_um,
-            "centroid_x_um": centroid_x_um,
-            "centroid_y_um": centroid_y_um,
-
-            "mean_biofilm_density": mean_density
-        }) #"biomass_um3": total_biomass,
-
-        #if cells:
-        #    times = [c["t"] for c in cells]
-        #    t_span = max(times) - min(times) if len(times) > 1 else 1
-        #    growth_rate = total_biomass / t_span
-        #else:
-        #    growth_rate = 0
-
-        #flat["growth_rate"] = growth_rate
-
-        return flat
+        colony_id = int(colony["colony_id"])
+        return self.biofilm_metric_service.calculate_colony_metrics(
+            colony,
+            colony_cell_map.get(colony_id, []),
+            voxel_size,
+        )
 
     def return_cell_metrics(self):
         """Return metrics for every cell in (later) specified region"""
-        cache = self.segmented_storage.with_model(self.model_name)
-        mmap_array, index_set = cache.mmap_arrays_idx[cache.model_name]
-        from skimage.measure import label, regionprops
-
-        cells = []
-        print("Index set:", len(index_set))
-
-        # process frame-by-frame (not all at once mentally)
-        for idx in index_set:
-            print("Processing idx:", idx)
-            if len(idx) == 3:
-                t, p, c = idx
-            else:
-                t, p = idx
-                c = self.image_data.channel_n
-
-            # get segmented images
-            segmented = cache[(t, p, c, self.model_name)]
-            raw_img = self.image_data.get(t, p, c)
-
-            # get segmented labels and masks
-            labeled = label(segmented)
-            regions = regionprops(labeled)
-
-            # Create TEMP frame list (small)
-            frame_cells = []
-
-            # get individual cell metrics
-            for region in regions:
-                # cell position
-                cx = region.centroid[1]
-                cy = region.centroid[0]
-                # cell area
-                area_px = region.area
-                if self.voxel_size is not None and self.voxel_size.x:
-                    area_um2 = area_px * self.voxel_size.x * self.voxel_size.y
-
-                    # TODO: implement volume for Partaker v3
-                    #volume_um3 = (
-                    #    area_um2 * self.voxel_size.z
-                    #    if self.voxel_size.z else area_um2
-                    #)
-                else:
-                    # fallback to pixel units
-                    area_um2 = area_px
-                    volume_um3 = area_px
-
-
-                # FIXED PATCH EXTRACTION FOR MASK SIZE
-
-                PATCH_SIZE = 64
-                half = PATCH_SIZE // 2
-                cx_int = int(cx)
-                cy_int = int(cy)
-
-                # centered crop coordinates
-                y1 = max(0, cy_int - half)
-                y2 = min(raw_img.shape[0], cy_int + half)
-
-                x1 = max(0, cx_int - half)
-                x2 = min(raw_img.shape[1], cx_int + half)
-
-                # full-cell mask first
-                cell_mask_full = (labeled == region.label).astype(np.uint8)
-
-                # crop local patch
-                cropped_img = raw_img[y1:y2, x1:x2]
-                cropped_mask = cell_mask_full[y1:y2, x1:x2]
-
-
-                # PAD TO 64x64
-                cropped_img = self.pad_to_size(cropped_img, PATCH_SIZE)
-                cropped_mask = self.pad_to_size(cropped_mask, PATCH_SIZE)
-
-                cropped_img = cropped_img[:PATCH_SIZE, :PATCH_SIZE]
-                cropped_mask = cropped_mask[:PATCH_SIZE, :PATCH_SIZE]
-
-                frame_cells.append({
-                    "t": t,
-                    "p": p,
-                    "c": c,
-                    "cell_id": region.label,
-                    "centroid_x": cx,
-                    "centroid_y": cy,
-                    "area_px": area_px,
-                    "area_um2": area_um2,
-                    "mask": cropped_mask,
-                    "raw_img": cropped_img,
-                })
-
-                #frame_cells.append({"volume_um3": volume_um3,})
-
-            # compute density per frame (NOT global)
-            densities = self.compute_local_density(frame_cells)
-
-            for i in range(len(frame_cells)):
-                frame_cells[i]["local_density"] = densities[i]
-
-            # append AFTER processing frame
-            cells.extend(frame_cells)
-
-        print("Successfully returned Cells!")
-        return cells
+        return self.biofilm_metric_service.get_cell_metrics_from_cache(
+            model_name=self.model_name,
+            voxel_size=self.voxel_size,
+            include_patches=True,
+        )
 
     def compute_local_density(self, cells, radius_fraction=0.10):
-        densities = [0] * len(cells)
-
-        first_frame = cells[0]["raw_img"]
-        h, w = first_frame.shape
-        neighborhood_radius = min(h, w) * radius_fraction
-
-        neighborhood_area = np.pi * (neighborhood_radius ** 2)
-
-        # group by time
-        from collections import defaultdict
-        frames = defaultdict(list)
-
-
-        for i, c in enumerate(cells):
-            frames[c["t"]].append((i, c))
-
-        for t, frame_cells in frames.items():
-
-            indices, frame_cells = zip(*frame_cells)
-
-            cells_at_t = frames[t]
-
-            coords = np.array([[c["centroid_x"], c["centroid_y"]] for c in frame_cells])
-            cell_areas = np.array([cell["area_um2"] if self.voxel_size is not None else cell["area_px"] for cell in frame_cells])
-            #volumes = np.array([c["volume_um3"] for c in frame_cells])
-
-            for i, center in enumerate(coords):
-
-                dists = np.linalg.norm(coords - center, axis=1)
-                neighbors = dists <= neighborhood_radius
-                total_neighbor_area = cell_areas[neighbors].sum()
-
-                #total_biomass = volumes[neighbors].sum()
-                #if self.voxel_size is not None and self.voxel_size.z:
-                #        sphere_vol = (4 / 3) * np.pi * (radius_um ** 3)
-                #else:
-                #    sphere_vol = np.pi * (radius_um ** 2)
-                #density_3 = total_biomass / sphere_vol if sphere_vol > 0 else 0
-
-                density = (total_neighbor_area / neighborhood_area if neighborhood_area > 0 else 0)
-
-                densities[indices[i]] = density
-
-        return densities
+        image_shape = (
+            np.asarray(cells[0]["raw_img"]).shape[:2]
+            if cells
+            else None
+        )
+        return self.biofilm_metric_service.calculate_local_density(
+            cells,
+            image_shape=image_shape,
+            voxel_size=self.voxel_size,
+            radius_fraction=radius_fraction,
+        )
 
     def assign_cells_to_colonies(self, cell_data, colonies):
-
-        colony_cell_map = {c["colony_id"]: [] for c in colonies}
-
-        for cell in cell_data:
-
-            x = cell["centroid_x"]
-            y = cell["centroid_y"]
-
-            for colony in colonies:
-
-                contour = np.array(colony["contour"], dtype=np.int32)
-
-                # inside = +1, outside = -1, boundary = 0
-                inside = cv2.pointPolygonTest(contour, (x, y), False)
-
-                if inside >= 0:
-                    colony_cell_map[colony["colony_id"]].append(cell)
-                    break  # assume cell belongs to only one colony
-
-        return colony_cell_map
+        return self.biofilm_metric_service.assign_cells_to_colonies(
+            cell_data,
+            colonies,
+        )
 
     def density_to_grid(self, cells, shape):
 

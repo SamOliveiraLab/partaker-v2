@@ -11,7 +11,7 @@ import traceback
 from pubsub import pub
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from nd2_analyzer.analysis.metrics_service import MetricsService
+from nd2_analyzer.analysis.biofilm_metric_service import BiofilmMetricService
 import polars as pl  # Import Polars
 from pathlib import Path
 import numpy as np
@@ -24,7 +24,7 @@ import shutil
 
 
 class EPSAnalysisWidget(QWidget):
-    """Widget for cube-based analysis of exported colony time series"""
+    """Widget for EPS analysis based off of fluorescence frames and colony metrics"""
 
     # Moreau mode uses the best compromise parameters from the Fig. 4b match.
     MOREAU_EPS_CLOSING_RADIUS_PX = 0
@@ -89,6 +89,9 @@ class EPSAnalysisWidget(QWidget):
         self.is_segmenting = False
         self.cancel_requested = False
         self.queue = []
+        self.biofilm_metric_service = None
+        # Temporary compatibility mirror populated when a run finishes
+        # BiofilmMetricService is the authoritative result store
         self.eps_results = []
 
         # Partaker fixed-EPS calibration state. The setup dialog returns one
@@ -1120,6 +1123,10 @@ class EPSAnalysisWidget(QWidget):
     def segment_selected_channels(self):
         """Queue segmentation for selected channels, positions, and time range."""
         self.eps_results = []
+        if self.biofilm_metric_service is None:
+            self.status_label.setText("No image data available for EPS analysis")
+            return
+        self.biofilm_metric_service.reset_eps_results()
         self.reset_output_tracking()
 
         if self.is_segmenting:
@@ -1279,6 +1286,8 @@ class EPSAnalysisWidget(QWidget):
     def on_image_data_loaded(self, image_data):
         if image_data is None or image_data.data is None:
             return
+
+        self.biofilm_metric_service = image_data.biofilm_metric_service
 
         # A calibration result belongs to one loaded dataset only.
         self.partaker_eps_setup = None
@@ -1445,9 +1454,8 @@ class EPSAnalysisWidget(QWidget):
             if optional_key in metrics:
                 result_row[optional_key] = metrics[optional_key]
 
-        self.eps_results.append(result_row)
-
-        completed = len(self.eps_results)
+        self.biofilm_metric_service.upsert_eps_frame(result_row)
+        completed = self.biofilm_metric_service.eps_result_count
 
         self.progress_bar.setValue(
             completed
@@ -1500,7 +1508,8 @@ class EPSAnalysisWidget(QWidget):
 
     def _segmentation_finished(self):
         """Handle completion of all segmentation tasks."""
-        self.eps_df = pl.DataFrame(self.eps_results)
+        self.eps_df = self.biofilm_metric_service.get_eps_results()
+        self.eps_results = self.biofilm_metric_service.get_eps_result_rows()
 
         output_dir = self.get_eps_output_root()
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -1570,126 +1579,7 @@ class EPSAnalysisWidget(QWidget):
         - Cell-association rows have cell_occupancy_fraction, fraction_eps_coverage,
           fraction_cells_encased
         """
-
-        agg_exprs = []
-
-        if "cell_occupancy_fraction" in df.columns:
-            agg_exprs.extend([
-                pl.col("cell_occupancy_fraction")
-                .mean()
-                .alias("cell_occupancy"),
-
-                pl.col("cell_occupancy_fraction")
-                .std()
-                .fill_null(0)
-                .alias("std_cell_occupancy"),
-            ])
-
-        if "fraction_eps_coverage" in df.columns:
-            agg_exprs.extend([
-                pl.col("fraction_eps_coverage")
-                .mean()
-                .alias("fraction_eps_coverage"),
-
-                pl.col("fraction_eps_coverage")
-                .std()
-                .fill_null(0)
-                .alias("std_fraction_eps_coverage"),
-            ])
-
-        if "fraction_cells_encased" in df.columns:
-            agg_exprs.extend([
-                pl.col("fraction_cells_encased")
-                .mean()
-                .alias("fraction_cells_encased"),
-
-                pl.col("fraction_cells_encased")
-                .std()
-                .fill_null(0)
-                .alias("std_fraction_cells_encased"),
-            ])
-
-        if "raw_signal_within_cells_fraction" in df.columns:
-            agg_exprs.extend([
-                pl.col("raw_signal_within_cells_fraction")
-                .mean()
-                .alias("raw_signal_within_cells_fraction"),
-
-                pl.col("raw_signal_within_cells_fraction")
-                .std()
-                .fill_null(0)
-                .alias("std_raw_signal_within_cells_fraction"),
-            ])
-
-        if "raw_integrated_intensity_whole_frame" in df.columns:
-            agg_exprs.extend([
-                pl.col("raw_integrated_intensity_whole_frame")
-                .mean()
-                .alias("raw_integrated_intensity_whole_frame"),
-
-                pl.col("raw_integrated_intensity_whole_frame")
-                .std()
-                .fill_null(0)
-                .alias("std_raw_integrated_intensity_whole_frame"),
-            ])
-
-        if "raw_integrated_intensity_within_cells" in df.columns:
-            agg_exprs.extend([
-                pl.col("raw_integrated_intensity_within_cells")
-                .mean()
-                .alias("raw_integrated_intensity_within_cells"),
-
-                pl.col("raw_integrated_intensity_within_cells")
-                .std()
-                .fill_null(0)
-                .alias("std_raw_integrated_intensity_within_cells"),
-            ])
-
-        if "mean_intensity" in df.columns:
-            agg_exprs.extend([
-                pl.col("mean_intensity")
-                .mean()
-                .alias("mean_intensity"),
-
-                pl.col("mean_intensity")
-                .std()
-                .fill_null(0)
-                .alias("std_mean_intensity"),
-            ])
-
-        if "integrated_intensity" in df.columns:
-            agg_exprs.extend([
-                pl.col("integrated_intensity")
-                .mean()
-                .alias("integrated_intensity"),
-
-                pl.col("integrated_intensity")
-                .std()
-                .fill_null(0)
-                .alias("std_integrated_intensity"),
-            ])
-
-        if "eps_area_pixels" in df.columns:
-            agg_exprs.extend([
-                pl.col("eps_area_pixels")
-                .mean()
-                .alias("mean_area_pixels"),
-
-                pl.col("eps_area_pixels")
-                .std()
-                .fill_null(0)
-                .alias("std_area_pixels"),
-            ])
-
-        if not agg_exprs:
-            raise ValueError("No plottable metric columns found in dataframe.")
-
-        return (
-            df
-            .group_by("time")
-            .agg(agg_exprs)
-            .sort("time")
-        )
+        return BiofilmMetricService.summarize_eps_dataframe(df)
 
     def add_time_hours_to_stats(self, stats: pl.DataFrame):
         time_hours = [
@@ -3403,79 +3293,12 @@ class EPSAnalysisWidget(QWidget):
             cell_labels: np.ndarray | None = None,
             overlap_threshold: float = 0.10,
     ):
-        eps_mask = np.asarray(eps_mask, dtype=bool)
-        cell_mask = np.asarray(cell_mask, dtype=bool)
-
-        total_image_pixels = int(eps_mask.size)
-
-        cell_area_pixels = int(np.count_nonzero(cell_mask))
-        eps_area_pixels = int(np.count_nonzero(eps_mask))
-        eps_colocalized_pixels = int(np.count_nonzero(eps_mask & cell_mask))
-
-        eps_pixels_outside_cell_mask = int(np.count_nonzero(eps_mask & ~cell_mask))
-        cell_pixels_without_eps = int(np.count_nonzero(cell_mask & ~eps_mask))
-
-        cell_occupancy_fraction = (
-            cell_area_pixels / total_image_pixels
-            if total_image_pixels > 0
-            else 0.0
+        return BiofilmMetricService.calculate_eps_mask_metrics(
+            eps_mask=eps_mask,
+            cell_mask=cell_mask,
+            cell_labels=cell_labels,
+            overlap_threshold=overlap_threshold,
         )
-
-        cell_occupancy_percent = cell_occupancy_fraction * 100.0
-
-        fraction_eps_coverage = (
-            100.0 * eps_colocalized_pixels / cell_area_pixels
-            if cell_area_pixels > 0
-            else 0.0
-        )
-
-        total_cells = 0
-        encased_cells = 0
-
-        if cell_labels is not None:
-            cell_ids = np.unique(cell_labels)
-            cell_ids = cell_ids[cell_ids > 0]
-
-            total_cells = int(len(cell_ids))
-
-            for cell_id in cell_ids:
-                single_cell_mask = cell_labels == cell_id
-                single_cell_pixels = int(np.count_nonzero(single_cell_mask))
-
-                if single_cell_pixels == 0:
-                    continue
-
-                eps_overlap_pixels = int(np.count_nonzero(eps_mask & single_cell_mask))
-                overlap_fraction = eps_overlap_pixels / single_cell_pixels
-
-                if overlap_fraction >= overlap_threshold:
-                    encased_cells += 1
-
-            fraction_cells_encased = (
-                100.0 * encased_cells / total_cells
-                if total_cells > 0
-                else 0.0
-            )
-
-        else:
-            # Moreau is binary mask based, so report area coverage as encasement.
-            fraction_cells_encased = fraction_eps_coverage
-
-        return {
-            "total_cells": total_cells,
-            "encased_cells": encased_cells,
-            "fraction_cells_encased": fraction_cells_encased,
-            "fraction_eps_coverage": fraction_eps_coverage,
-
-            "cell_occupancy_fraction": cell_occupancy_fraction,
-            "cell_occupancy_percent": cell_occupancy_percent,
-
-            "cell_area_pixels": cell_area_pixels,
-            "eps_area_pixels": eps_area_pixels,
-            "eps_colocalized_pixels": eps_colocalized_pixels,
-            "eps_pixels_outside_cell_mask": eps_pixels_outside_cell_mask,
-            "cell_pixels_without_eps": cell_pixels_without_eps,
-        }
 
     def compute_raw_intensity_cell_metrics(
             self,
@@ -3490,73 +3313,11 @@ class EPSAnalysisWidget(QWidget):
             100 * integrated raw signal inside cells / integrated raw signal
             across the entire frame.
         """
-        raw_eps = np.asarray(raw_eps_frame, dtype=np.float32)
-        cell_mask = np.asarray(cell_mask, dtype=bool)
-
-        finite_mask = np.isfinite(raw_eps)
-        valid_cell_mask = cell_mask & finite_mask
-
-        total_image_pixels = int(raw_eps.size)
-        cell_area_pixels = int(np.count_nonzero(cell_mask))
-        valid_frame_pixels = int(np.count_nonzero(finite_mask))
-        valid_cell_pixels = int(np.count_nonzero(valid_cell_mask))
-
-        if valid_frame_pixels > 0:
-            whole_frame_values = raw_eps[finite_mask]
-            raw_mean_whole_frame = float(
-                np.mean(whole_frame_values, dtype=np.float64)
-            )
-            raw_integrated_whole_frame = float(
-                np.sum(whole_frame_values, dtype=np.float64)
-            )
-        else:
-            raw_mean_whole_frame = 0.0
-            raw_integrated_whole_frame = 0.0
-
-        if valid_cell_pixels > 0:
-            cell_values = raw_eps[valid_cell_mask]
-            raw_mean_within_cells = float(
-                np.mean(cell_values, dtype=np.float64)
-            )
-            raw_integrated_within_cells = float(
-                np.sum(cell_values, dtype=np.float64)
-            )
-        else:
-            raw_mean_within_cells = 0.0
-            raw_integrated_within_cells = 0.0
-
-        raw_signal_within_cells_fraction = (
-            100.0
-            * raw_integrated_within_cells
-            / raw_integrated_whole_frame
-            if raw_integrated_whole_frame > 0
-            else 0.0
+        return BiofilmMetricService.calculate_eps_raw_intensity_metrics(
+            raw_eps_frame=raw_eps_frame,
+            cell_mask=cell_mask,
+            cell_labels=cell_labels,
         )
-
-        cell_occupancy_fraction = (
-            cell_area_pixels / total_image_pixels
-            if total_image_pixels > 0
-            else 0.0
-        )
-
-        total_cells = 0
-        if cell_labels is not None:
-            cell_ids = np.unique(cell_labels)
-            total_cells = int(np.count_nonzero(cell_ids > 0))
-
-        return {
-            "raw_mean_intensity_whole_frame": raw_mean_whole_frame,
-            "raw_integrated_intensity_whole_frame": raw_integrated_whole_frame,
-            "raw_mean_intensity_within_cells": raw_mean_within_cells,
-            "raw_integrated_intensity_within_cells": raw_integrated_within_cells,
-            "raw_signal_within_cells_fraction": raw_signal_within_cells_fraction,
-
-            "cell_occupancy_fraction": cell_occupancy_fraction,
-            "cell_occupancy_percent": cell_occupancy_fraction * 100.0,
-            "cell_area_pixels": cell_area_pixels,
-            "total_cells": total_cells,
-            "analysis_area_pixels": total_image_pixels,
-        }
 
     @staticmethod
     def log_process_memory(prefix: str):
@@ -4695,6 +4456,16 @@ class EPSAnalysisWidget(QWidget):
             }
 
         metrics.update(extra_metrics)
+        self.biofilm_metric_service.calculate_microcolony_eps_metrics(
+            time=time,
+            position=position,
+            eps_channel=channel,
+            analysis_method=str(
+                metrics.get("analysis_method", self.get_analysis_method())
+            ),
+            raw_eps_frame=image,
+            eps_mask=None if raw_intensity_mode else eps_mask,
+        )
         return metrics
 
     def should_export_visuals_for_position(self, position: int) -> bool:

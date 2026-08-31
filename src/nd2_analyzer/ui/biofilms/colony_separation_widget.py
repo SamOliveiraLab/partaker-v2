@@ -2,6 +2,8 @@
 Colony Separation Widget - Separate tab for manual and automatic colony detection
 """
 
+from pathlib import Path
+
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QSlider, QTabWidget, QGroupBox, QRadioButton, QButtonGroup, QSpinBox, QFileDialog, QProgressBar
@@ -34,6 +36,7 @@ class ColonySeparationWidget(QWidget):
         # Initialize storage for manual and auto-verified colonies
         self.manual_additions = []
         self.detected_colonies = []
+        self.colonies_by_frame = {}
 
         # Subscribe to image updates
         pub.subscribe(self.on_image_ready, "image_ready")
@@ -136,7 +139,13 @@ class ColonySeparationWidget(QWidget):
             return
 
         # Checks if colonies exists before exporting
-        if not hasattr(self, 'colony_separator') or not self.colony_separator.get_all_colonies():
+        if (
+            not self.colonies_by_frame
+            and (
+                not hasattr(self, 'colony_separator')
+                or not self.colony_separator.get_all_colonies()
+            )
+        ):
             print("DEBUG: No colonies found")
             self.progress_label.setText("No colonies to export. Detect colonies first.")
             return
@@ -150,7 +159,11 @@ class ColonySeparationWidget(QWidget):
         # Create exporter and start export
         exporter = ColonyMetricExporter(
             image_data=image_data,
-            colonies=self.colony_separator.get_all_colonies(),
+            colonies=(
+                self.colonies_by_frame
+                if self.colonies_by_frame
+                else self.colony_separator.get_all_colonies()
+            ),
             segmentation_storage=image_data.segmentation_cache,
             model_name = image_data.segmentation_cache.model_name,
             voxel_size = image_data.voxel_size
@@ -165,12 +178,25 @@ class ColonySeparationWidget(QWidget):
 
         import traceback
         try:
-            exporter.export_csv("./colonies.csv")
+            project_root = Path(__file__).resolve().parents[4]
+            output_root = project_root / "analysis_results"
+            output_root.mkdir(parents=True, exist_ok=True)
+            exporter.export_csv(output_root / "colonies.csv")
+            graph_paths = exporter.export_time_resolved_graphs(
+                output_root / "microcolony_graphs"
+            )
             shape = image_data.get(0, 0, 0).shape
-            exporter.export_grids("./density_outputs", shape)
+            exporter.export_grids(output_root / "density_outputs", shape)
 
-            exported_count = len(exporter.colonies)  # or rows if you prefer
-            self.progress_label.setText(f"Successfully exported {exported_count} colonies")
+            exported_count = (
+                sum(len(colonies) for colonies in exporter.colonies.values())
+                if isinstance(exporter.colonies, dict)
+                else len(exporter.colonies)
+            )
+            self.progress_label.setText(
+                f"Successfully exported {exported_count} colonies and "
+                f"{len(graph_paths)} time-resolved graphs to analysis_results"
+            )
 
         except Exception as e:
             traceback.print_exc()
@@ -332,12 +358,26 @@ class ColonySeparationWidget(QWidget):
         verify_dialog.current_time = self.current_time
         verify_dialog.current_position = self.current_position
         verify_dialog.current_channel = self.current_channel
+        verify_dialog.batch_colonies_verified.connect(self.handle_batch_verified_colonies)
         verify_dialog.colonies_verified.connect(self.handle_verified_colonies)
         result = verify_dialog.exec()
         if result:
             self.status_label.setText(f"✅ Automatic detection complete: {len(self.get_all_colonies())} colonies.")
         else:
             self.status_label.setText("Automatic detection cancelled.")
+
+    def handle_batch_verified_colonies(self, colonies_by_frame, params):
+        """Store and calculate the complete time-resolved verification batch."""
+        from nd2_analyzer.data.image_data import ImageData
+
+        self.auto_detect_params = params
+        self.colonies_by_frame = dict(colonies_by_frame)
+        image_data = ImageData.get_instance()
+        image_data.biofilm_metric_service.replace_microcolony_candidates(
+            self.colonies_by_frame,
+            model_name=image_data.segmentation_cache.model_name,
+            voxel_size=image_data.voxel_size,
+        )
 
     def handle_verified_colonies(self, verified_colonies, params):
         """Handle colonies verified by autodetection"""
