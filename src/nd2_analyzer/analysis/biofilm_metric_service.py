@@ -16,6 +16,7 @@ import numpy as np
 import polars as pl
 from scipy.ndimage import distance_transform_edt
 from skimage.measure import label, regionprops
+from nd2_analyzer.analysis.valid_region import valid_labels
 
 
 class BiofilmMetricService:
@@ -309,7 +310,7 @@ class BiofilmMetricService:
             voxel_size=None,
     ) -> list[dict]:
         """Calculate scalar geometry for every labeled cell in one frame."""
-        labeled_image = label(np.asarray(labeled_image))
+        labeled_image = valid_labels(labeled_image)
         has_voxel = (
             voxel_size is not None
             and getattr(voxel_size, "x", None)
@@ -427,7 +428,7 @@ class BiofilmMetricService:
                 channel = 0
 
             segmented = np.asarray(cache[(time, position, channel, model_name)])
-            labeled = label(segmented)
+            labeled = valid_labels(segmented)
             raw_image = np.asarray(self.get_image(time, position, channel))
             frame_cells = self.calculate_cell_geometry(
                 labeled,
@@ -572,6 +573,13 @@ class BiofilmMetricService:
         )
         metrics = {
             "colony_id": int(colony["colony_id"]),
+            "border_clipped": bool(colony.get("border_clipped", False)),
+            "fixed_roi": bool(colony.get("fixed_roi", False)),
+            "track_id": colony.get("track_id"),
+            "tracking_status": colony.get("tracking_status"),
+            "tracking_review": colony.get("tracking_review", False),
+            "tracking_event": colony.get("tracking_event", ""),
+            "tracking_parent_ids": colony.get("tracking_parent_ids", "[]"),
             "area": area,
             "area_px": area,
             "perimeter": perimeter,
@@ -664,11 +672,16 @@ class BiofilmMetricService:
             "time": int(colony["time"]),
             "colony_channel": int(colony["channel"]),
             "colony_id": int(colony["colony_id"]),
+            "track_id": colony.get("track_id"),
+            "tracking_status": colony.get("tracking_status"),
+            "tracking_review": colony.get("tracking_review", False),
+            "tracking_event": colony.get("tracking_event", ""),
+            "tracking_parent_ids": colony.get("tracking_parent_ids", "[]"),
             "cell_channel": int(cell.get("c", 0)),
             "cell_id": int(cell["cell_id"]),
         }
         for key, value in cell.items():
-            if key in {"t", "p", "c", "cell_id", "raw_img", "mask"}:
+            if key in {"t", "p", "c", "cell_id", "raw_img", "mask", "track_id", "tracking_status", "tracking_review", "tracking_event", "tracking_parent_ids"}:
                 continue
             if not isinstance(value, np.ndarray):
                 row[key] = value
@@ -712,23 +725,23 @@ class BiofilmMetricService:
             voxel_size=voxel_size,
             include_patches=True,
         )
-        cells_by_frame: dict[tuple[int, int], list[dict]] = defaultdict(list)
+        cells_by_frame: dict[tuple[int, int, int], list[dict]] = defaultdict(list)
         for cell in all_cells:
-            cells_by_frame[(int(cell["t"]), int(cell["p"]))].append(cell)
+            cells_by_frame[(int(cell["t"]), int(cell["p"]), int(cell["c"]))].append(cell)
 
         cache = self.segmentation_cache.with_model(model_name)
         _mmap_array, index_set = cache.mmap_arrays_idx[cache.model_name]
-        cell_masks_by_frame: dict[tuple[int, int], np.ndarray] = {}
+        cell_masks_by_frame: dict[tuple[int, int, int], np.ndarray] = {}
         for index in sorted(index_set):
             if len(index) == 3:
                 cell_time, cell_position, cell_channel = index
             else:
                 cell_time, cell_position = index
                 cell_channel = 0
-            segmented = np.asarray(
+            segmented = valid_labels(np.asarray(
                 cache[(cell_time, cell_position, cell_channel, model_name)]
-            ) > 0
-            mask_key = (int(cell_time), int(cell_position))
+            )) > 0
+            mask_key = (int(cell_time), int(cell_position), int(cell_channel))
             if mask_key in cell_masks_by_frame:
                 cell_masks_by_frame[mask_key] |= segmented
             else:
@@ -745,7 +758,11 @@ class BiofilmMetricService:
                 "colony_count": len(colonies),
                 "neighbor_radius_px": float(neighbor_radius_px),
             })
-            frame_cells = cells_by_frame.get((time, position), [])
+            channels = {c for t, p, c in cell_masks_by_frame if p == position and t == time}
+            cell_channel = channel if channel in channels else next(iter(channels)) if len(channels) == 1 else None
+            if channels and cell_channel is None:
+                raise ValueError(f"Ambiguous cell channel for position {position}, frame {time}.")
+            frame_cells = cells_by_frame.get((time, position, cell_channel), [])
             colony_cell_map = self.assign_cells_to_colonies(frame_cells, colonies)
             current_rows = []
             for colony in colonies:
@@ -753,7 +770,7 @@ class BiofilmMetricService:
                 colony_row = self.calculate_colony_metrics(
                     colony, assigned_cells, voxel_size
                 )
-                cell_mask = cell_masks_by_frame.get((time, position))
+                cell_mask = cell_masks_by_frame.get((time, position, cell_channel))
                 if cell_mask is not None:
                     colony_mask = self._colony_mask(colony, cell_mask.shape)
                     cell_biomass_area_px = int(
@@ -855,6 +872,11 @@ class BiofilmMetricService:
                     "time": int(time),
                     "colony_channel": int(colony_channel),
                     "colony_id": int(colony["colony_id"]),
+                    "track_id": colony.get("track_id"),
+                    "tracking_status": colony.get("tracking_status"),
+                    "tracking_review": colony.get("tracking_review", False),
+                    "tracking_event": colony.get("tracking_event", ""),
+                    "tracking_parent_ids": colony.get("tracking_parent_ids", "[]"),
                     "eps_channel": int(eps_channel),
                     "analysis_method": str(analysis_method),
                     "eps_biomass_area_px": eps_area_px,

@@ -539,6 +539,94 @@ class ColonyMetricExporter:
             plt.close(fig)
         return True
 
+    @staticmethod
+    def _plot_tracking_figures(colonies, output_dir: Path) -> list[Path]:
+        """Export separate and combined tracking panels for one position/channel."""
+        import matplotlib.pyplot as plt
+        from matplotlib.ticker import MaxNLocator
+
+        required = {"track_id", "time", "area", "centroid_x", "centroid_y"}
+        if not required.issubset(colonies.columns):
+            return []
+        data = colonies.dropna(subset=["track_id", "time"]).copy()
+        if data.empty:
+            return []
+        data = data.sort_values(["track_id", "time"])
+        palette = ["#0072B2", "#D55E00", "#009E73", "#CC79A7",
+                   "#E69F00", "#56B4E9", "#595959"]
+        tracks = list(data.groupby("track_id", sort=True))
+        titles = ["Relative segmented area", "Track visibility", "Centroid displacement"]
+        names = ["relative_segmented_area", "track_visibility", "centroid_displacement"]
+
+        def draw(ax, panel):
+            for row_index, (track_id, rows) in enumerate(tracks):
+                color = palette[row_index % len(palette)]
+                label = f"T{int(track_id)}"
+                t = rows["time"].to_numpy(dtype=float)
+                if panel == 1:
+                    ax.scatter(t, np.full(len(t), row_index), color=color,
+                               marker="s", s=65, edgecolors="white", linewidths=0.5)
+                    continue
+                if panel == 0:
+                    area = rows["area"].to_numpy(dtype=float)
+                    values = area / area[0] if np.isfinite(area[0]) and area[0] > 0 else np.full(len(t), np.nan)
+                else:
+                    xy = rows[["centroid_x", "centroid_y"]].to_numpy(dtype=float)
+                    values = np.linalg.norm(xy - xy[0], axis=1)
+                # Leave missing frames disconnected, rather than implying observations.
+                for segment_index, indices in enumerate(np.split(np.arange(len(t)), np.where(np.diff(t) > 1)[0] + 1)):
+                    ax.plot(t[indices], values[indices], "-o", color=color, lw=1.5,
+                            ms=3.5, label=label if segment_index == 0 else None)
+            ax.set_title(titles[panel], loc="left", fontweight="bold", pad=12)
+            ax.set_xlabel("Frame")
+            ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+            ax.set_xlim(data["time"].min() - 0.4, data["time"].max() + 0.4)
+            ax.spines[["top", "right"]].set_visible(False)
+            ax.grid(axis="y", alpha=0.15)
+            ax.set_axisbelow(True)
+            if panel == 0:
+                ax.set_ylabel("Area / area at first observation")
+                ax.axhline(1, color="0.6", ls="--", lw=0.6)
+            elif panel == 1:
+                ax.set_yticks(range(len(tracks)), [f"T{int(tid)}" for tid, _ in tracks])
+                ax.set_ylim(len(tracks) - 0.5, -0.5)
+                ax.set_ylabel("Exported track ID")
+            else:
+                ax.set_ylabel("Displacement from first centroid (pixels)")
+            if panel != 1:
+                ax.legend(frameon=False, fontsize=8, ncol=min(4, len(tracks)),
+                          loc="upper center", bbox_to_anchor=(0.5, -0.2))
+
+        paths = []
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        with plt.rc_context({"font.size": 10, "svg.fonttype": "none"}):
+            for panel, name in enumerate(names):
+                fig, ax = plt.subplots(figsize=(6.5, max(4.5, len(tracks) * 0.25) if panel == 1 else 4.5))
+                try:
+                    draw(ax, panel)
+                    fig.tight_layout()
+                    for extension in ("png", "svg"):
+                        path = output_dir / f"colony_tracking_{name}.{extension}"
+                        fig.savefig(path, dpi=300, bbox_inches="tight", facecolor="white")
+                        paths.append(path)
+                finally:
+                    plt.close(fig)
+            fig, axes = plt.subplots(1, 3, figsize=(15, max(4.5, len(tracks) * 0.25)))
+            try:
+                for panel, ax in enumerate(axes):
+                    draw(ax, panel)
+                    ax.set_title(f"{'ABC'[panel]}  {titles[panel]}", loc="left", fontweight="bold")
+                fig.suptitle("Colony tracking", fontweight="bold", fontsize=15)
+                fig.tight_layout()
+                for extension in ("png", "svg"):
+                    path = output_dir / f"colony_tracking_combined.{extension}"
+                    fig.savefig(path, dpi=300, bbox_inches="tight", facecolor="white")
+                    paths.append(path)
+            finally:
+                plt.close(fig)
+        return paths
+
     def export_time_resolved_graphs(self, output_dir: str | Path) -> list[Path]:
         """Export time-resolved microcolony summaries from centralized tables."""
         output_root = Path(output_dir)
@@ -565,6 +653,8 @@ class ColonyMetricExporter:
                 / f"colony_channel_{int(colony_channel)}"
             )
             group_dir.mkdir(parents=True, exist_ok=True)
+
+            exported_paths.extend(self._plot_tracking_figures(colony_rows, group_dir))
 
             spatial_path = group_dir / "microcolony_spatial_context_over_time.png"
             if self._plot_spatial_context(
@@ -729,7 +819,8 @@ class ColonyMetricExporter:
         plt.figure(figsize=(8, 6))
 
         # Set max intensity at 95th percentile
-        vmax = np.percentile(grid[grid > 0], 95)
+        positive = grid[grid > 0]
+        vmax = np.percentile(positive, 95) if positive.size else 1.0
 
         ax = sns.heatmap(
             grid,
@@ -901,7 +992,14 @@ class ColonyMetricExporter:
         os.makedirs(output_dir, exist_ok=True)
 
         # 1. compute cells
-        cell_data = self.return_cell_metrics()
+        from nd2_analyzer.analysis.valid_region import BORDER_PX, valid_mask
+        valid_mask(shape)  # Validate the same border used by images and metrics.
+        shape = (shape[0] - 2 * BORDER_PX, shape[1] - 2 * BORDER_PX)
+        membership = self.biofilm_metric_service.get_colony_cell_results()
+        cell_data = [dict(row, t=row['time'], p=row['position'], c=row['cell_channel'],
+                          centroid_x=row['centroid_x']-BORDER_PX,
+                          centroid_y=row['centroid_y']-BORDER_PX)
+                     for row in membership.to_dicts()]
         print("Returned Cell Metrics for Grid!")
 
         # 2. build grid
