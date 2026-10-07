@@ -4,6 +4,8 @@ from PySide6.QtCore import Qt, Signal, QPoint
 from PySide6.QtGui import QPixmap, QImage, QPainter, QPen, QColor, QFont
 import numpy as np
 import cv2
+from nd2_analyzer.analysis.valid_region import BORDER_PX
+from nd2_analyzer.analysis.colony_regions import analysis_image, interior_colonies
 
 
 class ColonyROISelector(QDialog):
@@ -21,26 +23,11 @@ class ColonyROISelector(QDialog):
         self.existing_colonies = existing_colonies or []
         self.current_colonies = []
 
-        # Convert existing colonies
+        # Normalize old selections before displaying the cropped field.
         if self.existing_colonies:
-            print(f"DEBUG: Converting {len(self.existing_colonies)} existing colonies")
-            for i, colony in enumerate(self.existing_colonies):
-                print(f"DEBUG: Converting colony {i + 1}: {colony.keys()}")
-                points = colony['polygon']
-                mask = self.create_mask_from_polygon(points)
-                # Converts polygon to contour (OpenCV format)
-                contour = np.array(points, dtype=np.int32).reshape((-1, 1, 2))
-                area = cv2.contourArea(contour)
-                converted_colony = {
-                    "colony_id": len(self.current_colonies) + 1,
-                    "polygon": points,
-                    "contour": contour,
-                    "mask": mask,
-                    "area": area,
-                    "source": "manual"
-                }
-                self.current_colonies.append(converted_colony)
-                print(f"DEBUG: Added colony {converted_colony['colony_id']} with {len(colony['polygon'])} points")
+            self.current_colonies, _ = interior_colonies(
+                self.existing_colonies, self.image_data.shape[:2]
+            )
 
         print(f"DEBUG: Dialog now has {len(self.current_colonies)} colonies to display")
 
@@ -53,6 +40,7 @@ class ColonyROISelector(QDialog):
 
         self.init_ui()
         self.setup_image()
+        self.update_colonies_list()
 
     def init_ui(self):
         """Initialize the user interface"""
@@ -76,7 +64,7 @@ class ColonyROISelector(QDialog):
         left_layout.addWidget(scroll_area)
 
         # Instructions
-        instructions = QLabel("Click on image to draw polygon around biofilm colony")
+        instructions = QLabel("Draw polygons around colonies in the analysis field (15-pixel border excluded).")
         instructions.setStyleSheet("color: #666; font-style: italic; padding: 5px;")
         left_layout.addWidget(instructions)
 
@@ -172,6 +160,7 @@ class ColonyROISelector(QDialog):
             self.image_label.setText("No image data")
             return
 
+        analysis_image(self.image_data)  # Check the shared analysis dimensions.
         # Convert image to displayable format
         if len(self.image_data.shape) == 2:
             # Grayscale image
@@ -233,6 +222,7 @@ class ColonyROISelector(QDialog):
             point = self.current_polygon[0]
             cv2.circle(display_image, tuple(point), 4, (255, 0, 0), -1)
 
+        display_image = np.ascontiguousarray(analysis_image(display_image))
         # Convert to QPixmap and display
         height, width = display_image.shape[:2]
         bytes_per_line = 3 * width
@@ -257,8 +247,8 @@ class ColonyROISelector(QDialog):
             scale_y = pixmap_size.height() / label_size.height()
 
             # Convert coordinates
-            image_x = int(click_pos.x() * scale_x)
-            image_y = int(click_pos.y() * scale_y)
+            image_x = int(np.clip(click_pos.x() * scale_x, 0, pixmap_size.width()-1)) + BORDER_PX
+            image_y = int(np.clip(click_pos.y() * scale_y, 0, pixmap_size.height()-1)) + BORDER_PX
 
             # Add point to current polygon
             self.current_polygon.append([image_x, image_y])
@@ -296,7 +286,10 @@ class ColonyROISelector(QDialog):
             "source": "manual"
         }
 
-        self.current_colonies.append(colony_data)
+        pieces, _ = interior_colonies([colony_data], self.image_data.shape[:2])
+        self.current_colonies.extend(pieces)
+        for i, colony in enumerate(self.current_colonies, 1):
+            colony["colony_id"] = i
         self.current_polygon = []
 
         self.update_polygon_controls()
@@ -311,10 +304,10 @@ class ColonyROISelector(QDialog):
 
     def create_mask_from_polygon(self, polygon_points):
         """Create binary mask from polygon points"""
-        if not hasattr(self, 'original_image'):
+        if self.image_data is None:
             return None
 
-        mask = np.zeros(self.original_image.shape[:2], dtype=np.uint8)
+        mask = np.zeros(self.image_data.shape[:2], dtype=np.uint8)
         points = np.array(polygon_points, dtype=np.int32)
         cv2.fillPoly(mask, [points], 1)
         return mask

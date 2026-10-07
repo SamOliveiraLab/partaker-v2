@@ -1,0 +1,1871 @@
+{
+  "schema_version": 1,
+  "run_id": "d38c28de-c18e-4e3e-bed4-a53ffabe705e",
+  "dataset_id": "86345802880542659364f089881142c5ce97f7fdeb3eb1c6da06ec0df98a4a01",
+  "sample_id": "m",
+  "treatment": "",
+  "analysis_mode": "live_dead",
+  "started_at_utc": "2026-10-04T18:41:25.649692+00:00",
+  "status": "complete",
+  "sources": [
+    {
+      "path": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-phc-p1.tif",
+      "size_bytes": 10772890,
+      "modified_time_ns": 1788544098000000000
+    },
+    {
+      "path": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-phc-p2.tif",
+      "size_bytes": 10514318,
+      "modified_time_ns": 1788544328000000000
+    },
+    {
+      "path": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-phc-p3.tif",
+      "size_bytes": 10687230,
+      "modified_time_ns": 1788544502000000000
+    },
+    {
+      "path": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-phc-p4.tif",
+      "size_bytes": 10550098,
+      "modified_time_ns": 1788544702000000000
+    },
+    {
+      "path": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-phc-p5.tif",
+      "size_bytes": 10731750,
+      "modified_time_ns": 1788544856000000000
+    },
+    {
+      "path": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-rfp-p1.tif",
+      "size_bytes": 9952158,
+      "modified_time_ns": 1788544246000000000
+    },
+    {
+      "path": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-rfp-p2.tif",
+      "size_bytes": 9080938,
+      "modified_time_ns": 1788544408000000000
+    },
+    {
+      "path": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-rfp-p3.tif",
+      "size_bytes": 9730574,
+      "modified_time_ns": 1788544570000000000
+    },
+    {
+      "path": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-rfp-p4.tif",
+      "size_bytes": 9537300,
+      "modified_time_ns": 1788544794000000000
+    },
+    {
+      "path": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-rfp-p5.tif",
+      "size_bytes": 10201672,
+      "modified_time_ns": 1788545006000000000
+    },
+    {
+      "path": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-gfp-p1.tif",
+      "size_bytes": 8885751,
+      "modified_time_ns": 1788544182000000000
+    },
+    {
+      "path": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-gfp-p2.tif",
+      "size_bytes": 8341579,
+      "modified_time_ns": 1788544360000000000
+    },
+    {
+      "path": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-gfp-p3.tif",
+      "size_bytes": 8651705,
+      "modified_time_ns": 1788544528000000000
+    },
+    {
+      "path": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-gfp-p4.tif",
+      "size_bytes": 8594339,
+      "modified_time_ns": 1788544740000000000
+    },
+    {
+      "path": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-gfp-p5.tif",
+      "size_bytes": 9034045,
+      "modified_time_ns": 1788544892000000000
+    }
+  ],
+  "source_dimensions": [
+    1,
+    5,
+    3,
+    2044,
+    2048
+  ],
+  "source_axes": "TPCYX",
+  "source_dtype": "uint16",
+  "tiff_file_map": {
+    "0,0,0": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-phc-p1.tif",
+    "1,0,0": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-phc-p2.tif",
+    "2,0,0": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-phc-p3.tif",
+    "3,0,0": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-phc-p4.tif",
+    "4,0,0": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-phc-p5.tif",
+    "0,0,1": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-rfp-p1.tif",
+    "1,0,1": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-rfp-p2.tif",
+    "2,0,1": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-rfp-p3.tif",
+    "3,0,1": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-rfp-p4.tif",
+    "4,0,1": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-rfp-p5.tif",
+    "0,0,2": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-gfp-p1.tif",
+    "1,0,2": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-gfp-p2.tif",
+    "2,0,2": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-gfp-p3.tif",
+    "3,0,2": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-gfp-p4.tif",
+    "4,0,2": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/s-29-peptide-09-01-26 (5)/T48+16/Key-folder/C2-Brot/LiveDead/brot-gfp-p5.tif"
+  },
+  "tiff_source_axis_values": {
+    "positions": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "channels": [
+      0,
+      1,
+      2
+    ],
+    "times": [
+      0
+    ],
+    "interpretation": "Loaded position/channel/time indices refer to these sorted source IDs; stacked TIFF time is its zero-based page index."
+  },
+  "tiff_import_mode": "batch_tiff",
+  "source_mapping": "For directory TIFFs use the stored file map; for stacks use loader time index; otherwise use T/P/C indices in the source dataset.",
+  "channel_assignments": {
+    "live": 2,
+    "dead": 1,
+    "cell": 0
+  },
+  "configured_channel_names": {
+    "mcherry": "mCherry",
+    "yfp": "YFP",
+    "1": "mCherry",
+    "2": "YFP"
+  },
+  "pixel_calibration": {
+    "x_um": null,
+    "y_um": null,
+    "status": "unavailable",
+    "morphology_fallback_um": 0.064971092928405,
+    "fluorescence_morphology_radius_pixels": null
+  },
+  "transforms": {
+    "crop_xywh": null,
+    "registration_offsets_xy_by_time": null,
+    "application_order": [
+      "crop",
+      "registration"
+    ],
+    "registration_implementation": "ShiftedImage_2D_numba",
+    "registration_sampling": "Output (y,x) samples cropped input (y-YShift,x-XShift), with nearest-edge padding.",
+    "coordinate_space": "cropped_registered_analysis_frame",
+    "bounding_box_maximum": "exclusive"
+  },
+  "segmentation": {
+    "cell_channel": 0,
+    "cell_view_type": "Phase Contrast",
+    "model_name": "omnipose_bact_phase",
+    "source": "partaker_segmented_mask",
+    "fluorescence_cell_threshold": 165,
+    "fluorescence_cell_morphology_radius_pixels": 5,
+    "cell_ids": "frame-specific segmentation labels; not tracked identities"
+  },
+  "processing": {
+    "threshold_uint8": 10,
+    "threshold_raw_equivalent": null,
+    "threshold_corrected_equivalent": 3294.4313725490197,
+    "black_point_raw": 754.0,
+    "white_point_raw": 65535.0,
+    "window_source": "partaker_setup_dialog_manual_samples_raw_scope_min_max",
+    "smoothing_sigma": 1.5,
+    "background_subtraction": true,
+    "background_method": "manual_samples_mean",
+    "background_margin_pixels": 0,
+    "background_upper_cutoffs": [],
+    "background_include_cells": false,
+    "background_signal_thresholds": [],
+    "background_exclusion_rule": "Manual rectangles only; finite pixels sampled without cell/threshold exclusion",
+    "background_samples": [
+      [
+        0,
+        0,
+        1,
+        1000,
+        827,
+        100,
+        100
+      ],
+      [
+        0,
+        0,
+        1,
+        462,
+        770,
+        100,
+        100
+      ],
+      [
+        0,
+        0,
+        1,
+        706,
+        1557,
+        100,
+        100
+      ],
+      [
+        0,
+        0,
+        2,
+        1000,
+        827,
+        100,
+        100
+      ],
+      [
+        0,
+        0,
+        2,
+        462,
+        770,
+        100,
+        100
+      ],
+      [
+        0,
+        0,
+        2,
+        706,
+        1557,
+        100,
+        100
+      ],
+      [
+        0,
+        1,
+        1,
+        1416,
+        686,
+        100,
+        100
+      ],
+      [
+        0,
+        1,
+        1,
+        206,
+        1135,
+        100,
+        100
+      ],
+      [
+        0,
+        1,
+        1,
+        866,
+        1442,
+        100,
+        100
+      ],
+      [
+        0,
+        1,
+        2,
+        1416,
+        686,
+        100,
+        100
+      ],
+      [
+        0,
+        1,
+        2,
+        206,
+        1135,
+        100,
+        100
+      ],
+      [
+        0,
+        1,
+        2,
+        866,
+        1442,
+        100,
+        100
+      ],
+      [
+        0,
+        2,
+        1,
+        846,
+        891,
+        100,
+        100
+      ],
+      [
+        0,
+        2,
+        1,
+        411,
+        1801,
+        100,
+        100
+      ],
+      [
+        0,
+        2,
+        1,
+        1685,
+        782,
+        100,
+        100
+      ],
+      [
+        0,
+        2,
+        2,
+        846,
+        891,
+        100,
+        100
+      ],
+      [
+        0,
+        2,
+        2,
+        411,
+        1801,
+        100,
+        100
+      ],
+      [
+        0,
+        2,
+        2,
+        1685,
+        782,
+        100,
+        100
+      ],
+      [
+        0,
+        3,
+        1,
+        206,
+        590,
+        100,
+        100
+      ],
+      [
+        0,
+        3,
+        1,
+        1666,
+        1211,
+        100,
+        100
+      ],
+      [
+        0,
+        3,
+        1,
+        802,
+        296,
+        100,
+        100
+      ],
+      [
+        0,
+        3,
+        2,
+        206,
+        590,
+        100,
+        100
+      ],
+      [
+        0,
+        3,
+        2,
+        1666,
+        1211,
+        100,
+        100
+      ],
+      [
+        0,
+        3,
+        2,
+        802,
+        296,
+        100,
+        100
+      ],
+      [
+        0,
+        4,
+        1,
+        1679,
+        955,
+        100,
+        100
+      ],
+      [
+        0,
+        4,
+        1,
+        558,
+        680,
+        100,
+        100
+      ],
+      [
+        0,
+        4,
+        1,
+        1115,
+        1551,
+        100,
+        100
+      ],
+      [
+        0,
+        4,
+        2,
+        1679,
+        955,
+        100,
+        100
+      ],
+      [
+        0,
+        4,
+        2,
+        558,
+        680,
+        100,
+        100
+      ],
+      [
+        0,
+        4,
+        2,
+        1115,
+        1551,
+        100,
+        100
+      ]
+    ],
+    "background_sample_definition": "Exactly three non-overlapping integer rectangles per frame/channel; x,y,width,height; upper bounds exclusive; sample finite original intensities before smoothing; subtract pooled mean",
+    "background_sample_disagreement_rule": "Warn if (max sample mean - min sample mean) / abs(pooled mean) exceeds 0.20; warning does not block confirmation",
+    "background_frames": [
+      {
+        "time": 0,
+        "position": 0,
+        "channel": 2,
+        "method": "manual_samples_mean",
+        "value": 3337.6801666666665,
+        "mean": 3337.6801666666665,
+        "median": 3327.0,
+        "sd": 127.09387792745521,
+        "samples": [
+          {
+            "sample_id": 1,
+            "x": 1000,
+            "y": 827,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 1100,
+            "y_max_exclusive": 927,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 3455.348,
+            "median": 3455.0,
+            "sd": 97.47732298334829,
+            "segmented_cell_pixels": 0
+          },
+          {
+            "sample_id": 2,
+            "x": 462,
+            "y": 770,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 562,
+            "y_max_exclusive": 870,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 3286.0006,
+            "median": 3288.0,
+            "sd": 101.30248269238025,
+            "segmented_cell_pixels": 0
+          },
+          {
+            "sample_id": 3,
+            "x": 706,
+            "y": 1557,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 806,
+            "y_max_exclusive": 1657,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 3271.6919,
+            "median": 3272.0,
+            "sd": 88.45107107542565,
+            "segmented_cell_pixels": 0
+          }
+        ],
+        "eligible_pixels": 30000,
+        "eligible_fraction": 0.007166554549902153,
+        "mad": 88.0,
+        "regional_medians": [
+          3455.0,
+          3288.0,
+          3272.0
+        ],
+        "regional_median_range": 183.65610000000015,
+        "sample_mean_range": 183.65610000000015,
+        "sample_mean_relative_range": 0.05502507455153113,
+        "disagreement_threshold_relative_range": 0.2,
+        "status": "ok",
+        "margin_pixels": 0,
+        "upper_cutoff": null,
+        "averaging_method": "pooled finite raw pixels; weighted by valid pixel count",
+        "intensity_space": "raw before background subtraction and Gaussian smoothing",
+        "corrected_overlay_path": "background_samples/pos0_t0_live_background_samples_corrected.png",
+        "overlay_path": "background_samples/pos0_t0_live_background_samples.png",
+        "overlay_alpha": 0.3,
+        "overlay_rgb": [
+          0,
+          160,
+          255
+        ],
+        "display_percentiles": [
+          1.0,
+          99.8
+        ],
+        "display_low": 2800.0,
+        "display_high": 15546.777999999933
+      },
+      {
+        "time": 0,
+        "position": 0,
+        "channel": 1,
+        "method": "manual_samples_mean",
+        "value": 2120.0122,
+        "mean": 2120.0122,
+        "median": 2121.0,
+        "sd": 97.38592635057697,
+        "samples": [
+          {
+            "sample_id": 1,
+            "x": 1000,
+            "y": 827,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 1100,
+            "y_max_exclusive": 927,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 2143.0005,
+            "median": 2143.0,
+            "sd": 72.47938396364859,
+            "segmented_cell_pixels": 0
+          },
+          {
+            "sample_id": 2,
+            "x": 462,
+            "y": 770,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 562,
+            "y_max_exclusive": 870,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 2037.989,
+            "median": 2038.0,
+            "sd": 71.93913871461069,
+            "segmented_cell_pixels": 0
+          },
+          {
+            "sample_id": 3,
+            "x": 706,
+            "y": 1557,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 806,
+            "y_max_exclusive": 1657,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 2179.0471,
+            "median": 2173.0,
+            "sd": 85.33562258277607,
+            "segmented_cell_pixels": 0
+          }
+        ],
+        "eligible_pixels": 30000,
+        "eligible_fraction": 0.007166554549902153,
+        "mad": 65.0,
+        "regional_medians": [
+          2143.0,
+          2038.0,
+          2173.0
+        ],
+        "regional_median_range": 141.05809999999974,
+        "sample_mean_range": 141.05809999999974,
+        "sample_mean_relative_range": 0.06653645672416401,
+        "disagreement_threshold_relative_range": 0.2,
+        "status": "ok",
+        "margin_pixels": 0,
+        "upper_cutoff": null,
+        "averaging_method": "pooled finite raw pixels; weighted by valid pixel count",
+        "intensity_space": "raw before background subtraction and Gaussian smoothing",
+        "corrected_overlay_path": "background_samples/pos0_t0_dead_background_samples_corrected.png",
+        "overlay_path": "background_samples/pos0_t0_dead_background_samples.png",
+        "overlay_alpha": 0.3,
+        "overlay_rgb": [
+          0,
+          160,
+          255
+        ],
+        "display_percentiles": [
+          1.0,
+          99.8
+        ],
+        "display_low": 1762.0,
+        "display_high": 52231.3339999998
+      },
+      {
+        "time": 0,
+        "position": 1,
+        "channel": 2,
+        "method": "manual_samples_mean",
+        "value": 4011.7091666666665,
+        "mean": 4011.7091666666665,
+        "median": 3989.0,
+        "sd": 196.60214846903096,
+        "samples": [
+          {
+            "sample_id": 1,
+            "x": 1416,
+            "y": 686,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 1516,
+            "y_max_exclusive": 786,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 4232.9863,
+            "median": 4236.0,
+            "sd": 98.19006015025145,
+            "segmented_cell_pixels": 0
+          },
+          {
+            "sample_id": 2,
+            "x": 206,
+            "y": 1135,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 306,
+            "y_max_exclusive": 1235,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 3821.199,
+            "median": 3822.0,
+            "sd": 98.70066969884247,
+            "segmented_cell_pixels": 0
+          },
+          {
+            "sample_id": 3,
+            "x": 866,
+            "y": 1442,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 966,
+            "y_max_exclusive": 1542,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 3980.9422,
+            "median": 3981.0,
+            "sd": 101.832237818679,
+            "segmented_cell_pixels": 0
+          }
+        ],
+        "eligible_pixels": 30000,
+        "eligible_fraction": 0.007166554549902153,
+        "mad": 155.0,
+        "regional_medians": [
+          4236.0,
+          3822.0,
+          3981.0
+        ],
+        "regional_median_range": 411.7872999999995,
+        "sample_mean_range": 411.7872999999995,
+        "sample_mean_relative_range": 0.10264634919738064,
+        "disagreement_threshold_relative_range": 0.2,
+        "status": "ok",
+        "margin_pixels": 0,
+        "upper_cutoff": null,
+        "averaging_method": "pooled finite raw pixels; weighted by valid pixel count",
+        "intensity_space": "raw before background subtraction and Gaussian smoothing",
+        "corrected_overlay_path": "background_samples/pos1_t0_live_background_samples_corrected.png",
+        "overlay_path": "background_samples/pos1_t0_live_background_samples.png",
+        "overlay_alpha": 0.3,
+        "overlay_rgb": [
+          0,
+          160,
+          255
+        ],
+        "display_percentiles": [
+          1.0,
+          99.8
+        ],
+        "display_low": 3469.0,
+        "display_high": 13607.0
+      },
+      {
+        "time": 0,
+        "position": 1,
+        "channel": 1,
+        "method": "manual_samples_mean",
+        "value": 1892.3593666666666,
+        "mean": 1892.3593666666666,
+        "median": 1896.0,
+        "sd": 101.18466956806692,
+        "samples": [
+          {
+            "sample_id": 1,
+            "x": 1416,
+            "y": 686,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 1516,
+            "y_max_exclusive": 786,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 1955.0897,
+            "median": 1954.0,
+            "sd": 68.5739692150746,
+            "segmented_cell_pixels": 0
+          },
+          {
+            "sample_id": 2,
+            "x": 206,
+            "y": 1135,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 306,
+            "y_max_exclusive": 1235,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 1793.1708,
+            "median": 1793.0,
+            "sd": 62.81969458187456,
+            "segmented_cell_pixels": 0
+          },
+          {
+            "sample_id": 3,
+            "x": 866,
+            "y": 1442,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 966,
+            "y_max_exclusive": 1542,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 1928.8176,
+            "median": 1923.0,
+            "sd": 83.44842437242299,
+            "segmented_cell_pixels": 0
+          }
+        ],
+        "eligible_pixels": 30000,
+        "eligible_fraction": 0.007166554549902153,
+        "mad": 73.0,
+        "regional_medians": [
+          1954.0,
+          1793.0,
+          1923.0
+        ],
+        "regional_median_range": 161.9188999999999,
+        "sample_mean_range": 161.9188999999999,
+        "sample_mean_relative_range": 0.08556456181217582,
+        "disagreement_threshold_relative_range": 0.2,
+        "status": "ok",
+        "margin_pixels": 0,
+        "upper_cutoff": null,
+        "averaging_method": "pooled finite raw pixels; weighted by valid pixel count",
+        "intensity_space": "raw before background subtraction and Gaussian smoothing",
+        "corrected_overlay_path": "background_samples/pos1_t0_dead_background_samples_corrected.png",
+        "overlay_path": "background_samples/pos1_t0_dead_background_samples.png",
+        "overlay_alpha": 0.3,
+        "overlay_rgb": [
+          0,
+          160,
+          255
+        ],
+        "display_percentiles": [
+          1.0,
+          99.8
+        ],
+        "display_low": 1672.0,
+        "display_high": 41502.555999999866
+      },
+      {
+        "time": 0,
+        "position": 2,
+        "channel": 2,
+        "method": "manual_samples_mean",
+        "value": 4339.5287,
+        "mean": 4339.5287,
+        "median": 4421.0,
+        "sd": 276.15727736740286,
+        "samples": [
+          {
+            "sample_id": 1,
+            "x": 846,
+            "y": 891,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 946,
+            "y_max_exclusive": 991,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 4590.1269,
+            "median": 4588.0,
+            "sd": 113.05048339741852,
+            "segmented_cell_pixels": 0
+          },
+          {
+            "sample_id": 2,
+            "x": 411,
+            "y": 1801,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 511,
+            "y_max_exclusive": 1901,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 3990.2177,
+            "median": 3990.0,
+            "sd": 101.49113018737154,
+            "segmented_cell_pixels": 0
+          },
+          {
+            "sample_id": 3,
+            "x": 1685,
+            "y": 782,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 1785,
+            "y_max_exclusive": 882,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 4438.2415,
+            "median": 4437.5,
+            "sd": 105.57374094797437,
+            "segmented_cell_pixels": 0
+          }
+        ],
+        "eligible_pixels": 30000,
+        "eligible_fraction": 0.007166554549902153,
+        "mad": 188.0,
+        "regional_medians": [
+          4588.0,
+          3990.0,
+          4437.5
+        ],
+        "regional_median_range": 599.9092,
+        "sample_mean_range": 599.9092,
+        "sample_mean_relative_range": 0.13824293868594534,
+        "disagreement_threshold_relative_range": 0.2,
+        "status": "ok",
+        "margin_pixels": 0,
+        "upper_cutoff": null,
+        "averaging_method": "pooled finite raw pixels; weighted by valid pixel count",
+        "intensity_space": "raw before background subtraction and Gaussian smoothing",
+        "corrected_overlay_path": "background_samples/pos2_t0_live_background_samples_corrected.png",
+        "overlay_path": "background_samples/pos2_t0_live_background_samples.png",
+        "overlay_alpha": 0.3,
+        "overlay_rgb": [
+          0,
+          160,
+          255
+        ],
+        "display_percentiles": [
+          1.0,
+          99.8
+        ],
+        "display_low": 3861.0,
+        "display_high": 18355.0
+      },
+      {
+        "time": 0,
+        "position": 2,
+        "channel": 1,
+        "method": "manual_samples_mean",
+        "value": 2211.1755,
+        "mean": 2211.1755,
+        "median": 2176.0,
+        "sd": 259.62127307499924,
+        "samples": [
+          {
+            "sample_id": 1,
+            "x": 846,
+            "y": 891,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 946,
+            "y_max_exclusive": 991,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 2257.0135,
+            "median": 2256.0,
+            "sd": 74.51314728120133,
+            "segmented_cell_pixels": 0
+          },
+          {
+            "sample_id": 2,
+            "x": 411,
+            "y": 1801,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 511,
+            "y_max_exclusive": 1901,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 2365.1869,
+            "median": 2253.0,
+            "sd": 355.2715293523955,
+            "segmented_cell_pixels": 0
+          },
+          {
+            "sample_id": 3,
+            "x": 1685,
+            "y": 782,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 1785,
+            "y_max_exclusive": 882,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 2011.3261,
+            "median": 2010.0,
+            "sd": 68.4041764718354,
+            "segmented_cell_pixels": 0
+          }
+        ],
+        "eligible_pixels": 30000,
+        "eligible_fraction": 0.007166554549902153,
+        "mad": 129.0,
+        "regional_medians": [
+          2256.0,
+          2253.0,
+          2010.0
+        ],
+        "regional_median_range": 353.86080000000015,
+        "sample_mean_range": 353.86080000000015,
+        "sample_mean_relative_range": 0.16003288748450775,
+        "disagreement_threshold_relative_range": 0.2,
+        "status": "ok",
+        "margin_pixels": 0,
+        "upper_cutoff": null,
+        "averaging_method": "pooled finite raw pixels; weighted by valid pixel count",
+        "intensity_space": "raw before background subtraction and Gaussian smoothing",
+        "corrected_overlay_path": "background_samples/pos2_t0_dead_background_samples_corrected.png",
+        "overlay_path": "background_samples/pos2_t0_dead_background_samples.png",
+        "overlay_alpha": 0.3,
+        "overlay_rgb": [
+          0,
+          160,
+          255
+        ],
+        "display_percentiles": [
+          1.0,
+          99.8
+        ],
+        "display_low": 1811.0,
+        "display_high": 51556.0
+      },
+      {
+        "time": 0,
+        "position": 3,
+        "channel": 2,
+        "method": "manual_samples_mean",
+        "value": 4538.9322,
+        "mean": 4538.9322,
+        "median": 4560.0,
+        "sd": 206.07599553682454,
+        "samples": [
+          {
+            "sample_id": 1,
+            "x": 206,
+            "y": 590,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 306,
+            "y_max_exclusive": 690,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 4313.6155,
+            "median": 4312.0,
+            "sd": 119.98490096570484,
+            "segmented_cell_pixels": 0
+          },
+          {
+            "sample_id": 2,
+            "x": 1666,
+            "y": 1211,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 1766,
+            "y_max_exclusive": 1311,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 4730.9982,
+            "median": 4731.0,
+            "sd": 114.10218751960893,
+            "segmented_cell_pixels": 0
+          },
+          {
+            "sample_id": 3,
+            "x": 802,
+            "y": 296,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 902,
+            "y_max_exclusive": 396,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 4572.1829,
+            "median": 4574.0,
+            "sd": 105.94191544233094,
+            "segmented_cell_pixels": 0
+          }
+        ],
+        "eligible_pixels": 30000,
+        "eligible_fraction": 0.007166554549902153,
+        "mad": 153.0,
+        "regional_medians": [
+          4312.0,
+          4731.0,
+          4574.0
+        ],
+        "regional_median_range": 417.3827000000001,
+        "sample_mean_range": 417.3827000000001,
+        "sample_mean_relative_range": 0.09195614334137886,
+        "disagreement_threshold_relative_range": 0.2,
+        "status": "ok",
+        "margin_pixels": 0,
+        "upper_cutoff": null,
+        "averaging_method": "pooled finite raw pixels; weighted by valid pixel count",
+        "intensity_space": "raw before background subtraction and Gaussian smoothing",
+        "corrected_overlay_path": "background_samples/pos3_t0_live_background_samples_corrected.png",
+        "overlay_path": "background_samples/pos3_t0_live_background_samples.png",
+        "overlay_alpha": 0.3,
+        "overlay_rgb": [
+          0,
+          160,
+          255
+        ],
+        "display_percentiles": [
+          1.0,
+          99.8
+        ],
+        "display_low": 3983.0,
+        "display_high": 16095.777999999933
+      },
+      {
+        "time": 0,
+        "position": 3,
+        "channel": 1,
+        "method": "manual_samples_mean",
+        "value": 3687.964266666667,
+        "mean": 3687.964266666667,
+        "median": 3543.0,
+        "sd": 384.9736114633429,
+        "samples": [
+          {
+            "sample_id": 1,
+            "x": 206,
+            "y": 590,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 306,
+            "y_max_exclusive": 690,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 3536.2841,
+            "median": 3535.0,
+            "sd": 118.51562423237705,
+            "segmented_cell_pixels": 0
+          },
+          {
+            "sample_id": 2,
+            "x": 1666,
+            "y": 1211,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 1766,
+            "y_max_exclusive": 1311,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 4196.2527,
+            "median": 4198.0,
+            "sd": 107.23739945891079,
+            "segmented_cell_pixels": 0
+          },
+          {
+            "sample_id": 3,
+            "x": 802,
+            "y": 296,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 902,
+            "y_max_exclusive": 396,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 3331.356,
+            "median": 3331.0,
+            "sd": 102.6390338224206,
+            "segmented_cell_pixels": 0
+          }
+        ],
+        "eligible_pixels": 30000,
+        "eligible_fraction": 0.007166554549902153,
+        "mad": 228.0,
+        "regional_medians": [
+          3535.0,
+          4198.0,
+          3331.0
+        ],
+        "regional_median_range": 864.8966999999998,
+        "sample_mean_range": 864.8966999999998,
+        "sample_mean_relative_range": 0.23451873105639628,
+        "disagreement_threshold_relative_range": 0.2,
+        "status": "sample_means_disagree",
+        "margin_pixels": 0,
+        "upper_cutoff": null,
+        "averaging_method": "pooled finite raw pixels; weighted by valid pixel count",
+        "intensity_space": "raw before background subtraction and Gaussian smoothing",
+        "corrected_overlay_path": "background_samples/pos3_t0_dead_background_samples_corrected.png",
+        "overlay_path": "background_samples/pos3_t0_dead_background_samples.png",
+        "overlay_alpha": 0.3,
+        "overlay_rgb": [
+          0,
+          160,
+          255
+        ],
+        "display_percentiles": [
+          1.0,
+          99.8
+        ],
+        "display_low": 2842.0,
+        "display_high": 56158.0
+      },
+      {
+        "time": 0,
+        "position": 4,
+        "channel": 2,
+        "method": "manual_samples_mean",
+        "value": 4427.732733333333,
+        "mean": 4427.732733333333,
+        "median": 4425.0,
+        "sd": 139.1490267130732,
+        "samples": [
+          {
+            "sample_id": 1,
+            "x": 1679,
+            "y": 955,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 1779,
+            "y_max_exclusive": 1055,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 4441.1814,
+            "median": 4439.0,
+            "sd": 110.99101627627346,
+            "segmented_cell_pixels": 0
+          },
+          {
+            "sample_id": 2,
+            "x": 558,
+            "y": 680,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 658,
+            "y_max_exclusive": 780,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 4513.5173,
+            "median": 4503.5,
+            "sd": 126.49696162639638,
+            "segmented_cell_pixels": 0
+          },
+          {
+            "sample_id": 3,
+            "x": 1115,
+            "y": 1551,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 1215,
+            "y_max_exclusive": 1651,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 4328.4995,
+            "median": 4326.0,
+            "sd": 111.26443636557909,
+            "segmented_cell_pixels": 0
+          }
+        ],
+        "eligible_pixels": 30000,
+        "eligible_fraction": 0.007166554549902153,
+        "mad": 92.0,
+        "regional_medians": [
+          4439.0,
+          4503.5,
+          4326.0
+        ],
+        "regional_median_range": 185.01780000000053,
+        "sample_mean_range": 185.01780000000053,
+        "sample_mean_relative_range": 0.04178612647667951,
+        "disagreement_threshold_relative_range": 0.2,
+        "status": "ok",
+        "margin_pixels": 0,
+        "upper_cutoff": null,
+        "averaging_method": "pooled finite raw pixels; weighted by valid pixel count",
+        "intensity_space": "raw before background subtraction and Gaussian smoothing",
+        "corrected_overlay_path": "background_samples/pos4_t0_live_background_samples_corrected.png",
+        "overlay_path": "background_samples/pos4_t0_live_background_samples.png",
+        "overlay_alpha": 0.3,
+        "overlay_rgb": [
+          0,
+          160,
+          255
+        ],
+        "display_percentiles": [
+          1.0,
+          99.8
+        ],
+        "display_low": 3984.0,
+        "display_high": 33180.77799999993
+      },
+      {
+        "time": 0,
+        "position": 4,
+        "channel": 1,
+        "method": "manual_samples_mean",
+        "value": 3810.951233333333,
+        "mean": 3810.951233333333,
+        "median": 3783.0,
+        "sd": 315.70638783814974,
+        "samples": [
+          {
+            "sample_id": 1,
+            "x": 1679,
+            "y": 955,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 1779,
+            "y_max_exclusive": 1055,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 3844.1821,
+            "median": 3844.0,
+            "sd": 107.25593661700036,
+            "segmented_cell_pixels": 0
+          },
+          {
+            "sample_id": 2,
+            "x": 558,
+            "y": 680,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 658,
+            "y_max_exclusive": 780,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 3557.7295,
+            "median": 3555.0,
+            "sd": 101.99499953306534,
+            "segmented_cell_pixels": 0
+          },
+          {
+            "sample_id": 3,
+            "x": 1115,
+            "y": 1551,
+            "width": 100,
+            "height": 100,
+            "x_max_exclusive": 1215,
+            "y_max_exclusive": 1651,
+            "area_pixels": 10000,
+            "valid_pixels": 10000,
+            "mean": 4030.9421,
+            "median": 3914.0,
+            "sd": 404.3306022892529,
+            "segmented_cell_pixels": 0
+          }
+        ],
+        "eligible_pixels": 30000,
+        "eligible_fraction": 0.007166554549902153,
+        "mad": 150.0,
+        "regional_medians": [
+          3844.0,
+          3555.0,
+          3914.0
+        ],
+        "regional_median_range": 473.2126000000003,
+        "sample_mean_range": 473.2126000000003,
+        "sample_mean_relative_range": 0.12417178048906555,
+        "disagreement_threshold_relative_range": 0.2,
+        "status": "ok",
+        "margin_pixels": 0,
+        "upper_cutoff": null,
+        "averaging_method": "pooled finite raw pixels; weighted by valid pixel count",
+        "intensity_space": "raw before background subtraction and Gaussian smoothing",
+        "corrected_overlay_path": "background_samples/pos4_t0_dead_background_samples_corrected.png",
+        "overlay_path": "background_samples/pos4_t0_dead_background_samples.png",
+        "overlay_alpha": 0.3,
+        "overlay_rgb": [
+          0,
+          160,
+          255
+        ],
+        "display_percentiles": [
+          1.0,
+          99.8
+        ],
+        "display_low": 3357.0,
+        "display_high": 65535.0
+      }
+    ],
+    "background_reference_time": null,
+    "background_sigma": null,
+    "morphology_enabled": false,
+    "threshold_rule": "foreground = smoothed_uint8 >= threshold; optional morphology follows",
+    "accepted_setup": {
+      "positions": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "time_start": 0,
+      "time_end": 0,
+      "drop_frame_zero": false,
+      "live_channel": 2,
+      "dead_channel": 1,
+      "threshold_uint8": 10,
+      "processing_black_point_raw": 754.0,
+      "processing_white_point_raw": 65535.0,
+      "smoothing_sigma": 1.5,
+      "preview_position": 4,
+      "representative_timepoints": [
+        0
+      ],
+      "sampled_frame_keys": [
+        [
+          0,
+          0,
+          2
+        ],
+        [
+          0,
+          0,
+          1
+        ],
+        [
+          0,
+          1,
+          2
+        ],
+        [
+          0,
+          1,
+          1
+        ],
+        [
+          0,
+          2,
+          2
+        ],
+        [
+          0,
+          2,
+          1
+        ],
+        [
+          0,
+          3,
+          2
+        ],
+        [
+          0,
+          3,
+          1
+        ],
+        [
+          0,
+          4,
+          2
+        ],
+        [
+          0,
+          4,
+          1
+        ]
+      ],
+      "analysis_mode": "live_dead",
+      "capture_interval_value": 14.0,
+      "capture_interval_unit": "hr",
+      "processing_window_source": "partaker_setup_dialog_manual_samples_raw_scope_min_max",
+      "threshold_rule": "foreground = shared_uint8 >= threshold",
+      "background_enabled": true,
+      "background_margin_pixels": 0,
+      "background_upper_cutoffs": [],
+      "background_include_cells": false,
+      "background_signal_thresholds": [],
+      "background_method": "manual_samples_mean",
+      "background_samples": [
+        [
+          0,
+          0,
+          1,
+          1000,
+          827,
+          100,
+          100
+        ],
+        [
+          0,
+          0,
+          1,
+          462,
+          770,
+          100,
+          100
+        ],
+        [
+          0,
+          0,
+          1,
+          706,
+          1557,
+          100,
+          100
+        ],
+        [
+          0,
+          0,
+          2,
+          1000,
+          827,
+          100,
+          100
+        ],
+        [
+          0,
+          0,
+          2,
+          462,
+          770,
+          100,
+          100
+        ],
+        [
+          0,
+          0,
+          2,
+          706,
+          1557,
+          100,
+          100
+        ],
+        [
+          0,
+          1,
+          1,
+          1416,
+          686,
+          100,
+          100
+        ],
+        [
+          0,
+          1,
+          1,
+          206,
+          1135,
+          100,
+          100
+        ],
+        [
+          0,
+          1,
+          1,
+          866,
+          1442,
+          100,
+          100
+        ],
+        [
+          0,
+          1,
+          2,
+          1416,
+          686,
+          100,
+          100
+        ],
+        [
+          0,
+          1,
+          2,
+          206,
+          1135,
+          100,
+          100
+        ],
+        [
+          0,
+          1,
+          2,
+          866,
+          1442,
+          100,
+          100
+        ],
+        [
+          0,
+          2,
+          1,
+          846,
+          891,
+          100,
+          100
+        ],
+        [
+          0,
+          2,
+          1,
+          411,
+          1801,
+          100,
+          100
+        ],
+        [
+          0,
+          2,
+          1,
+          1685,
+          782,
+          100,
+          100
+        ],
+        [
+          0,
+          2,
+          2,
+          846,
+          891,
+          100,
+          100
+        ],
+        [
+          0,
+          2,
+          2,
+          411,
+          1801,
+          100,
+          100
+        ],
+        [
+          0,
+          2,
+          2,
+          1685,
+          782,
+          100,
+          100
+        ],
+        [
+          0,
+          3,
+          1,
+          206,
+          590,
+          100,
+          100
+        ],
+        [
+          0,
+          3,
+          1,
+          1666,
+          1211,
+          100,
+          100
+        ],
+        [
+          0,
+          3,
+          1,
+          802,
+          296,
+          100,
+          100
+        ],
+        [
+          0,
+          3,
+          2,
+          206,
+          590,
+          100,
+          100
+        ],
+        [
+          0,
+          3,
+          2,
+          1666,
+          1211,
+          100,
+          100
+        ],
+        [
+          0,
+          3,
+          2,
+          802,
+          296,
+          100,
+          100
+        ],
+        [
+          0,
+          4,
+          1,
+          1679,
+          955,
+          100,
+          100
+        ],
+        [
+          0,
+          4,
+          1,
+          558,
+          680,
+          100,
+          100
+        ],
+        [
+          0,
+          4,
+          1,
+          1115,
+          1551,
+          100,
+          100
+        ],
+        [
+          0,
+          4,
+          2,
+          1679,
+          955,
+          100,
+          100
+        ],
+        [
+          0,
+          4,
+          2,
+          558,
+          680,
+          100,
+          100
+        ],
+        [
+          0,
+          4,
+          2,
+          1115,
+          1551,
+          100,
+          100
+        ]
+      ]
+    }
+  },
+  "scope": {
+    "positions": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "time_start": 0,
+    "time_end": 0,
+    "skipped_times": [],
+    "frame_zero_dropped": false,
+    "capture_interval_value": 14.0,
+    "capture_interval_unit": "hr",
+    "requested_frames": [
+      {
+        "time": 0,
+        "position": 0
+      },
+      {
+        "time": 0,
+        "position": 1
+      },
+      {
+        "time": 0,
+        "position": 2
+      },
+      {
+        "time": 0,
+        "position": 3
+      },
+      {
+        "time": 0,
+        "position": 4
+      }
+    ]
+  },
+  "measurements": {
+    "raw_intensity": "ImageData.get() after crop/registration, before background correction, smoothing or uint8 conversion",
+    "corrected_intensity": "Raw minus per-frame/channel pooled manual-sample mean (or legacy cell-free median); negative values retained",
+    "whole_cell": "All finite fluorescence pixels in each cell footprint, independently of fluorescence threshold",
+    "positive_region": "Cell label intersected with the final fluorescence-positive mask",
+    "nonfinite_values": "Excluded; valid pixel counts and intensity statuses are exported",
+    "empty_positive_region": "Mean and sum are zero to match existing overlap-based metrics; status explicitly marks empty regions",
+    "ratio": "dead whole-cell mean divided by live whole-cell mean; nonpositive denominator or unavailable intensities yield null",
+    "overlap_fraction": "Intersection divided by its named denominator; zero denominators yield null"
+  },
+  "save_fluorescence_positive_masks": true,
+  "mask_format": {
+    "version": 1,
+    "bitorder": "little",
+    "flatten_order": "C",
+    "cell_labels": "integer label array, zero background; IDs preserved"
+  },
+  "csv_columns": [
+    "run_id",
+    "dataset_id",
+    "sample_id",
+    "treatment",
+    "analysis_mode",
+    "position",
+    "time",
+    "time_hours",
+    "cell_id",
+    "cell_channel",
+    "cell_area_pixels",
+    "cell_area_um2",
+    "centroid_x",
+    "centroid_y",
+    "bbox_x_min",
+    "bbox_y_min",
+    "bbox_x_max",
+    "bbox_y_max",
+    "live_channel",
+    "live_whole_cell_mean_intensity",
+    "live_whole_cell_integrated_intensity",
+    "live_whole_cell_valid_pixels",
+    "live_whole_cell_intensity_status",
+    "live_positive_area_pixels",
+    "live_positive_area_fraction",
+    "live_positive_valid_pixels",
+    "live_positive_mean_intensity",
+    "live_positive_integrated_intensity",
+    "live_positive_intensity_status",
+    "live_corrected_whole_cell_mean_intensity",
+    "live_corrected_whole_cell_integrated_intensity",
+    "live_corrected_whole_cell_valid_pixels",
+    "live_corrected_whole_cell_intensity_status",
+    "live_corrected_positive_mean_intensity",
+    "live_corrected_positive_integrated_intensity",
+    "live_corrected_positive_valid_pixels",
+    "live_corrected_positive_intensity_status",
+    "live_background_median",
+    "live_background_eligible_pixels",
+    "live_background_eligible_fraction",
+    "live_background_mad",
+    "live_background_status",
+    "live_background_mean",
+    "live_background_sd",
+    "live_background_method",
+    "dead_channel",
+    "dead_whole_cell_mean_intensity",
+    "dead_whole_cell_integrated_intensity",
+    "dead_whole_cell_valid_pixels",
+    "dead_whole_cell_intensity_status",
+    "dead_positive_area_pixels",
+    "dead_positive_area_fraction",
+    "dead_positive_valid_pixels",
+    "dead_positive_mean_intensity",
+    "dead_positive_integrated_intensity",
+    "dead_positive_intensity_status",
+    "dead_corrected_whole_cell_mean_intensity",
+    "dead_corrected_whole_cell_integrated_intensity",
+    "dead_corrected_whole_cell_valid_pixels",
+    "dead_corrected_whole_cell_intensity_status",
+    "dead_corrected_positive_mean_intensity",
+    "dead_corrected_positive_integrated_intensity",
+    "dead_corrected_positive_valid_pixels",
+    "dead_corrected_positive_intensity_status",
+    "dead_background_median",
+    "dead_background_eligible_pixels",
+    "dead_background_eligible_fraction",
+    "dead_background_mad",
+    "dead_background_status",
+    "dead_background_mean",
+    "dead_background_sd",
+    "dead_background_method",
+    "live_dead_intersection_pixels",
+    "live_dead_union_pixels",
+    "live_dead_intersection_over_union",
+    "live_positive_also_dead_fraction",
+    "dead_positive_also_live_fraction",
+    "dead_to_live_whole_cell_mean_ratio",
+    "ratio_status",
+    "corrected_dead_to_live_whole_cell_mean_ratio",
+    "corrected_ratio_status"
+  ],
+  "completed_frames": [
+    {
+      "time": 0,
+      "position": 0
+    },
+    {
+      "time": 0,
+      "position": 1
+    },
+    {
+      "time": 0,
+      "position": 2
+    },
+    {
+      "time": 0,
+      "position": 3
+    },
+    {
+      "time": 0,
+      "position": 4
+    }
+  ],
+  "failed_frames": [],
+  "individual_cell_count": 1532,
+  "analysis_source_sha256": "04665840363517097381a6bac504c5e4c741fc92c8c3439632c647acad8ef30b",
+  "mask_directory": "fluorescence_masks/d38c28de-c18e-4e3e-bed4-a53ffabe705e",
+  "finished_at_utc": "2026-10-04T18:41:43.848466+00:00",
+  "export_error": null,
+  "unfinished_frames": []
+}

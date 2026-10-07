@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QSlider, QTabWidget, QGroupBox, QRadioButton, QButtonGroup, QSpinBox, QFileDialog, QProgressBar
+    QSlider, QTabWidget, QGroupBox, QRadioButton, QButtonGroup, QSpinBox, QFileDialog, QProgressBar, QApplication
 )
 from PySide6.QtCore import Qt
 from pubsub import pub
@@ -168,6 +168,16 @@ class ColonySeparationWidget(QWidget):
             model_name = image_data.segmentation_cache.model_name,
             voxel_size = image_data.voxel_size
         )
+        if not isinstance(exporter.colonies, dict):
+            # Manual regions define fixed observation windows, not changing boundaries.
+            positions = self.get_selected_positions() or [getattr(self, 'current_position', 0)]
+            channel = self.channel_combo.value()
+            exporter.colonies = {
+                (p, t, channel): [dict(c, track_id=i+1, fixed_roi=True)
+                    for i, c in enumerate(exporter.colonies)]
+                for p in positions
+                for t in range(self.time_start_spin.value(), self.time_end_spin.value()+1)
+            }
 
         # Progress callback
         def update_progress(percent):
@@ -181,12 +191,25 @@ class ColonySeparationWidget(QWidget):
             project_root = Path(__file__).resolve().parents[4]
             output_root = project_root / "analysis_results"
             output_root.mkdir(parents=True, exist_ok=True)
+            from nd2_analyzer.analysis.microcolony_export import prepare_colonies, export_motion_and_movies
+            prepare_colonies(exporter)
             exporter.export_csv(output_root / "colonies.csv")
             graph_paths = exporter.export_time_resolved_graphs(
                 output_root / "microcolony_graphs"
             )
             shape = image_data.get(0, 0, 0).shape
             exporter.export_grids(output_root / "density_outputs", shape)
+            from nd2_analyzer.data.appstate import ApplicationState
+            state = ApplicationState.get_instance()
+            experiment = getattr(state, 'experiment', None)
+            hours_per_frame = getattr(experiment, 'time_interval_hours', None)
+            if hours_per_frame is not None and (not np.isfinite(hours_per_frame) or hours_per_frame <= 0):
+                hours_per_frame = None
+            def motion_progress(message):
+                self.progress_label.setText(message)
+                QApplication.processEvents()
+            export_motion_and_movies(exporter, output_root,
+                hours_per_frame=hours_per_frame, progress=motion_progress)
 
             exported_count = (
                 sum(len(colonies) for colonies in exporter.colonies.values())
@@ -195,7 +218,8 @@ class ColonySeparationWidget(QWidget):
             )
             self.progress_label.setText(
                 f"Successfully exported {exported_count} colonies and "
-                f"{len(graph_paths)} time-resolved graphs to analysis_results"
+                f"{len(graph_paths)} time-resolved graphs, cell tracks, two GIFs per colony, "
+                f"motion fields and expansion graphs to analysis_results"
             )
 
         except Exception as e:
@@ -407,12 +431,9 @@ class ColonySeparationWidget(QWidget):
         """Handle colonies selected from the ROI selector"""
         """self.manual_additions = []
         self.colony_separator.manual_additions = []"""
-        # Creates new colonies on overlay from polygon points
-        for colony in colonies_data:
-            polygon = colony['polygon_points']
-            self.manual_additions.append(colony)
-            self.colony_separator.manual_additions.append(colony)
-            # self.manual_additions.append(new_colony)
+        # The selector returns the complete selection, including existing regions.
+        self.manual_additions = list(colonies_data)
+        self.colony_separator.manual_additions = list(colonies_data)
 
         self.colony_count_label.setText(f"Colonies: {len(self.colony_separator.get_all_colonies())}")
         self.colony_overlay_visible = True
@@ -439,7 +460,6 @@ class ColonySeparationWidget(QWidget):
         roi_dialog = ColonyROISelector(
             self.current_raw_image,
             existing_colonies=existing_colonies,
-            prev_colonies=prev_colonies,
             parent=self
         )
         roi_dialog.colonies_selected.connect(self.handle_selected_colonies)

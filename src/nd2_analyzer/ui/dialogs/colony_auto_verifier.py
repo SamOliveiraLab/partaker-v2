@@ -19,6 +19,7 @@ slider settings.
 
 from __future__ import annotations
 
+import csv
 from collections import OrderedDict
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -67,6 +68,8 @@ from PySide6.QtWidgets import (
 )
 
 from nd2_analyzer.ui.biofilms.colony_separator import ColonySeparator
+from nd2_analyzer.analysis.valid_region import BORDER_PX
+from nd2_analyzer.analysis.colony_regions import analysis_image, interior_colonies
 
 
 FrameKey = tuple[int, int, int]  # position, time, channel
@@ -440,7 +443,9 @@ class VerifyColoniesDialog(QDialog):
             and not self._initial_colonies_consumed
             and key == initial_key
         ):
-            seed_colonies = _copy_colonies(self.initial_colonies)
+            seed_colonies, _ = interior_colonies(
+                self.initial_colonies, self.get_frame(key).shape
+            )
             self._initial_colonies_consumed = True
 
         state = {
@@ -1217,6 +1222,7 @@ class VerifyColoniesDialog(QDialog):
 
     def current_detector_parameters(self, image_shape) -> dict:
         height, width = image_shape[:2]
+        height, width = max(0, height-2*BORDER_PX), max(0, width-2*BORDER_PX)
         total_pixels = max(1, int(height * width))
 
         # Preserve the original dialog's slider semantics:
@@ -1294,8 +1300,14 @@ class VerifyColoniesDialog(QDialog):
 
         image = self.get_frame(key)
         self.apply_detector_parameters(image.shape)
-        raw_colonies = self.colony_separator.detect_colonies_otsu(image)
-        colonies = self.convert_detected_colonies(raw_colonies, image.shape, key)
+        raw_colonies = self.colony_separator.detect_colonies_otsu(analysis_image(image))
+        # Detection coordinates start at the cropped field; storage uses source coordinates.
+        shifted = []
+        for colony in raw_colonies:
+            item = dict(colony)
+            item['contour'] = np.asarray(colony['contour'], dtype=np.int32) + BORDER_PX
+            shifted.append(item)
+        colonies = self.convert_detected_colonies(shifted, image.shape, key)
 
         state["auto_colonies"] = _copy_colonies(colonies)
         state["colonies"] = _copy_colonies(colonies)
@@ -1405,8 +1417,11 @@ class VerifyColoniesDialog(QDialog):
         *,
         forced_mode: str | None = None,
         thumbnail: bool = False,
+        force_labels: bool = False,
     ) -> np.ndarray:
-        image = self.normalize_for_display(self.get_frame(key))
+        raw = self.get_frame(key)
+        image = np.zeros(raw.shape, dtype=np.uint8)
+        image[BORDER_PX:-BORDER_PX, BORDER_PX:-BORDER_PX] = self.normalize_for_display(analysis_image(raw))
         state = self.get_state(key)
         colonies = state["colonies"]
         mode = forced_mode or self.view_mode_combo.currentText()
@@ -1421,11 +1436,11 @@ class VerifyColoniesDialog(QDialog):
                     contour = colony.get("contour")
                     if contour is not None:
                         cv2.drawContours(union_mask, [contour], -1, 255, -1)
-            return np.repeat(union_mask[..., None], 3, axis=2)
+            return analysis_image(np.repeat(union_mask[..., None], 3, axis=2))
 
         rgb = np.repeat(image[..., None], 3, axis=2)
         if mode == "Raw":
-            return rgb
+            return analysis_image(rgb)
 
         output = rgb.astype(np.float32)
         alpha = self.opacity_slider.value() / 100.0
@@ -1434,7 +1449,8 @@ class VerifyColoniesDialog(QDialog):
             if contour is None:
                 continue
             contour = np.asarray(contour, dtype=np.int32)
-            color = self.DISPLAY_COLORS[index % len(self.DISPLAY_COLORS)]
+            display_id = colony.get("track_id") or index + 1
+            color = self.DISPLAY_COLORS[(display_id - 1) % len(self.DISPLAY_COLORS)]
             mask = colony.get("mask")
             if not isinstance(mask, np.ndarray) or mask.shape != image.shape:
                 mask = np.zeros(image.shape, dtype=np.uint8)
@@ -1446,7 +1462,7 @@ class VerifyColoniesDialog(QDialog):
             )
             cv2.drawContours(output, [contour], -1, color, 2)
 
-            if self.show_labels_checkbox.isChecked() and not thumbnail:
+            if (force_labels or self.show_labels_checkbox.isChecked()) and not thumbnail:
                 moments = cv2.moments(contour)
                 if moments["m00"]:
                     x = int(moments["m10"] / moments["m00"])
@@ -1454,7 +1470,7 @@ class VerifyColoniesDialog(QDialog):
                     area = int(round(float(colony.get("area", 0))))
                     cv2.putText(
                         output,
-                        f"{index + 1}: {area} px2",
+                        f"{display_id}{' ' + colony['tracking_event'] if colony.get('tracking_event') else ' ?' if colony.get('tracking_review') else ''}: {area} px2",
                         (x, y),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.45,
@@ -1462,7 +1478,7 @@ class VerifyColoniesDialog(QDialog):
                         1,
                         cv2.LINE_AA,
                     )
-        return np.clip(output, 0, 255).astype(np.uint8)
+        return analysis_image(np.clip(output, 0, 255).astype(np.uint8))
 
     @staticmethod
     def rgb_to_pixmap(rgb: np.ndarray) -> QPixmap:
@@ -1577,10 +1593,10 @@ class VerifyColoniesDialog(QDialog):
         image = self.get_frame(key)
         height, width = image.shape[:2]
 
-        x1 = int(np.clip(np.floor(rect.left()), 0, width))
-        y1 = int(np.clip(np.floor(rect.top()), 0, height))
-        x2 = int(np.clip(np.ceil(rect.right()), 0, width))
-        y2 = int(np.clip(np.ceil(rect.bottom()), 0, height))
+        x1 = int(np.clip(np.floor(rect.left()) + BORDER_PX, BORDER_PX, width-BORDER_PX))
+        y1 = int(np.clip(np.floor(rect.top()) + BORDER_PX, BORDER_PX, height-BORDER_PX))
+        x2 = int(np.clip(np.ceil(rect.right()) + BORDER_PX, BORDER_PX, width-BORDER_PX))
+        y2 = int(np.clip(np.ceil(rect.bottom()) + BORDER_PX, BORDER_PX, height-BORDER_PX))
         if x2 <= x1 or y2 <= y1:
             return
 
@@ -2020,6 +2036,8 @@ class VerifyColoniesDialog(QDialog):
                 ),
                 "channel": int(self.channel_combo.currentData()),
                 "frame_key_order": "(position, time, channel)",
+                "analysis_border_px": BORDER_PX,
+                "coordinate_system": "source image",
                 "edited_frames_preserved_when_sliders_change": True,
                 "reviewed_frame_keys": tuple(
                     key
@@ -2064,7 +2082,7 @@ class VerifyColoniesDialog(QDialog):
                 state = self.get_state(key)
                 if not state["detected"] or (state["dirty"] and not state["edited"]):
                     self.detect_frame(key)
-                colonies = _copy_colonies(state["colonies"])
+                colonies, _ = interior_colonies(state["colonies"], self.get_frame(key).shape)
                 self.renumber_colonies(colonies)
                 for colony in colonies:
                     colony["position"] = key[0]
@@ -2073,9 +2091,14 @@ class VerifyColoniesDialog(QDialog):
                 results[key] = colonies
                 self.progress_bar.setValue(int(round(index / len(keys) * 90)))
 
+            from nd2_analyzer.analysis.tracking.colony_tracking import track_colonies_by_frame
+
+            results = track_colonies_by_frame(results)
             exported_paths = self.export_colony_overlays(results)
             gif_paths = list(getattr(self, "last_overlay_gif_paths", ()))
             params = self.final_params()
+            params["tracking_csv_path"] = str(self.last_tracking_csv_path)
+            params["tracking_method"] = "btrack"
             params["overlay_paths"] = tuple(str(path) for path in exported_paths)
             params["overlay_gif_paths"] = tuple(str(path) for path in gif_paths)
             self.progress_bar.setValue(100)
@@ -2109,6 +2132,11 @@ class VerifyColoniesDialog(QDialog):
     def export_colony_overlays(
         self, results: dict[FrameKey, list[dict]]
     ) -> list[Path]:
+        # All export entry points must render tracked, frame-specific colonies.
+        if any(c.get("track_id") is None for colonies in results.values() for c in colonies):
+            from nd2_analyzer.analysis.tracking.colony_tracking import track_colonies_by_frame
+
+            results = track_colonies_by_frame(results)
         project_root = Path(__file__).resolve().parents[4]
         output_dir = project_root / "analysis_results" / "auto_colony_selector"
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -2120,7 +2148,7 @@ class VerifyColoniesDialog(QDialog):
             previous = state["colonies"]
             state["colonies"] = colonies
             try:
-                rgb = self.create_display_rgb(key, forced_mode="Overlay")
+                rgb = self.create_display_rgb(key, forced_mode="Overlay", force_labels=True)
             finally:
                 state["colonies"] = previous
 
@@ -2149,6 +2177,17 @@ class VerifyColoniesDialog(QDialog):
             )
             gif_paths.append(gif_path)
 
+        tracking_path = output_dir / "colony_tracks.csv"
+        with tracking_path.open("w", newline="") as stream:
+            fields = ["position", "time", "channel", "colony_id", "track_id",
+                      "tracking_centroid_x", "tracking_centroid_y", "area",
+                      "tracking_status", "tracking_review", "tracking_event", "tracking_parent_ids"]
+            writer = csv.DictWriter(stream, fieldnames=fields, extrasaction="ignore")
+            writer.writeheader()
+            for key, colonies in sorted(results.items()):
+                for colony in colonies:
+                    writer.writerow({**colony, "position": key[0], "time": key[1], "channel": key[2]})
+        self.last_tracking_csv_path = tracking_path
         self.last_overlay_gif_paths = tuple(gif_paths)
         return saved
 
