@@ -1,0 +1,2 @@
+position,mask_max_pct,contrast_min,kept,reason
+0,,,True,matrix gate unavailable: phase-only input

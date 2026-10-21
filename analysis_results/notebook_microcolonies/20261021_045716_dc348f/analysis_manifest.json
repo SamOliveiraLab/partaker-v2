@@ -1,0 +1,81 @@
+{
+  "status": "complete",
+  "settings": {
+    "cell_channel": 0,
+    "eps_channel": null,
+    "pixel_um": 0.043,
+    "start_hour": 24.0,
+    "interval_hour": 0.5,
+    "sample_step": 3,
+    "model": "omnipose_bact_phase",
+    "sigma_um": 1.0,
+    "density_level": 0.4,
+    "min_cells": 4,
+    "outline_um": 0.5,
+    "halo_um": 1.0,
+    "association_um2": 2.0,
+    "opening_um": 1.0,
+    "matrix_min_um2": 10.0,
+    "eps_threshold": 40,
+    "eps_sigma": 1.5,
+    "background_sigma": 200.0,
+    "mask_max_pct": 90.0,
+    "contrast_min": 2.3,
+    "illumination_ratio": 1.1,
+    "source_root": "",
+    "edits_path": "",
+    "edit_origin_x": 700,
+    "edit_origin_y": 700,
+    "edit_canvas_scale": 1.0,
+    "allow_segmentation": true,
+    "tracking": true
+  },
+  "positions": [
+    0
+  ],
+  "sampled_frames": [
+    0,
+    3,
+    6,
+    9,
+    12,
+    15,
+    16
+  ],
+  "frames": [
+    0,
+    3,
+    6,
+    9,
+    12,
+    15,
+    16
+  ],
+  "excluded_frames": [],
+  "kept_positions": [
+    0
+  ],
+  "coordinate_system": "full analysis image, no verifier ROI or border crop",
+  "crop_coordinates": null,
+  "registration_offsets": null,
+  "source_image": "['/Users/jiannae/Downloads/TIFF_Hours/66.00h.tif', '/Users/jiannae/Downloads/TIFF_Hours/66.25h.tif', '/Users/jiannae/Downloads/TIFF_Hours/66.50h.tif', '/Users/jiannae/Downloads/TIFF_Hours/66.75h.tif', '/Users/jiannae/Downloads/TIFF_Hours/67.00h.tif', '/Users/jiannae/Downloads/TIFF_Hours/67.25h.tif', '/Users/jiannae/Downloads/TIFF_Hours/67.50h.tif', '/Users/jiannae/Downloads/TIFF_Hours/67.75h.tif', '/Users/jiannae/Downloads/TIFF_Hours/68.00h.tif', '/Users/jiannae/Downloads/TIFF_Hours/68.25h.tif', '/Users/jiannae/Downloads/TIFF_Hours/68.50h.tif', '/Users/jiannae/Downloads/TIFF_Hours/68.75h.tif', '/Users/jiannae/Downloads/TIFF_Hours/69.00h.tif', '/Users/jiannae/Downloads/TIFF_Hours/69.25h.tif', '/Users/jiannae/Downloads/TIFF_Hours/69.50h.tif', '/Users/jiannae/Downloads/TIFF_Hours/69.75h.tif', '/Users/jiannae/Downloads/TIFF_Hours/70.00h.tif']",
+  "preview_key": null,
+  "confluence_hour": 25.5,
+  "eps_window": {
+    "source": "not used: phase-only colony analysis"
+  },
+  "mask_sources": {
+    "p0_t0": "fresh notebook preprocessing (CLAHE, 0.065 um model scale, 0.5 um2 fragments): omnipose_bact_phase",
+    "p0_t3": "fresh notebook preprocessing (CLAHE, 0.065 um model scale, 0.5 um2 fragments): omnipose_bact_phase",
+    "p0_t6": "fresh notebook preprocessing (CLAHE, 0.065 um model scale, 0.5 um2 fragments): omnipose_bact_phase",
+    "p0_t9": "fresh notebook preprocessing (CLAHE, 0.065 um model scale, 0.5 um2 fragments): omnipose_bact_phase",
+    "p0_t12": "fresh notebook preprocessing (CLAHE, 0.065 um model scale, 0.5 um2 fragments): omnipose_bact_phase",
+    "p0_t15": "fresh notebook preprocessing (CLAHE, 0.065 um model scale, 0.5 um2 fragments): omnipose_bact_phase",
+    "p0_t16": "fresh notebook preprocessing (CLAHE, 0.065 um model scale, 0.5 um2 fragments): omnipose_bact_phase"
+  },
+  "reference_match": null,
+  "matrix_analysis": false,
+  "matrix_quality_gate": "not applied: no matrix input",
+  "movement_vectors": "colony centroid displacement between consecutive, unambiguous sampled detections",
+  "note": "Original mask reuse is required for strict reproduction; local model versions may differ."
+}

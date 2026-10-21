@@ -6,7 +6,8 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QSlider, QTabWidget, QGroupBox, QRadioButton, QButtonGroup, QSpinBox, QFileDialog, QProgressBar, QApplication
+    QSlider, QTabWidget, QGroupBox, QRadioButton, QButtonGroup, QSpinBox, QFileDialog, QProgressBar, QApplication,
+    QComboBox, QDoubleSpinBox, QCheckBox, QLineEdit, QFormLayout, QMessageBox, QScrollArea
 )
 from PySide6.QtCore import Qt
 from pubsub import pub
@@ -45,7 +46,10 @@ class ColonySeparationWidget(QWidget):
 
     def init_ui(self):
         """Initialize the UI with two sub-tabs"""
-        main_layout = QVBoxLayout(self)
+        outer_layout = QVBoxLayout(self)
+        scroll = QScrollArea(); scroll.setWidgetResizable(True)
+        content = QWidget(); main_layout = QVBoxLayout(content)
+        scroll.setWidget(content); outer_layout.addWidget(scroll)
 
         # Create tab widget for Manual vs Automatic
         self.tab_widget = QTabWidget()
@@ -103,7 +107,126 @@ class ColonySeparationWidget(QWidget):
         self.export_btn.clicked.connect(self.export_colonies)
         main_layout.addWidget(self.export_btn)
 
+        self.add_piv_controls(main_layout)
+
         main_layout.addStretch()
+
+    def add_piv_controls(self, layout):
+        """PIV uses accepted ROI geometry, independently of single-cell segmentation."""
+        box = QGroupBox('Motion fields')
+        group = QVBoxLayout(box)
+        note = QLabel('Uses accepted microcolonies at the T start/end above. '
+                      'Exports grayscale and bright-area motion, with accumulating and current-frame GIFs.')
+        note.setWordWrap(True); group.addWidget(note)
+        self.piv_options = QWidget(); form = QFormLayout(self.piv_options)
+        self.piv_window = QComboBox()
+        for value in (128, 256, 384):self.piv_window.addItem(f'{value} pixels', value)
+        self.piv_window.setCurrentIndex(2); form.addRow('Starting window', self.piv_window)
+        self.piv_threshold = QSpinBox(); self.piv_threshold.setRange(0,255); self.piv_threshold.setValue(160)
+        form.addRow('Bright threshold (0–255)', self.piv_threshold)
+        self.piv_inner = QCheckBox('Also export paths starting in Inside ROI regions'); self.piv_inner.setChecked(True)
+        form.addRow(self.piv_inner)
+        self.piv_notebook_zoom = QCheckBox('Use notebook channel zoom (220, 180, 360 × 280 px)'); self.piv_notebook_zoom.setChecked(True)
+        self.piv_notebook_zoom.setToolTip('Analysis-image coordinates. Falls back to automatic zoom if the box misses the colony.')
+        form.addRow(self.piv_notebook_zoom)
+        self.piv_density = QCheckBox('Also export density heatmaps and time plots'); self.piv_density.setChecked(True)
+        form.addRow(self.piv_density)
+        self.piv_density_width = QSpinBox(); self.piv_density_width.setRange(1,256); self.piv_density_width.setValue(32)
+        form.addRow('Density neighborhood (pixels)', self.piv_density_width)
+        self.piv_metadata_time = QCheckBox('Use capture timing when available'); self.piv_metadata_time.setChecked(True)
+        form.addRow(self.piv_metadata_time)
+        timing = QWidget(); timing_row = QHBoxLayout(timing); timing_row.setContentsMargins(0,0,0,0)
+        self.piv_interval = QDoubleSpinBox(); self.piv_interval.setRange(.000001,1e6); self.piv_interval.setDecimals(6); self.piv_interval.setValue(1)
+        self.piv_unit = QComboBox(); self.piv_unit.addItems(['a.u.','s','min','h'])
+        timing_row.addWidget(self.piv_interval); timing_row.addWidget(self.piv_unit)
+        form.addRow('Fallback interval', timing)
+        runtime = QWidget(); runtime_row = QHBoxLayout(runtime); runtime_row.setContentsMargins(0,0,0,0)
+        project = Path(__file__).resolve().parents[4]
+        import os
+        default_python = project / '.venv-piv' / ('Scripts/python.exe' if os.name=='nt' else 'bin/python')
+        self.piv_python = QLineEdit(str(default_python)); runtime_row.addWidget(self.piv_python)
+        choose = QPushButton('Choose…'); choose.clicked.connect(self.choose_piv_python); runtime_row.addWidget(choose)
+        form.addRow('PIV Python', runtime)
+        group.addWidget(self.piv_options)
+        actions = QHBoxLayout()
+        self.piv_export_btn = QPushButton('Export Motion Fields'); self.piv_export_btn.clicked.connect(self.export_piv_motion)
+        self.piv_cancel_btn = QPushButton('Cancel'); self.piv_cancel_btn.setEnabled(False); self.piv_cancel_btn.clicked.connect(self.cancel_piv_export)
+        self.piv_open_btn = QPushButton('Open Results'); self.piv_open_btn.setEnabled(False); self.piv_open_btn.clicked.connect(self.open_piv_results)
+        for button in (self.piv_export_btn,self.piv_cancel_btn,self.piv_open_btn):actions.addWidget(button)
+        group.addLayout(actions); layout.addWidget(box)
+        self._piv_job = None; self._piv_output = None
+        app = QApplication.instance()
+        if app is not None:app.aboutToQuit.connect(self.cancel_piv_export)
+
+    def choose_piv_python(self):
+        path, _ = QFileDialog.getOpenFileName(self, 'Choose the isolated PIV Python', self.piv_python.text())
+        if path:self.piv_python.setText(path)
+
+    def export_piv_motion(self):
+        if self._piv_job is not None and not self._piv_job.finished:return
+        from nd2_analyzer.data.image_data import ImageData
+        from nd2_analyzer.analysis.piv_motion import create_export_job
+        from nd2_analyzer.data.appstate import ApplicationState
+        import copy
+        try:
+            image_data = ImageData.get_instance()
+            if image_data is None:raise ValueError('Load an image time series first.')
+            start, end = self.time_start_spin.value(), self.time_end_spin.value()
+            if end<=start:raise ValueError('Choose at least two captures using T start and T end.')
+            if self.colonies_by_frame:
+                selected = {key:value for key,value in self.colonies_by_frame.items() if start<=key[1]<=end}
+            else:
+                colonies = self.get_all_colonies()
+                if not colonies:raise ValueError('Select and accept microcolonies first.')
+                p,c = getattr(self,'current_position',0), getattr(self,'current_channel',0)
+                selected = {(p,t,c):[dict(copy.deepcopy(colony),track_id=i+1,fixed_roi=True)
+                                    for i,colony in enumerate(colonies)] for t in range(start,end+1)}
+            if not selected or not any(selected.values()):raise ValueError('No accepted microcolonies in this time range.')
+            interval, unit = self.piv_interval.value(), self.piv_unit.currentText()
+            state = ApplicationState.get_instance(); experiment = getattr(state,'experiment',None)
+            hours = getattr(experiment,'time_interval_hours',None)
+            if self.piv_metadata_time.isChecked() and hours is not None and np.isfinite(hours) and hours>0:
+                interval, unit = float(hours), 'h'
+            voxel = getattr(image_data,'voxel_size',None)
+            sx,sy = getattr(voxel,'x',None),getattr(voxel,'y',None)
+            calibration = [float(sx),float(sy)] if sx and sy and np.isfinite(sx) and np.isfinite(sy) and sx>0 and sy>0 else [None,None]
+            config = dict(window=int(self.piv_window.currentData()),threshold=self.piv_threshold.value(),
+                          include_inner=self.piv_inner.isChecked(),notebook_zoom=self.piv_notebook_zoom.isChecked(),
+                          include_density=self.piv_density.isChecked(),density_width=self.piv_density_width.value(),interval=float(interval),time_unit=unit,pixel_um=calibration)
+            runtime = Path(self.piv_python.text().strip())
+            if not runtime.is_file():raise ValueError('The isolated PIV runtime is not installed. See Motion fields setup in README, or choose its Python executable.')
+            project = Path(__file__).resolve().parents[4]
+            self._piv_old_export_enabled = self.export_btn.isEnabled()
+            self.piv_options.setEnabled(False); self.piv_export_btn.setEnabled(False); self.export_btn.setEnabled(False)
+            self.piv_cancel_btn.setEnabled(True); self.piv_open_btn.setEnabled(False); self.progress_bar.setValue(0)
+            self.progress_label.setText(f'Preparing motion export; capture interval {interval:g} {unit}…')
+            self._piv_job = create_export_job(self,image_data,selected,project/'analysis_results'/'microcolony_piv',config,
+                                            runtime,self.piv_progress,self.piv_finished)
+        except Exception as error:
+            self.piv_options.setEnabled(True); self.piv_export_btn.setEnabled(True); self.piv_cancel_btn.setEnabled(False)
+            self.export_btn.setEnabled(getattr(self,'_piv_old_export_enabled',True))
+            self.progress_label.setText(str(error)); QMessageBox.warning(self,'Motion export',str(error))
+
+    def piv_progress(self,message,percent):
+        self.progress_label.setText(message); self.progress_bar.setValue(percent)
+
+    def piv_finished(self,ok,message,folder):
+        self.piv_options.setEnabled(True); self.piv_export_btn.setEnabled(True); self.piv_cancel_btn.setEnabled(False)
+        self.export_btn.setEnabled(getattr(self,'_piv_old_export_enabled',True))
+        self._piv_output = folder if folder.exists() else None
+        self.piv_open_btn.setEnabled(self._piv_output is not None)
+        self.progress_label.setText(message+(f'\n{folder}' if self._piv_output else ''))
+        if ok:self.progress_bar.setValue(100)
+        elif not message.startswith('Cancelled'):QMessageBox.warning(self,'Motion export',message)
+
+    def cancel_piv_export(self):
+        if self._piv_job is not None and not self._piv_job.finished:self._piv_job.cancel()
+
+    def open_piv_results(self):
+        if self._piv_output is not None:
+            from PySide6.QtCore import QUrl
+            from PySide6.QtGui import QDesktopServices
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._piv_output)))
 
     def get_selected_positions(self):
         """Get list of selected positions from the position list widget"""
@@ -373,22 +496,46 @@ class ColonySeparationWidget(QWidget):
         from nd2_analyzer.ui.dialogs.colony_auto_verifier import VerifyColoniesDialog
         colonies = self.get_all_colonies()
 
+        from nd2_analyzer.data.image_data import ImageData
+        previous_notebook = getattr(self, "notebook_analysis_result", None)
+        from nd2_analyzer.analysis.microcolony_notebook_analysis import BACKEND
+        if previous_notebook is not None and (previous_notebook.data is not ImageData.get_instance() or getattr(previous_notebook,'backend',None)!=BACKEND):
+            previous_notebook = None
         verify_dialog = VerifyColoniesDialog(
             self.current_raw_image,
             colonies,
             params=self.auto_detect_params,
-            parent=self
+            parent=self,
+            image_data=ImageData.get_instance(),
+            notebook_result=previous_notebook,
+            verified_frames=self.colonies_by_frame,
+            selected_positions=previous_notebook.positions if previous_notebook is not None else None,
+            time_start=min(previous_notebook.sampled) if previous_notebook is not None else None,
+            time_end=max(previous_notebook.sampled) if previous_notebook is not None else None,
         )
         verify_dialog.current_time = self.current_time
         verify_dialog.current_position = self.current_position
         verify_dialog.current_channel = self.current_channel
+        verify_dialog.notebook_analysis_completed.connect(self.handle_notebook_analysis)
         verify_dialog.batch_colonies_verified.connect(self.handle_batch_verified_colonies)
         verify_dialog.colonies_verified.connect(self.handle_verified_colonies)
         result = verify_dialog.exec()
-        if result:
+        if result and verify_dialog.notebook_active() and verify_dialog.notebook_result is not None:
+            self.handle_notebook_analysis(verify_dialog.notebook_result)
+        elif result:
             self.status_label.setText(f"✅ Automatic detection complete: {len(self.get_all_colonies())} colonies.")
         else:
             self.status_label.setText("Automatic detection cancelled.")
+
+    def handle_notebook_analysis(self, result):
+        """Retain notebook results separately from verifier ROI detections."""
+        self.notebook_analysis_result = result
+        self.colonies_by_frame = dict(result.prepared_colonies)
+        self.auto_detect_params = dict(result.selector_params)
+        self.status_label.setText(
+            f"Micro-colony analysis: {len(result.colony_rows)} observations, "
+            f"{len(result.kept)} positions kept. Results: {result.output}"
+        )
 
     def handle_batch_verified_colonies(self, colonies_by_frame, params):
         """Store and calculate the complete time-resolved verification batch."""
@@ -396,6 +543,9 @@ class ColonySeparationWidget(QWidget):
 
         self.auto_detect_params = params
         self.colonies_by_frame = dict(colonies_by_frame)
+        times = [key[1] for key in self.colonies_by_frame]
+        if times:
+            self.time_start_spin.setValue(min(times)); self.time_end_spin.setValue(max(times))
         image_data = ImageData.get_instance()
         image_data.biofilm_metric_service.replace_microcolony_candidates(
             self.colonies_by_frame,

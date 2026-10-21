@@ -306,6 +306,9 @@ class LiveDeadAnalysisWidget(QWidget):
                 "Mean Live-Dead Ratio Comparison Error Plot",
                 "Integrated Live-Dead Ratio Comparison Error Plot",
             ])
+        if self.triangle_midpoint_enabled():
+            from nd2_analyzer.analysis.live_dead_triangle_reports import AREA_PLOTS, VIABILITY_AREA_PLOTS
+            choices.extend(VIABILITY_AREA_PLOTS if self.is_cell_viability_run() else AREA_PLOTS)
         self.metric_combo.addItems(choices)
         if previous in choices:
             self.metric_combo.setCurrentText(previous)
@@ -882,6 +885,29 @@ class LiveDeadAnalysisWidget(QWidget):
                 writer.writerows(rows)
             os.replace(temporary, path)
 
+    def triangle_midpoint_enabled(self):
+        return (getattr(getattr(self, "partaker_live_dead_setup", None), "threshold_method", "") == "triangle_shared_midpoint")
+
+    def triangle_report_folder(self):
+        context = self.individual_export_context
+        return self.get_live_dead_output_root() / "triangle_midpoint" / (context["run_id"] if context else "preview")
+
+    def triangle_image_titles(self, time, position, live_channel, dead_channel):
+        from nd2_analyzer.data.image_data import ImageData
+        context = self.individual_export_context or {}
+        mapping = context.get("tiff_file_map", {}) or getattr(ImageData.get_instance(), "_tiff_file_map", {})
+        result = {}
+        axis_ids = context.get("tiff_source_axis_values") or {}
+        specs = (("cell_viability", live_channel),) if self.is_cell_viability_run() else (("live", live_channel), ("dead", dead_channel))
+        for role, channel in specs:
+            def source_id(axis, index):
+                values = axis_ids.get(axis)
+                return values[index] if values and index < len(values) else index
+            key = f"{source_id('positions', position)},{source_id('times', time)},{source_id('channels', channel)}"
+            path = mapping.get(key) if isinstance(mapping, dict) else None
+            result[role] = Path(path).name if path else f"pos{position}_t{time}_C{channel}"
+        return result
+
     def cell_background_enabled(self):
         return bool(getattr(self.partaker_live_dead_setup, "background_enabled", False))
 
@@ -1106,6 +1132,9 @@ class LiveDeadAnalysisWidget(QWidget):
         """Prepare shared background references and intensity scaling."""
         self.reset_live_dead_run_preprocessing()
 
+        if self.triangle_midpoint_enabled():
+            self.gaus_back_corr.setChecked(False)
+            self.close_dialate.setChecked(False)
         self.build_live_dead_reference_backgrounds(frame_keys)
 
         # Reuse the dialog's accepted scope mapping exactly. Manual sampling
@@ -1188,6 +1217,10 @@ class LiveDeadAnalysisWidget(QWidget):
     def apply_partaker_live_dead_setup(self, setup) -> None:
         """Copy accepted setup values into the Live-Dead widget controls."""
         self.partaker_live_dead_setup = setup
+        self.refresh_metric_choices()
+        if self.triangle_midpoint_enabled():
+            self.gaus_back_corr.setChecked(False)
+            self.close_dialate.setChecked(False)
         if getattr(setup, "background_enabled", False) or getattr(setup, "background_method", "") == "manual_samples_mean":
             # Skip correction in the manual-sampling dialog also disables legacy subtraction.
             self.gaus_back_corr.setChecked(False)
@@ -1222,7 +1255,8 @@ class LiveDeadAnalysisWidget(QWidget):
 
         self.status_label.setText(
             f"Partaker {self.analysis_label()} setup accepted: "
-            f"threshold={self.partaker_live_dead_threshold}, "
+            + ("Shared Triangle Midpoint (raw intensities), " if self.triangle_midpoint_enabled()
+               else f"threshold={self.partaker_live_dead_threshold}, ")
             + (f"cell_viability=C{setup.live_channel}, " if self.is_cell_viability_run()
                else f"live=C{setup.live_channel}, dead=C{setup.dead_channel}, ")
             +
@@ -1747,6 +1781,9 @@ class LiveDeadAnalysisWidget(QWidget):
 
     @staticmethod
     def get_live_dead_metric_spec(analysis_type: str) -> dict:
+        if analysis_type.startswith("Triangle "):
+            from nd2_analyzer.analysis.live_dead_triangle_reports import AREA_PLOTS, VIABILITY_AREA_PLOTS
+            return dict({**AREA_PLOTS, **VIABILITY_AREA_PLOTS}[analysis_type])
         specs = {
             "Cell-Area Staining Composition": {
                 "filename": "cell_area_staining_composition.png",
@@ -1839,6 +1876,11 @@ class LiveDeadAnalysisWidget(QWidget):
             raw_df: pl.DataFrame | None = None,
     ):
         """Create the selected Live-Dead metric figure."""
+        if analysis_type.startswith("Triangle "):
+            from nd2_analyzer.analysis.live_dead_triangle_reports import composition_figure
+            return composition_figure(self.individual_export_context["processing"].get("triangle_frames", []),
+                                      self.get_time_hours, figure=figure,
+                                      **self.get_live_dead_metric_spec(analysis_type))
         stats = self.background_corrected_plot_data(stats)
         raw_df = self.background_corrected_plot_data(self.live_dead_df if raw_df is None else raw_df)
         spec = self.get_live_dead_metric_spec(analysis_type)
@@ -2202,8 +2244,14 @@ class LiveDeadAnalysisWidget(QWidget):
         )
 
         saved_paths = []
+        if self.triangle_midpoint_enabled() and self.individual_export_context is not None:
+            from nd2_analyzer.analysis.live_dead_triangle_reports import save_area_reports
+            saved_paths.extend(save_area_reports(self.triangle_report_folder(),
+                self.individual_export_context["processing"].get("triangle_frames", []), self.get_time_hours))
         for index in range(self.metric_combo.count()):
             analysis_type = self.metric_combo.itemText(index)
+            if analysis_type.startswith("Triangle "):
+                continue
             spec = self.get_live_dead_metric_spec(analysis_type)
             figure = self.create_live_dead_metric_figure(
                 stats,
@@ -3074,6 +3122,15 @@ class LiveDeadAnalysisWidget(QWidget):
             "completed_frames": [], "failed_frames": [], "individual_cell_count": 0,
             "analysis_source_sha256": source_code_hash,
         }
+        if self.triangle_midpoint_enabled():
+            from nd2_analyzer.analysis.live_dead_triangle_midpoint import SETTINGS
+            provenance["processing"].update(
+                threshold_method="triangle_shared_midpoint", threshold_uint8=None,
+                threshold_raw_equivalent=None, threshold_corrected_equivalent=None,
+                smoothing_sigma=0.0, background_subtraction=False, background_method="none",
+                background_reference_time=None, background_sigma=None, morphology_enabled=False,
+                threshold_rule=SETTINGS["threshold_rule"], triangle_settings=SETTINGS,
+                triangle_frames=[], triangle_report_directory=f"triangle_midpoint/{provenance['run_id']}")
         return self._export_json_value(provenance)
 
     def initialize_individual_exports(self, **scope):
@@ -3369,6 +3426,12 @@ class LiveDeadAnalysisWidget(QWidget):
             })
 
         cell_mask = np.asarray(cell_mask, dtype=bool)
+        triangle_result = None
+        if self.triangle_midpoint_enabled():
+            from nd2_analyzer.analysis.live_dead_triangle_midpoint import analyze_pair, analyze_cell_viability
+            triangle_result = (analyze_cell_viability(live_frame, cell_labels, live_channel)
+                               if self.is_cell_viability_run() else
+                               analyze_pair(live_frame, dead_frame, cell_labels, live_channel, dead_channel))
         distance = None
         if self.cell_background_enabled() and getattr(self.partaker_live_dead_setup, "background_method", "cell_exclusion_median") != "manual_samples_mean":
             setup = self.partaker_live_dead_setup
@@ -3397,10 +3460,17 @@ class LiveDeadAnalysisWidget(QWidget):
             processing_image = self.convert_channel_image_to_uint8_for_processing(
                 corrected
             )
-            smoothed, channel_mask, segmentation = self.segment_fixed_channel(
-                gaussian_corrected=processing_image,
-                smoothing_sigma=self.partaker_live_dead_smoothing_sigma,
-            )
+            if triangle_result is not None:
+                # uint8 mapping is for existing displays only; classify ORIGINAL intensities.
+                smoothed = processing_image
+                channel_mask = triangle_result["channels"][name]["mask"]
+                segmentation = {"analysis_method": "Partaker", "threshold_used": None,
+                                "thresholding_type": "triangle_shared_midpoint", "partaker_gaussian_sigma": 0.0}
+            else:
+                smoothed, channel_mask, segmentation = self.segment_fixed_channel(
+                    gaussian_corrected=processing_image,
+                    smoothing_sigma=self.partaker_live_dead_smoothing_sigma,
+                )
             channel_data[name] = {
                 "raw": image,
                 "display": corrected,
@@ -3439,6 +3509,23 @@ class LiveDeadAnalysisWidget(QWidget):
             "cell_area_pixels": int(np.count_nonzero(cell_mask)),
             **cell_metadata,
         }
+
+        if triangle_result is not None:
+            metrics.update(shared_threshold_used=None, shared_threshold_used_raw=None,
+                           shared_threshold_used_corrected=None, shared_thresholding_type="triangle_shared_midpoint",
+                           shared_gaussian_sigma=0.0,
+                           triangle_selected_channel=triangle_result["selected_channel"])
+            for role, entry in triangle_result["channels"].items():
+                metrics[f"triangle_{role}_mean_midpoint"] = entry["mean_midpoint"]
+                metrics[f"triangle_{role}_background_eligible_pixels"] = sum(b["eligible_pixels"] for b in entry["sampling"])
+                metrics[f"triangle_{role}_background_eligible_fraction"] = sum(b["eligible_pixels"] for b in entry["sampling"])/cell_mask.size
+            for scope, area in triangle_result["composition"].items():
+                metrics[f"triangle_{scope}_valid_pixels"] = area["total"]
+                for i, category in enumerate(area["categories"]):
+                    metrics[f"triangle_{scope}_{category}_pixels"] = area["counts"][i]
+                    metrics[f"triangle_{scope}_{category}_percent"] = area["percent"][i] if area["percent"] else None
+                if not self.is_cell_viability_run():
+                    metrics[f"triangle_{scope}_dead_positive_percent"] = sum(area["percent"][1:3]) if area["percent"] else None
 
         for name in channel_data:
             values = self.compute_channel_metrics(
@@ -3503,6 +3590,15 @@ class LiveDeadAnalysisWidget(QWidget):
                 channel_data=channel_data,
             )
         export_visuals = self.should_export_visuals_for_position(position)
+        if triangle_result is not None:
+            from nd2_analyzer.analysis.live_dead_triangle_midpoint import audit_record
+            from nd2_analyzer.analysis.live_dead_triangle_reports import save_frame_reports
+            images = ({"cell_viability": live_frame} if self.is_cell_viability_run()
+                      else {"live": live_frame, "dead": dead_frame})
+            save_frame_reports(self.triangle_report_folder(), triangle_result, images, cell_labels,
+                               time=time, position=position,
+                               titles=self.triangle_image_titles(time, position, live_channel, dead_channel),
+                               visuals=export_visuals)
         if export_visuals:
             base = f"pos{position}_t{time}"
             overlay_row = {"time": int(time), "position": int(position)}
@@ -3589,6 +3685,9 @@ class LiveDeadAnalysisWidget(QWidget):
             channel=cell_channel,
             mask=cell_mask,
         )
+        if triangle_result is not None and self.individual_export_context is not None:
+            self.individual_export_context["processing"].setdefault("triangle_frames", []).append(
+                {"time": int(time), "position": int(position), **audit_record(triangle_result)})
         return metrics
 
     def save_cell_viability_images(self, output_dir, base, cell_image, cell_labels, data):

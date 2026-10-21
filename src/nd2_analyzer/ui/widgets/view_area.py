@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt, Slot
+from PySide6.QtCore import Qt, Slot, QEvent, QRectF
 from PySide6.QtGui import QPixmap, QImage
 from PySide6.QtWidgets import (
     QWidget,
@@ -37,6 +37,8 @@ class ViewAreaWidget(QWidget):
         self.current_p = 0
         self.current_c = 0
         self.current_mode = "normal"  # normal, segmented, or labeled
+        self._display_pixmap = None
+        self._display_image_rect = QRectF()
         self.current_model = None
         self.valid_time_frames = None  # List of valid frame indices (excluding focus loss)
 
@@ -275,29 +277,21 @@ class ViewAreaWidget(QWidget):
                 h, w, ch = rgb.shape
                 return rgb, w, h, w * ch, QImage.Format_RGB888
 
-            # Ensure grayscale is 16-bit for better display quality
-            if img.dtype != np.uint16:
-                if normalize:
-                    img = self._normalize_image(img).astype(np.uint16)
-                else:
-                    # Scale without normalization
-                    if img.max() <= 255:
-                        img = (img.astype(np.float32) * 257).astype(np.uint16)
-                    else:
-                        img = img.astype(np.uint16)
-
+            # Match the display format to the array dtype, not its brightness.
+            if img.dtype.kind == "u" and img.dtype.itemsize == 2:
+                img = img.astype(np.uint16, copy=False)  # native byte order for Qt
+                qt_format = QImage.Format_Grayscale16
+            else:
+                if img.dtype != np.uint8:
+                    img = np.clip(img, 0, 255).astype(np.uint8)
+                qt_format = QImage.Format_Grayscale8
             height, width = img.shape
-            bytes_per_line = width * 2  # 2 bytes per 16-bit pixel
-            qt_format = QImage.Format_Grayscale16
 
         # Handle color images
         else:
             # Ensure color images are 8-bit RGB
             if img.dtype != np.uint8:
-                if normalize:
-                    img = self._normalize_image(img)
-                else:
-                    img = np.clip(img, 0, 255).astype(np.uint8)
+                img = self._to_uint8(img, normalize)
 
             # Convert grayscale to RGB if needed
             if len(img.shape) == 2:
@@ -306,9 +300,11 @@ class ViewAreaWidget(QWidget):
                 img = img[:, :, :3]
 
             height, width, channels = img.shape
-            bytes_per_line = width * channels
             qt_format = QImage.Format_RGB888
 
+        # Cropped/stripped RGBA arrays may have non-contiguous rows.
+        img = np.ascontiguousarray(img)
+        bytes_per_line = img.strides[0]
         return img, width, height, bytes_per_line, qt_format
 
     def _convert_segmentation_to_display(self, image, mode):
@@ -367,17 +363,44 @@ class ViewAreaWidget(QWidget):
             self._prepare_image_for_display(image, normalize)
         )
 
-        # Create QImage
-        q_image = QImage(processed_img.data, width, height, bytes_per_line, qt_format)
+        # Own the buffer before the temporary NumPy array goes out of scope.
+        q_image = QImage(processed_img.data, width, height, bytes_per_line, qt_format).copy()
+        self._display_pixmap = QPixmap.fromImage(q_image)
+        self._fit_display_pixmap()
 
-        # Scale and display
-        pixmap = QPixmap.fromImage(q_image).scaled(
-            self.image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation
+        # Store for highlighting; source intensities are never altered.
+        self.current_image_data = image.copy()
+
+    def _fit_display_pixmap(self):
+        if self._display_pixmap is None or self._display_pixmap.isNull():
+            return
+        area = self.image_label.contentsRect()
+        if area.width() <= 0 or area.height() <= 0:
+            return
+        pixmap = self._display_pixmap.scaled(
+            area.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation
         )
         self.image_label.setPixmap(pixmap)
+        self._display_image_rect = QRectF(
+            area.x() + (area.width() - pixmap.width()) // 2,
+            area.y() + (area.height() - pixmap.height()) // 2,
+            pixmap.width(), pixmap.height(),
+        )
 
-        # Store for highlighting
-        self.current_image_data = image.copy()
+    def eventFilter(self, watched, event):
+        if watched is self.image_label and event.type() in (QEvent.Resize, QEvent.ContentsRectChange):
+            self._fit_display_pixmap()
+        return super().eventFilter(watched, event)
+
+    def _image_coordinates_from_display(self, point):
+        rect = self._display_image_rect
+        if rect.width() <= 0 or rect.height() <= 0:
+            return None
+        x, y = point.x() - rect.x(), point.y() - rect.y()
+        if not (0 <= x < rect.width() and 0 <= y < rect.height()):
+            return None  # Ignore clicks in the letterboxed margins.
+        height, width = self.current_image.shape[:2]
+        return int(x * width / rect.width()), int(y * height / rect.height())
 
     # SIMPLIFIED EVENT HANDLERS
 
@@ -578,11 +601,14 @@ class ViewAreaWidget(QWidget):
 
         # Image display area
         self.image_label = QLabel()
-        self.image_label.setScaledContents(True)
-        self.image_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.image_label.setScaledContents(False)
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        self.image_label.setMinimumSize(1, 1)
+        self.image_label.installEventFilter(self)
         self.image_label.setContextMenuPolicy(Qt.CustomContextMenu)
         self.image_label.customContextMenuRequested.connect(self.show_context_menu)
-        layout.addWidget(self.image_label)
+        layout.addWidget(self.image_label, 1)
 
         # ND2 Controls Group
         nd2_controls_group = QGroupBox("ND2 Controls")
@@ -1039,39 +1065,10 @@ class ViewAreaWidget(QWidget):
         if not self.manual_selection_active or not hasattr(self, 'current_image'):
             return
 
-        # Get click position
-        click_x = event.pos().x()
-        click_y = event.pos().y()
-
-        # Get image dimensions
-        pixmap = self.image_label.pixmap()
-        if pixmap is None:
+        coordinates = self._image_coordinates_from_display(event.position())
+        if coordinates is None:
             return
-
-        pixmap_width = pixmap.width()
-        pixmap_height = pixmap.height()
-        label_width = self.image_label.width()
-        label_height = self.image_label.height()
-
-        # Calculate the actual image position within the label (centered)
-        x_offset = (label_width - pixmap_width) / 2
-        y_offset = (label_height - pixmap_height) / 2
-
-        # Convert label coordinates to image coordinates
-        image_x = int(click_x - x_offset)
-        image_y = int(click_y - y_offset)
-
-        # Check if click is within image bounds
-        if image_x < 0 or image_x >= pixmap_width or image_y < 0 or image_y >= pixmap_height:
-            return
-
-        # Scale coordinates if image was resized
-        original_height, original_width = self.current_image.shape[:2]
-        scale_x = original_width / pixmap_width
-        scale_y = original_height / pixmap_height
-
-        image_x = int(image_x * scale_x)
-        image_y = int(image_y * scale_y)
+        image_x, image_y = coordinates
 
         # Add point to polygon
         self.current_polygon_points.append((image_x, image_y))

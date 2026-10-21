@@ -73,6 +73,9 @@ class LiveDeadResult:
         "partaker_setup_dialog_full_selected_scope_min_max"
     )
     threshold_rule: str = "foreground = shared_uint8 >= threshold"
+    threshold_method: str = "fixed_global_uint8"
+    triangle_background_sampling: str = "finite pixels where saved cell labels equal zero"
+    triangle_background_margin_pixels: int = 0
     background_enabled: bool = False
     background_margin_pixels: int = 15
     background_upper_cutoffs: tuple[tuple[int, float], ...] = ()
@@ -448,6 +451,8 @@ class LiveDeadDialog(QDialog):
             "intensity mapping, but masks are generated only for previews until "
             "you confirm and run the analysis."
         )
+        self.setup_explanation = explanation
+        self._threshold_explanation_text = explanation.text()
         explanation.setWordWrap(True)
         explanation.setStyleSheet("color: #666; padding-bottom: 4px;")
         main_layout.addWidget(explanation)
@@ -461,9 +466,16 @@ class LiveDeadDialog(QDialog):
         threshold_layout.addWidget(self.create_validation_group())
         self.setup_tabs.addTab(threshold_tab, "Fluorescence Threshold")
         self.setup_tabs.addTab(self.create_background_panel(), "Background Samples")
+        from .triangle_midpoint_panel import TriangleMidpointPanel
+        self.triangle_panel = TriangleMidpointPanel(
+            self.image_data, self.cell_label_provider, self.live_channel, self.dead_channel, self,
+            analysis_mode=self.analysis_mode)
+        self.setup_tabs.addTab(self.triangle_panel, "Shared Triangle Midpoint")
+        self.triangle_panel.ready_changed.connect(self.on_triangle_ready)
         self.setup_tabs.currentChanged.connect(self.on_setup_tab_changed)
         main_layout.addWidget(self.setup_tabs, 1)
-        main_layout.addWidget(self.create_time_navigation_group())
+        self.time_navigation_group = self.create_time_navigation_group()
+        main_layout.addWidget(self.time_navigation_group)
 
         self.status_label = QLabel(f"Preparing representative {self.analysis_label} previews...")
         self.status_label.setStyleSheet(
@@ -671,7 +683,34 @@ class LiveDeadDialog(QDialog):
         self.background_review_label.setText("Settings changed. Preparing the updated intensity window...")
         self.background_update_timer.start()
 
+    def on_triangle_ready(self, ready):
+        if self.setup_tabs.currentIndex() == 2:
+            self.run_button.setEnabled(ready)
+            self.status_label.setText("Shared Triangle Midpoint preview ready. Confirm runs all selected frames."
+                                      if ready else "Calculate a valid Triangle preview before confirming.")
+
     def on_setup_tab_changed(self, index):
+        previous = getattr(self, "_previous_setup_tab", 0)
+        self._previous_setup_tab = index
+        self.reset_button.setVisible(index != 2)
+        self.time_navigation_group.setVisible(index != 2)
+        self.setup_explanation.setText(
+            "Inspect raw-intensity Triangle midpoint masks with segmented cells excluded from background sampling. Confirmation processes all selected positions and timepoints using this method."
+            if index == 2 else self._threshold_explanation_text)
+        if index == 2:
+            self.play_timer.stop()
+            self.background_enabled = False
+            self.background_update_timer.stop()
+            self._background_cancel.set()
+            self._background_generation += 1
+            self.back_button.setVisible(True)
+            self.skip_correction_button.setVisible(False)
+            self.run_button.setText("Confirm and Run Analysis")
+            self.triangle_panel.sync_scope(self.selected_positions(), self.considered_timepoints())
+            self.on_triangle_ready(self.triangle_panel.result is not None)
+            if self.triangle_panel.result is None:
+                self.triangle_panel.request_preview()
+            return
         self.back_button.setVisible(index == 1)
         self.skip_correction_button.setVisible(index == 1)
         if index == 1 and not self.background_enabled:
@@ -679,6 +718,8 @@ class LiveDeadDialog(QDialog):
             self.invalidate_background()
         self.run_button.setText(
             "Confirm and Run Analysis" if index == 1 else "Confirm Threshold and Continue")
+        if index == 0 and previous == 2:
+            self.refresh_scope()
         if index == 1:
             self.seed_background_signal_thresholds()
             self.play_timer.stop()
@@ -931,6 +972,8 @@ class LiveDeadDialog(QDialog):
     def stop_background_jobs(self):
         if self._background_closed:
             return
+        if getattr(self, "triangle_panel", None) is not None:
+            self.triangle_panel.shutdown()
         self._background_closed = True
         self._background_cancel.set()
         self.background_update_timer.stop()
@@ -1464,6 +1507,10 @@ class LiveDeadDialog(QDialog):
             f"Estimating one shared {self.analysis_label} intensity window from considered "
             f"frames...{excluded_note}"
         )
+        if self.setup_tabs.currentIndex() == 2:
+            self.triangle_panel.sync_scope(positions, considered_timepoints)
+            self.triangle_panel.request_preview()
+            return
         if self.background_enabled:
             try:
                 self.start_background_scan(positions, considered_timepoints)
@@ -1693,6 +1740,8 @@ class LiveDeadDialog(QDialog):
         self.preview_update_timer.start()
 
     def update_preview(self) -> None:
+        if self.setup_tabs.currentIndex() == 2:
+            return
         position = self.current_preview_position()
         if position is None or self.processing_black_point_raw is None:
             return
@@ -1958,7 +2007,11 @@ class LiveDeadDialog(QDialog):
             )
             return
 
-        if (
+        triangle = self.setup_tabs.currentIndex() == 2
+        if triangle and (self.triangle_panel.result is None or not self.considered_timepoints()):
+            QMessageBox.warning(self, "Triangle preview not ready", "Calculate a valid Triangle preview before running analysis.")
+            return
+        if not triangle and (
             self.processing_black_point_raw is None
             or self.processing_white_point_raw is None
             or self.processing_white_point_raw
@@ -1979,6 +2032,14 @@ class LiveDeadDialog(QDialog):
         if preview_position is None:
             preview_position = positions[0]
 
+        if triangle:
+            entries = self.triangle_panel.result["channels"].values()
+            black_point = min(e["edges"][0] for e in entries)
+            white_point = max(e["edges"][-1] for e in entries)
+            preview_position = self.triangle_panel.position.currentData()
+        else:
+            black_point = self.processing_black_point_raw
+            white_point = self.processing_white_point_raw
         self.result = LiveDeadResult(
             positions=tuple(positions),
             time_start=int(self.time_start_spin.value()),
@@ -1990,26 +2051,24 @@ class LiveDeadDialog(QDialog):
             dead_channel=self.dead_channel,
             analysis_mode=self.analysis_mode,
             threshold_uint8=int(self.threshold_spin.value()),
-            processing_black_point_raw=float(
-                self.processing_black_point_raw
-            ),
-            processing_white_point_raw=float(
-                self.processing_white_point_raw
-            ),
-            smoothing_sigma=float(self.smoothing_sigma),
+            processing_black_point_raw=float(black_point),
+            processing_white_point_raw=float(white_point),
+            smoothing_sigma=0.0 if triangle else float(self.smoothing_sigma),
             preview_position=int(preview_position),
             representative_timepoints=tuple(self.representative_timepoints),
             sampled_frame_keys=tuple(self.sampled_frame_keys),
-            background_enabled=self.background_enabled,
+            threshold_method="triangle_shared_midpoint" if triangle else "fixed_global_uint8",
+            threshold_rule="finite raw intensity > shared surface" if triangle else "foreground = shared_uint8 >= threshold",
+            background_enabled=False if triangle else self.background_enabled,
             background_margin_pixels=0,
             background_upper_cutoffs=tuple(sorted(self.background_cutoffs().items())),
             background_include_cells=False,
             background_signal_thresholds=(),
-            background_method="manual_samples_mean",
+            background_method="none" if triangle else "manual_samples_mean",
             background_samples=tuple((t, p, c, *rectangle)
-                                     for (t, p, c) in sorted(self.sampled_frame_keys)
+                                     for (t, p, c) in (() if triangle else sorted(self.sampled_frame_keys))
                                      for rectangle in self.background_samples.get((t, p, c), ()) if rectangle is not None),
-            processing_window_source=("partaker_setup_dialog_manual_samples_raw_scope_min_max"
+            processing_window_source=("triangle_raw_intensity" if triangle else "partaker_setup_dialog_manual_samples_raw_scope_min_max"
                                       if self.background_enabled
                                       else "partaker_setup_dialog_full_selected_scope_min_max"),
             capture_interval_value=float(self.capture_interval_spin.value()),

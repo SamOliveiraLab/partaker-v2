@@ -20,6 +20,7 @@ slider settings.
 from __future__ import annotations
 
 import csv
+import json
 from collections import OrderedDict
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -27,13 +28,15 @@ from typing import Iterable, Sequence
 import cv2
 import imageio.v2 as imageio
 import numpy as np
-from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, QThread, QUrl, Signal
 from PySide6.QtGui import (
+    QDesktopServices,
     QBrush,
     QColor,
     QIcon,
     QImage,
     QPainter,
+    QPainterPath,
     QPen,
     QPixmap,
     QTransform,
@@ -45,8 +48,12 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
+    QFileDialog,
     QFormLayout,
     QFrame,
+    QGraphicsLineItem,
+    QGraphicsPathItem,
     QGraphicsPixmapItem,
     QGraphicsRectItem,
     QGraphicsScene,
@@ -54,12 +61,16 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
+    QLayout,
     QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QProgressBar,
     QPushButton,
     QScrollArea,
     QSlider,
+    QSizePolicy,
     QSpinBox,
     QTabWidget,
     QToolButton,
@@ -80,7 +91,7 @@ def _copy_colonies(colonies: Iterable[dict] | None) -> list[dict]:
     copied: list[dict] = []
     for colony in colonies or []:
         item = dict(colony)
-        for field in ("contour", "mask"):
+        for field in ("contour", "mask", "inner_mask"):
             value = item.get(field)
             if isinstance(value, np.ndarray):
                 item[field] = value.copy()
@@ -94,6 +105,8 @@ def _copy_colonies(colonies: Iterable[dict] | None) -> list[dict]:
 class EditableImageView(QGraphicsView):
     """Zoomable full-frame viewer that emits image-coordinate rectangles."""
 
+    polygon_selected = Signal(object)
+    line_selected = Signal(object)
     rectangle_selected = Signal(object)  # QRectF in image coordinates
     FIT_MARGIN_PX = 6
 
@@ -105,6 +118,10 @@ class EditableImageView(QGraphicsView):
         self._scene.addItem(self._pixmap_item)
         self.setScene(self._scene)
 
+        self._polygon_points = []
+        self._polygon_item = None
+        self._selection_line = None
+        self._line_origin = None
         self._selection_item: QGraphicsRectItem | None = None
         self._selection_origin: QPointF | None = None
         self._edit_mode = "Navigate"
@@ -122,6 +139,9 @@ class EditableImageView(QGraphicsView):
         self.set_edit_mode("Trim")
 
     def set_edit_mode(self, mode: str) -> None:
+        if self._polygon_item is not None:
+            self._scene.removeItem(self._polygon_item);self._polygon_item=None
+        self._polygon_points=[]
         self._edit_mode = str(mode)
         if self._edit_mode == "Navigate":
             self.setDragMode(QGraphicsView.ScrollHandDrag)
@@ -131,10 +151,14 @@ class EditableImageView(QGraphicsView):
             self.setCursor(Qt.CrossCursor)
 
     def set_image(self, pixmap: QPixmap) -> None:
+        previous = self._pixmap_item.pixmap()
+        changed_size = previous.isNull() or previous.size()!=pixmap.size()
         self._pixmap_item.setPixmap(pixmap)
         self._scene.setSceneRect(self._pixmap_item.boundingRect())
-        self._auto_fit_enabled = True
-        self.request_fit()
+        if changed_size:
+            self._auto_fit_enabled = True
+        if self._auto_fit_enabled:
+            self.request_fit()
 
     def request_fit(self) -> None:
         if self._fit_pending:
@@ -144,7 +168,8 @@ class EditableImageView(QGraphicsView):
 
     def _perform_queued_fit(self) -> None:
         self._fit_pending = False
-        self.fit_image()
+        if self._auto_fit_enabled:
+            self.fit_image()
 
     def fit_image(self) -> None:
         pixmap = self._pixmap_item.pixmap()
@@ -193,11 +218,45 @@ class EditableImageView(QGraphicsView):
             self.request_fit()
 
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        if self._edit_mode == 'Pink':
+            point=self.mapToScene(event.position().toPoint())
+            if not self._pixmap_item.boundingRect().contains(point):return
+            if not self._polygon_points or (point-self._polygon_points[-1]).manhattanLength()>1:
+                self._polygon_points.append(point)
+            points=[[v.x(),v.y()] for v in self._polygon_points]
+            self.set_edit_mode('Navigate')
+            if len(points)>=3:self.polygon_selected.emit(points)
+            event.accept();return
         self._auto_fit_enabled = True
         self.fit_image()
         event.accept()
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
+        if self._edit_mode=='Pink':
+            if event.button()==Qt.RightButton:
+                self.set_edit_mode('Navigate');event.accept();return
+            if event.button()==Qt.LeftButton:
+                point=self.mapToScene(event.position().toPoint())
+                if self._pixmap_item.boundingRect().contains(point):
+                    self._polygon_points.append(point)
+                    path=QPainterPath(self._polygon_points[0])
+                    for vertex in self._polygon_points[1:]:path.lineTo(vertex)
+                    if self._polygon_item is None:
+                        self._polygon_item=QGraphicsPathItem();self._polygon_item.setPen(QPen(QColor('#ff64c8'),2))
+                        self._polygon_item.setZValue(1000);self._scene.addItem(self._polygon_item)
+                    self._polygon_item.setPath(path)
+                event.accept();return
+        if event.button() == Qt.LeftButton and self._edit_mode == "Cut":
+            point = self.mapToScene(event.position().toPoint())
+            if not self._pixmap_item.boundingRect().contains(point):
+                return
+            self._line_origin = point
+            self._selection_line = QGraphicsLineItem(point.x(), point.y(), point.x(), point.y())
+            self._selection_line.setPen(QPen(QColor("#FF5555"), 2))
+            self._selection_line.setZValue(1000)
+            self._scene.addItem(self._selection_line)
+            event.accept()
+            return
         if (
             event.button() == Qt.LeftButton
             and self._edit_mode in {"Add", "Trim"}
@@ -221,6 +280,12 @@ class EditableImageView(QGraphicsView):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if self._selection_line is not None:
+            point = self.mapToScene(event.position().toPoint())
+            origin = self._line_origin
+            self._selection_line.setLine(origin.x(), origin.y(), point.x(), point.y())
+            event.accept()
+            return
         if self._selection_item is not None and self._selection_origin is not None:
             point = self.mapToScene(event.position().toPoint())
             rect = QRectF(self._selection_origin, point).normalized()
@@ -230,6 +295,18 @@ class EditableImageView(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton and self._selection_line is not None:
+            point = self.mapToScene(event.position().toPoint())
+            bounds = self._pixmap_item.boundingRect()
+            point = QPointF(np.clip(point.x(), bounds.left(), bounds.right()),
+                            np.clip(point.y(), bounds.top(), bounds.bottom()))
+            origin = self._line_origin
+            self._scene.removeItem(self._selection_line)
+            self._selection_line = self._line_origin = None
+            if abs(point.x()-origin.x()) + abs(point.y()-origin.y()) >= 2:
+                self.line_selected.emit([origin.x(), origin.y(), point.x(), point.y()])
+            event.accept()
+            return
         if (
             event.button() == Qt.LeftButton
             and self._selection_item is not None
@@ -250,6 +327,26 @@ class EditableImageView(QGraphicsView):
         super().mouseReleaseEvent(event)
 
 
+class NotebookAnalysisWorker(QThread):
+    progress = Signal(int, str)
+    completed = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, analysis, preview_key=None, parent=None):
+        super().__init__(parent)
+        # Numerical libraries on macOS need more than Qt's default worker stack.
+        self.setStackSize(16 * 1024 * 1024)
+        self.analysis, self.preview_key = analysis, preview_key
+        analysis.progress = self.progress.emit
+        analysis.cancelled = self.isInterruptionRequested
+
+    def run(self):
+        try:
+            self.completed.emit(self.analysis.run(preview_key=self.preview_key))
+        except Exception as error:
+            self.failed.emit(str(error))
+
+
 class VerifyColoniesDialog(QDialog):
     """Calibrate and verify automatic colony detection over many frames."""
 
@@ -258,6 +355,7 @@ class VerifyColoniesDialog(QDialog):
 
     # New output: { (position, time, channel): [colony dictionaries] }, params.
     batch_colonies_verified = Signal(object, dict)
+    notebook_analysis_completed = Signal(object)
 
     DEFAULT_THUMBNAIL_COUNT = 5
     DISPLAY_COLORS = (
@@ -284,12 +382,15 @@ class VerifyColoniesDialog(QDialog):
         time_end: int | None = None,
         channel: int | None = None,
         drop_frame_zero: bool = False,
+        notebook_result=None,
+        verified_frames=None,
     ):
         super().__init__(parent)
 
         self.initial_image = None if image is None else np.asarray(image)
         self.initial_colonies = _copy_colonies(colonies)
         self.params = dict(params or {})
+        self.inner_enabled = bool(self.params.get("inside_roi_enabled", False))
         self.image_data = image_data or self._find_shared_image_data()
 
         self.time_count, self.position_count, self.channel_count = (
@@ -339,8 +440,22 @@ class VerifyColoniesDialog(QDialog):
         if not self.initial_positions:
             self.initial_positions = [self.current_position]
 
+        from nd2_analyzer.analysis.microcolony_notebook_analysis import BACKEND
+        self.notebook_result = notebook_result if getattr(notebook_result, "backend", None)==BACKEND else None
+        self.notebook_worker = None
+        self._notebook_preparing = None
+        self.notebook_edits = {}
+        self.notebook_edit_history = []
+        self.notebook_stale = False
+        self.notebook_selected = None
+        self._notebook_selection_frame = None
+        self.notebook_pink_seeds = dict(getattr(notebook_result,'edits',{}) or {})
+        self._notebook_view_cache = None
         self.colony_separator = ColonySeparator()
         self.frame_states: dict[FrameKey, dict] = {}
+        for key, values in (verified_frames or {}).items():
+            self.frame_states[tuple(key)] = dict(auto_colonies=_copy_colonies(values), colonies=_copy_colonies(values),
+                detected=True,dirty=False,edited=True,reviewed=True,parameter_stale=False,history=[])
         self._frame_cache: OrderedDict[FrameKey, np.ndarray] = OrderedDict()
         self._frame_cache_limit = 20
         self._initial_colonies_consumed = False
@@ -507,20 +622,12 @@ class VerifyColoniesDialog(QDialog):
         )
         main_layout.addWidget(heading)
 
-        explanation = QLabel(
-            "Choose the positions and time range, tune one automatic colony "
-            "detection rule, and inspect every selected frame. Add, trim, and "
-            "delete edits are stored independently for each frame and restored "
-            "when you return to it."
-        )
-        explanation.setWordWrap(True)
-        explanation.setStyleSheet("color: #777; padding-bottom: 4px;")
-        main_layout.addWidget(explanation)
-
         main_layout.addWidget(self.create_top_workspace(), 1)
-        main_layout.addWidget(self.create_detection_controls())
+        self.detection_controls = self.create_detection_controls()
+        main_layout.addWidget(self.detection_controls)
         main_layout.addWidget(self.create_time_navigation_group())
-        main_layout.addWidget(self.create_validation_group())
+        self.validation_group = self.create_validation_group()
+        main_layout.addWidget(self.validation_group)
 
         status_row = QHBoxLayout()
         self.status_label = QLabel("Preparing colony previews...")
@@ -617,6 +724,8 @@ class VerifyColoniesDialog(QDialog):
 
         self.image_view = EditableImageView()
         self.image_view.rectangle_selected.connect(self.apply_rectangle_edit)
+        self.image_view.line_selected.connect(self.notebook_cut_selected)
+        self.image_view.polygon_selected.connect(self.set_notebook_pink_seed)
         layout.addWidget(self.image_view, 1)
         return widget
 
@@ -638,12 +747,471 @@ class VerifyColoniesDialog(QDialog):
         self.right_tabs = QTabWidget()
         self.right_tabs.setDocumentMode(True)
         self.right_tabs.addTab(self.create_scope_group(), "Analysis Scope")
+        self.inside_roi_page = self.create_inside_roi_group()
+        self.right_tabs.addTab(self.inside_roi_page, "Inside ROI")
         self.right_tabs.addTab(
             self.create_current_frame_group(),
             "Current Frame Colonies",
         )
+        self.notebook_page = self.create_notebook_tab()
+        self.right_tabs.addTab(self.notebook_page, "Micro-colonies")
+        self.right_tabs.currentChanged.connect(self.on_inside_roi_tab_changed)
+        self.right_tabs.currentChanged.connect(self.on_notebook_tab_changed)
         layout.addWidget(self.right_tabs)
         return widget
+
+    def notebook_active(self):
+        return hasattr(self, "notebook_page") and self.right_tabs.currentWidget() is self.notebook_page
+
+    def create_notebook_tab(self):
+        from nd2_analyzer.analysis.microcolony_notebook_analysis import NotebookSettings
+        settings = self.notebook_result.settings if self.notebook_result is not None else NotebookSettings()
+        # Keep natural control heights on short windows and larger system fonts.
+        # Scroll the panel instead of allowing the overlay checkboxes to overlap.
+        page=QScrollArea();page.setWidgetResizable(True)
+        page.setFrameShape(QFrame.NoFrame)
+        content=QWidget();layout=QVBoxLayout(content)
+        layout.setSizeConstraint(QLayout.SetMinimumSize)
+        page.setWidget(content)
+        self.notebook_input_summary=QLabel("Uses the biofilm boundary and dark-area mask from Inside ROI in this window.")
+        self.notebook_input_summary.setWordWrap(True);layout.addWidget(self.notebook_input_summary)
+        edit=QPushButton("Edit boundary / Inside ROI mask")
+        self.notebook_edit_inputs_button=edit
+        edit.clicked.connect(lambda: self.right_tabs.setCurrentWidget(self.inside_roi_page));layout.addWidget(edit)
+        self.notebook_position_combo=QComboBox();self.notebook_position_combo.currentIndexChanged.connect(self.on_notebook_position_changed)
+        layout.addWidget(self.notebook_position_combo)
+        actions=QHBoxLayout();self.notebook_run_button=QPushButton("Analyze Current ROI Settings")
+        self.notebook_run_button.clicked.connect(lambda: self.start_notebook_analysis(False))
+        self.notebook_cancel_button=QPushButton("Cancel");self.notebook_cancel_button.setEnabled(False)
+        self.notebook_cancel_button.clicked.connect(self.cancel_notebook_analysis)
+        actions.addWidget(self.notebook_run_button,1);actions.addWidget(self.notebook_cancel_button);layout.addLayout(actions)
+        self.notebook_load_button=QPushButton('Load saved notebook results…')
+        self.notebook_load_button.clicked.connect(self.load_saved_notebook_results);layout.addWidget(self.notebook_load_button)
+        pink_actions=QHBoxLayout()
+        self.notebook_draw_pink_button=QPushButton('Draw pink region')
+        self.notebook_draw_pink_button.clicked.connect(self.draw_notebook_pink)
+        self.notebook_clear_pink_button=QPushButton('Clear drawn seed')
+        self.notebook_clear_pink_button.clicked.connect(self.clear_notebook_pink)
+        pink_actions.addWidget(self.notebook_draw_pink_button);pink_actions.addWidget(self.notebook_clear_pink_button)
+        layout.addLayout(pink_actions)
+        self.notebook_view_combo=QComboBox();self.notebook_view_combo.addItems(["Phase contrast","Masks only"])
+        self.notebook_view_combo.currentTextChanged.connect(self.refresh_display);layout.addWidget(self.notebook_view_combo)
+        group=QGroupBox("Show regions");rows=QVBoxLayout(group);self.notebook_layers={}
+        rows.setSpacing(6);rows.setSizeConstraint(QLayout.SetMinimumSize)
+        group.setSizePolicy(QSizePolicy.Preferred,QSizePolicy.Fixed)
+        for name,label,checked in (
+            ("outer","Large biofilm boundary · magenta",True),
+            ("inner","Saved Inside ROI dark area · cyan",False),
+            ("measured","Notebook measured dark area · cyan",False),
+            ("pink","Central region · pink",True),
+            ("regions","Candidate microcolony territories",True),
+            ("cell_regions","Dark area coloured by microcolony",False),
+            ("boundaries","Microcolony boundaries",True),
+            ("darkness","Local darkness heatmap",False),
+            ("unassigned","Unassigned dark area · orange",False),
+            ("labels","Region IDs",False),
+            ("selection","Highlight selected region · yellow",False)):
+            widget=QCheckBox(label);widget.setChecked(checked)
+            widget.setMinimumHeight(widget.sizeHint().height())
+            widget.setSizePolicy(QSizePolicy.Preferred,QSizePolicy.Fixed)
+            widget.toggled.connect(self.refresh_display)
+            self.notebook_layers[name]=widget;rows.addWidget(widget)
+        layout.addWidget(group)
+        self.notebook_motion_checkbox=QCheckBox("Image-supported movement vectors")
+        self.notebook_motion_checkbox.setToolTip("Raw-image texture matches checked forward and backward. No centroid-displacement substitute; unsupported motion is unavailable.")
+        self.notebook_motion_checkbox.toggled.connect(self.refresh_display);layout.addWidget(self.notebook_motion_checkbox)
+        self.notebook_results_list=QListWidget();self.notebook_results_list.setMinimumHeight(70);self.notebook_results_list.setMaximumHeight(110)
+        self.notebook_results_list.currentItemChanged.connect(self.select_notebook_colony);layout.addWidget(self.notebook_results_list,1)
+        self.notebook_status=QLabel("Set the outer boundary and Inside ROI mask, then analyze. No export or cell-model segmentation is required.")
+        self.notebook_status.setMinimumHeight(36)
+        self.notebook_status.setWordWrap(True);layout.addWidget(self.notebook_status)
+        self.notebook_open_button=QPushButton("Open Results Folder");self.notebook_open_button.clicked.connect(self.open_notebook_results)
+        self.notebook_open_button.setEnabled(self.notebook_result is not None);layout.addWidget(self.notebook_open_button)
+        self.notebook_settings_toggle=QToolButton();self.notebook_settings_toggle.setText("Analysis settings…");self.notebook_settings_toggle.setCheckable(True)
+        layout.addWidget(self.notebook_settings_toggle)
+        self.notebook_settings_group=QScrollArea();self.notebook_settings_group.setWidgetResizable(True)
+        self.notebook_settings_group.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff);self.notebook_settings_group.setMinimumHeight(180)
+        self.notebook_settings_group.setVisible(False);self.notebook_settings_toggle.toggled.connect(self.notebook_settings_group.setVisible)
+        advanced=QWidget();form=QFormLayout(advanced);form.setRowWrapPolicy(QFormLayout.WrapLongRows);self.notebook_inputs={}
+        domain=QComboBox();domain.addItem("Whole outer biofilm ROI",'colony');domain.addItem("Inside ROI dark area only",'inner')
+        domain.setCurrentIndex(max(0,domain.findData(settings.mask_kind)));domain.currentIndexChanged.connect(self.mark_notebook_stale)
+        self.notebook_inputs['mask_kind']=domain;form.addRow('Partition domain',domain)
+        for name,label,low,high,decimals in (
+            ('width','Darkness neighborhood (px)',1,256,0),('smooth_sigma','Darkness smoothing (px)',.01,100,2),
+            ('prominence','Peak prominence (0–1)',.0001,1,4),('min_peak_distance','Peak spacing (px)',0,500,0),
+            ('min_region_area','Minimum region territory (px²)',1,1000000,0),('min_support_fraction','Minimum seed support',0,1,2),
+            ('match_iou','Unique-overlap identity threshold',.01,1,2),('sample_step','Analyze every N frames',1,10000,0),
+            ('interval','Acquisition interval',.00001,100000,5),('pixel_um','Pixel size (µm/px; 0 = unknown)',0,100,5)):
+            widget=QDoubleSpinBox() if decimals else QSpinBox()
+            if decimals:widget.setDecimals(decimals)
+            widget.setRange(low,high);value=getattr(settings,name)
+            if name=='pixel_um' and self.notebook_result is None:
+                voxel=getattr(self.image_data,'voxel_size',None);value=float(getattr(voxel,'x',None) or 0)
+            widget.setValue(value);widget.valueChanged.connect(self.mark_notebook_stale)
+            self.notebook_inputs[name]=widget;form.addRow(label,widget)
+        unit=QComboBox();unit.addItems(['capture','s','min','h']);unit.setCurrentText(settings.time_unit)
+        unit.currentTextChanged.connect(self.mark_notebook_stale);self.notebook_inputs['time_unit']=unit;form.addRow('Interval unit',unit)
+        motion=QCheckBox('Measure raw-image motion');motion.setChecked(settings.motion);motion.toggled.connect(self.mark_notebook_stale)
+        self.notebook_inputs['motion']=motion;form.addRow(motion)
+        measurement=QComboBox()
+        measurement.addItem('Saved Inside ROI (notebook default)','inside_roi')
+        measurement.addItem('Notebook gap-supported area','hybrid')
+        measurement.addItem('Notebook raw-image dark objects','raw_z')
+        measurement.setCurrentIndex(max(0,measurement.findData(getattr(settings,'dark_measurement','inside_roi'))))
+        measurement.currentIndexChanged.connect(self.mark_notebook_stale)
+        self.notebook_inputs['dark_measurement']=measurement;form.addRow('Dark area measurement',measurement)
+        pink_source=QLineEdit(getattr(settings,'pink_source',''))
+        pink_source.setPlaceholderText('Automatic: use notebook masks only when paired images match')
+        pink_source.setToolTip('Reviewed region_ids.tif with pink ID 1 and a sibling ../input_run/manifest.json. Exact raw-image correspondence is checked.')
+        pink_source.textChanged.connect(self.mark_notebook_stale)
+        self.notebook_inputs['pink_source']=pink_source;form.addRow('Reviewed pink masks',pink_source)
+        root=QLineEdit(str(Path(__file__).resolve().parents[4]/'analysis_results'/'microcolony_regions'))
+        self.notebook_inputs['output_root']=root;form.addRow('Results folder',root)
+        self.notebook_settings_group.setWidget(advanced);layout.addWidget(self.notebook_settings_group,1)
+        layout.addStretch()
+        self.notebook_scrub_timer=QTimer(self);self.notebook_scrub_timer.setSingleShot(True);self.notebook_scrub_timer.setInterval(60)
+        self.notebook_scrub_timer.timeout.connect(self.load_current_frame)
+        self.notebook_prepare_timer=QTimer(self);self.notebook_prepare_timer.setSingleShot(True)
+        self.notebook_prepare_timer.timeout.connect(self.prepare_next_notebook_input)
+        return page
+
+    def on_notebook_position_changed(self,*_args):
+        position=self.notebook_position_combo.currentData()
+        if position is not None and self.notebook_active():
+            index=self.preview_position_combo.findData(position)
+            if index>=0:self.preview_position_combo.setCurrentIndex(index)
+            self.current_position=int(position);self.load_current_frame()
+
+    def update_notebook_view_controls(self):
+        result=self.notebook_result
+        self.notebook_motion_checkbox.setEnabled(bool(getattr(result,'motion_rows',[])) and not self.notebook_stale)
+        positions=result.positions if result is not None else self.selected_positions()
+        self.notebook_position_combo.blockSignals(True);self.notebook_position_combo.clear()
+        for position in positions:self.notebook_position_combo.addItem(f'Position {position}',position)
+        self.notebook_position_combo.setCurrentIndex(max(0,self.notebook_position_combo.findData(self.current_position)))
+        self.notebook_position_combo.blockSignals(False);self.notebook_position_combo.setVisible(len(positions)>1)
+        self.notebook_input_summary.setText('Inputs: the outer boundary and exact Inside ROI dark-area mask from this window.\nRegion size and dark area are measured separately.')
+
+    def navigation_timepoints(self):
+        if self.notebook_active() and self.notebook_result is not None:
+            return list(self.notebook_result.frames)
+        return self.considered_timepoints()
+
+    def sync_navigation_timeline(self):
+        values=self.navigation_timepoints()
+        if values:
+            self.time_slider.blockSignals(True);self.time_slider.setRange(min(values),max(values))
+            self.current_time=min(values,key=lambda t:abs(t-self.current_time));self.time_slider.setValue(self.current_time)
+            self.time_slider.blockSignals(False)
+
+    def notebook_settings(self):
+        from nd2_analyzer.analysis.microcolony_notebook_analysis import NotebookSettings
+        values={}
+        for name,widget in self.notebook_inputs.items():
+            if name=='output_root':continue
+            if isinstance(widget,QComboBox):values[name]=widget.currentData() if name in ('mask_kind','dark_measurement') else widget.currentText()
+            elif isinstance(widget,QCheckBox):values[name]=widget.isChecked()
+            elif isinstance(widget,QLineEdit):values[name]=widget.text().strip()
+            else:values[name]=widget.value()
+        values['cell_channel']=int(self.channel_combo.currentData())
+        return NotebookSettings(**values)
+
+    def mark_notebook_stale(self, *_args):
+        if self.notebook_result is not None:
+            self.notebook_stale = True
+            if hasattr(self,'notebook_motion_checkbox'):self.notebook_motion_checkbox.setEnabled(False)
+            if hasattr(self, "notebook_status"):
+                self.notebook_status.setText("Settings or scope changed. Displayed results are from the previous run; analyze again before retaining them.")
+
+    def on_notebook_tab_changed(self, *_args):
+        active = self.notebook_active()
+        self.detection_controls.setEnabled(not active)
+        self.detection_controls.setVisible(not active)
+        self.validation_group.setVisible(not active)
+        self.view_mode_combo.setEnabled(not active)
+        self.show_labels_checkbox.setEnabled(not active)
+        self.opacity_slider.setEnabled(not active)
+        self.reset_all_button.setEnabled(not active)
+        self.accept_button.setText("Retain Micro-colony Results" if active else "Accept All Selected Frames")
+        self.sync_navigation_timeline()
+        if active:
+            self.detect_timer.stop()
+            self.update_notebook_view_controls()
+            if self.notebook_result is not None and not self.notebook_stale:
+                result = self.notebook_result
+                self.notebook_status.setText(f"Retained analysis: {len(result.colony_rows)} region observations across {len(result.frames)} frames. Inputs are the current selector masks.")
+                self.status_label.setText(self.notebook_status.text())
+            self.image_view.set_edit_mode('Navigate')
+            self.refresh_notebook_frame()
+            self.refresh_display()
+        else:
+            self.notebook_scrub_timer.stop()
+            self.image_view.set_edit_mode(self.modify_mode)
+            self.load_current_frame()
+
+    def start_notebook_analysis(self,preview=False):
+        if self.notebook_worker is not None or self._notebook_preparing is not None:return
+        from nd2_analyzer.analysis.microcolony_notebook_analysis import NotebookAnalysis,sampled_frames
+        try:
+            if self.image_data is None:raise ValueError('Load an image sequence first')
+            if not self.inner_enabled:raise ValueError('Set the dark-area mask in Inside ROI first. The analysis uses that mask directly.')
+            settings=self.notebook_settings();settings.validate()
+            positions,times=self.selected_positions(),self.considered_timepoints()
+            if not positions or not times:raise ValueError('Choose positions and a frame range in Analysis Scope')
+            source=self.get_frame((positions[0],times[0],settings.cell_channel))
+            selector=self.final_params()
+            selector['inner_roi_index']=self.inner_roi_combo.currentData()
+            analysis=NotebookAnalysis(self.image_data,settings,positions,times,self.notebook_inputs['output_root'].text().strip(),selector_params=selector,edits=self.notebook_pink_seeds.copy())
+            keys=[(p,t,settings.cell_channel) for p in positions for t in sampled_frames(times,settings.sample_step)]
+            self._notebook_preparing=dict(analysis=analysis,keys=keys,index=0)
+            self.play_timer.stop();self.play_button.setChecked(False);self.set_notebook_busy(True)
+            self.notebook_status.setText('Preparing the current outer and Inside ROI masks…')
+            self.notebook_prepare_timer.start(0)
+        except Exception as error:
+            QMessageBox.warning(self,'Microcolony analysis',str(error))
+
+    def prepare_next_notebook_input(self):
+        job=self._notebook_preparing
+        if job is None:return
+        try:
+            analysis=job['analysis'];analysis.check()
+            if job['index']>=len(job['keys']):
+                if not any(np.any(c['inner_mask']) for values in analysis.prepared_colonies.values() for c in values):
+                    raise ValueError('Inside ROI is empty in every selected frame. Adjust the dark-area threshold before analyzing.')
+                worker=NotebookAnalysisWorker(analysis,None,self)
+                worker.progress.connect(self.on_notebook_progress);worker.completed.connect(self.on_notebook_complete)
+                worker.failed.connect(self.on_notebook_failure);worker.finished.connect(self.on_notebook_worker_finished)
+                self._notebook_preparing=None;self.notebook_worker=worker;worker.start();return
+            key=job['keys'][job['index']]
+            if 'saved' in job:
+                p,t,c=key;entry=job['saved'][t];raw=self.get_frame(key)
+                reference=np.load(job['base']/entry['file'],allow_pickle=False)
+                cropped=reference.shape==raw[BORDER_PX:-BORDER_PX,BORDER_PX:-BORDER_PX].shape
+                current=raw[BORDER_PX:-BORDER_PX,BORDER_PX:-BORDER_PX] if cropped else raw
+                if reference.dtype!=current.dtype or not np.array_equal(reference,current):
+                    raise ValueError(f'Saved phase image does not match the loaded sequence at P={p}, T={t}. Load the matching image sequence first.')
+                colonies=[]
+                with np.load(job['base']/entry['masks'],allow_pickle=False) as saved:
+                    for record in entry['colonies']:
+                        ident=int(record['track_id']);outer=saved[f'colony_{ident}'].astype(bool);inner=saved[f'inner_{ident}'].astype(bool)
+                        if outer.shape!=reference.shape or inner.shape!=reference.shape:raise ValueError('Saved masks do not match saved image coordinates')
+                        def expand(mask):
+                            if not cropped:return mask.copy()
+                            full=np.zeros(raw.shape,bool);full[BORDER_PX:-BORDER_PX,BORDER_PX:-BORDER_PX]=mask;return full
+                        outer=expand(outer);inner=expand(inner)&outer
+                        contours=cv2.findContours(outer.astype(np.uint8),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)[0]
+                        colonies.append(dict(colony_id=ident,track_id=ident,mask=outer,inner_mask=inner,area=float(outer.sum()),contour=max(contours,key=cv2.contourArea) if contours else None))
+                analysis.add_input(key,raw,colonies);job['index']+=1
+                self.on_notebook_progress(int(10*job['index']/len(job['keys'])),f"Loading saved masks {job['index']}/{len(job['keys'])}")
+                self.notebook_prepare_timer.start(0);return
+            state=self.get_state(key)
+            if not state['detected'] or state['dirty'] and not state['edited']:self.detect_frame(key)
+            colonies,_=interior_colonies(_copy_colonies(state['colonies']),self.get_frame(key).shape)
+            # Use inner_mask() itself, exactly as acceptance and the PIV exporter.
+            inner=self.inner_mask(key,colonies)
+            selected=self.inner_roi_combo.currentData()
+            if selected is not None and selected>=0:colonies=[c for i,c in enumerate(colonies) if i==selected]
+            for colony in colonies:
+                colony['inner_mask']=(inner & (colony['mask']>0)).astype(np.uint8)
+                colony['inner_area_px']=int(np.count_nonzero(colony['inner_mask']))
+                colony.update(position=key[0],time=key[1],channel=key[2])
+            analysis.add_input(key,self.get_frame(key),colonies)
+            job['index']+=1
+            self.on_notebook_progress(int(10*job['index']/len(job['keys'])),f"Preparing selector masks {job['index']}/{len(job['keys'])}")
+            self.notebook_prepare_timer.start(0)
+        except Exception as error:
+            job['analysis'].write_manifest('failed');self._notebook_preparing=None
+            self.set_notebook_busy(False);self.on_notebook_failure(str(error))
+
+    def set_notebook_busy(self,busy):
+        self.notebook_load_button.setEnabled(not busy)
+        self.notebook_draw_pink_button.setEnabled(not busy)
+        self.notebook_clear_pink_button.setEnabled(not busy)
+        self.notebook_edit_inputs_button.setEnabled(not busy)
+        self.notebook_settings_group.setEnabled(not busy);self.notebook_settings_toggle.setEnabled(not busy)
+        self.notebook_position_combo.setEnabled(not busy);self.notebook_run_button.setEnabled(not busy)
+        self.notebook_cancel_button.setEnabled(busy);self.accept_button.setEnabled(not busy)
+        self.notebook_open_button.setEnabled(not busy and self.notebook_result is not None)
+        self.right_tabs.tabBar().setEnabled(not busy);self.right_tabs.widget(0).setEnabled(not busy)
+        self.progress_bar.setVisible(busy)
+        if busy:self.progress_bar.setValue(0)
+        self.image_view.set_edit_mode('Navigate')
+
+    def cancel_notebook_analysis(self):
+        if self._notebook_preparing is not None:
+            self.notebook_prepare_timer.stop();self._notebook_preparing['analysis'].write_manifest('cancelled')
+            self._notebook_preparing=None;self.set_notebook_busy(False);self.notebook_status.setText('Input preparation cancelled.')
+        elif self.notebook_worker is not None:
+            self.notebook_worker.requestInterruption();self.notebook_status.setText('Cancelling after the current operation…')
+
+    def on_notebook_progress(self, value, message):
+        self.progress_bar.setValue(value)
+        self.notebook_status.setText(message)
+        self.status_label.setText(message)
+
+    def on_notebook_complete(self,analysis):
+        self._notebook_view_cache=None;self.notebook_result=analysis;self.notebook_stale=False;self.notebook_selected=None
+        if getattr(analysis,'loaded_saved',False):
+            self.notebook_pink_seeds={}
+            for name,widget in self.notebook_inputs.items():
+                if name=='output_root':continue
+                value=getattr(analysis.settings,name);widget.blockSignals(True)
+                if isinstance(widget,QComboBox):
+                    index=widget.findData(value) if name in ('mask_kind','dark_measurement') else widget.findText(value)
+                    if index>=0:widget.setCurrentIndex(index)
+                elif isinstance(widget,QCheckBox):widget.setChecked(value)
+                elif isinstance(widget,QLineEdit):widget.setText(value)
+                else:widget.setValue(value)
+                widget.blockSignals(False)
+            self.inner_enabled=True
+            analysis.selector_params['inside_roi_enabled']=True
+            self.current_position=analysis.positions[0];self.current_time=analysis.frames[0]
+            index=self.preview_position_combo.findData(self.current_position)
+            self.preview_position_combo.blockSignals(True)
+            if index<0:
+                self.preview_position_combo.addItem(f'Position {self.current_position}',self.current_position)
+                index=self.preview_position_combo.count()-1
+            self.preview_position_combo.setCurrentIndex(index);self.preview_position_combo.blockSignals(False)
+            for key,colonies in analysis.prepared_colonies.items():
+                state=self.get_state(key)
+                state.update(colonies=_copy_colonies(colonies),auto_colonies=_copy_colonies(colonies),detected=True,dirty=False,edited=True,reviewed=True)
+                values=(self.inner_threshold_slider.value(),self.inner_min_area_slider.value(),self.inner_kernel_slider.value()|1,self.inner_roi_combo.currentData())
+                inner=np.zeros(colonies[0]['mask'].shape,np.uint8)
+                for colony in colonies:inner |= colony['inner_mask'].astype(np.uint8)
+                state['inner_cache']=((values,self._colony_signature(state['colonies'])),inner)
+            self.channel_combo.blockSignals(True)
+            self.channel_combo.setCurrentIndex(max(0,self.channel_combo.findData(analysis.settings.cell_channel)))
+            self.channel_combo.blockSignals(False)
+        self.update_notebook_view_controls();self.sync_navigation_timeline()
+        method_name={'inside_roi':'saved Inside ROI','hybrid':'notebook gap-supported area','raw_z':'notebook raw dark objects'}[analysis.settings.dark_measurement]
+        self.notebook_status.setText(f"Complete: {len(analysis.colony_rows)} region observations, {len(analysis.frames)} frames. Dark area: {method_name}.")
+        pink_count=sum(r.get('region_type')=='central_pink' for r in analysis.colony_rows)
+        self.notebook_status.setText(self.notebook_status.text()+
+            (f' Pink region: {pink_count} observations; '+('accepted notebook territories applied.' if analysis.reviewed_regions else 'notebook growth applied.') if pink_count else ' Pink region unavailable: draw a seed on the first frame.'))
+        if not analysis.colony_rows:
+            self.notebook_status.setText('The selector masks were retained, but no candidate peaks passed the notebook settings. Review peak prominence and neighborhood size in Analysis settings.')
+        self.status_label.setText(self.notebook_status.text())
+        self._notebook_geometry_signatures={key:self._colony_signature(self.get_state(key)['colonies']) for key in analysis.prepared_colonies}
+        self.notebook_analysis_completed.emit(analysis);self.refresh_notebook_frame();self.refresh_display()
+
+    def on_notebook_failure(self, message):
+        self.notebook_status.setText(message)
+        if not message.startswith("Analysis cancelled"):
+            QMessageBox.warning(self, "Micro-colony analysis failed", message)
+
+    def on_notebook_worker_finished(self):
+        worker = self.notebook_worker
+        self.notebook_worker = None
+        self.set_notebook_busy(False)
+        if worker is not None:
+            worker.deleteLater()
+
+    def notebook_frame_data(self):
+        result=self.notebook_result
+        if result is None:return None
+        p,t=self.current_position,self.current_time;key=(str(result.output),p,t)
+        if self._notebook_view_cache is not None and self._notebook_view_cache[0]==key:return self._notebook_view_cache[1]
+        if not result.mask_path(p,t).is_file():return None
+        frame=result.load_frame(p,t);records=json.loads(str(frame['records_json']))
+        value=(frame,records);self._notebook_view_cache=(key,value);return value
+
+    def notebook_display(self,key):
+        from nd2_analyzer.analysis.microcolony_notebook_analysis import render_overlay
+        data=self.notebook_frame_data()
+        if data is None:
+            image=self.normalize_for_display(self.get_frame(key))
+            return analysis_image(self.preview_notebook_pink(np.repeat(image[...,None],3,axis=2)))
+        frame,records=data;layers={name for name,widget in self.notebook_layers.items() if widget.isChecked()}
+        output=render_overlay(frame,layers,records=records,selected=self.notebook_selected,
+            motion=self.notebook_motion_checkbox.isChecked() and self.notebook_motion_checkbox.isEnabled(),
+            black=self.notebook_view_combo.currentText()=='Masks only')
+        return analysis_image(self.preview_notebook_pink(output))
+
+    def preview_notebook_pink(self,output):
+        seed=self.notebook_pink_seeds.get(self.current_position)
+        if seed and seed['capture']==self.current_time and (self.notebook_result is None or self.notebook_stale) and self.notebook_layers['pink'].isChecked():
+            output=output.copy()
+            cv2.polylines(output,[np.rint(seed['polygon']).astype(np.int32)],True,(255,100,200),2,cv2.LINE_AA)
+        return output
+
+    def refresh_notebook_frame(self):
+        if self._notebook_selection_frame!=(self.current_position,self.current_time):
+            self.notebook_selected=None;self._notebook_selection_frame=(self.current_position,self.current_time)
+        self.notebook_results_list.blockSignals(True);self.notebook_results_list.clear()
+        data=self.notebook_frame_data();p,t=self.current_position,self.current_time
+        if data is not None:
+            frame,records=data
+            self.frame_info_label.setText(f'P={p} · T={t} · {len(records)} regions · {int(frame.get("measured_mask",frame["inner_mask"]).sum()):,} dark-area px'+(' · stale' if self.notebook_stale else ''))
+            for row in records:
+                item=QListWidgetItem(f"{'Pink · ' if row.get('region_type')=='central_pink' else ''}{row['display_id']}: dark area {row['dark_area_px']:,} px² · territory {row['territory_area_px']:,} px²")
+                item.setData(Qt.UserRole,row['display_id']);self.notebook_results_list.addItem(item)
+        else:self.frame_info_label.setText(f'P={p} · T={t} · Analyze current selector masks')
+        result=self.notebook_result
+        elapsed=(t-result.frames[0])*result.settings.interval if result is not None else None
+        self.time_value_label.setMinimumWidth(135)
+        self.time_value_label.setText(f'T={t}' if elapsed is None else f'T={t} · {elapsed:g} {result.settings.time_unit}')
+        self.notebook_results_list.blockSignals(False)
+
+    def select_notebook_colony(self,item,_previous=None):
+        self.notebook_selected=item.data(Qt.UserRole) if item is not None else None;self.refresh_display()
+
+    def load_saved_notebook_results(self,folder=None):
+        if self.notebook_worker is not None or self._notebook_preparing is not None:return
+        from dataclasses import replace
+        from nd2_analyzer.analysis.microcolony_notebook_analysis import NotebookAnalysis,NotebookSettings,find_reviewed_results,reviewed_inputs
+        if not folder:
+            initial=self.notebook_inputs['pink_source'].text().strip()
+            candidates=sorted((Path.home()/'Documents'/'Codex').glob('*/t/outputs/microcolony_motion_memory/current_crop15/results/region_ids.tif'),reverse=True)
+            start=Path(initial).parent.parent if initial else candidates[0].parent.parent if candidates else Path.home()/'Documents'
+            folder=QFileDialog.getExistingDirectory(self,'Load saved notebook regions and masks',str(start))
+        if not folder:return
+        try:
+            if self.image_data is None:raise ValueError('Load the matching phase-contrast image sequence first')
+            path=find_reviewed_results(folder);manifest,base,group=reviewed_inputs(path)
+            p,c=int(group['position']),int(group['channel']);entries=group['frames']
+            times=[int(r['time']) for r in entries]
+            saved_manifest=json.loads(manifest.read_text())
+            settings=NotebookSettings(**saved_manifest['settings']) if manifest.name=='analysis_manifest.json' else self.notebook_settings()
+            settings=replace(settings,pink_source=str(path),cell_channel=c,sample_step=1)
+            analysis=NotebookAnalysis(self.image_data,settings,[p],times,self.notebook_inputs['output_root'].text().strip(),selector_params=self.final_params())
+            analysis.loaded_saved=True
+            self._notebook_preparing=dict(analysis=analysis,keys=[(p,t,c) for t in times],index=0,base=base,saved={int(r['time']):r for r in entries})
+            self.play_timer.stop();self.play_button.setChecked(False);self.set_notebook_busy(True)
+            self.notebook_status.setText('Loading saved notebook assignments and Partaker masks…')
+            self.notebook_prepare_timer.start(0)
+        except Exception as error:
+            QMessageBox.warning(self,'Load saved notebook results',str(error))
+
+    def draw_notebook_pink(self):
+        times=self.considered_timepoints()
+        if not times:return
+        if self.current_time!=min(times):
+            self.notebook_status.setText('Go to the first selected frame to draw the pink seed.');return
+        self.play_timer.stop();self.play_button.setChecked(False)
+        self.image_view.set_edit_mode('Pink')
+        self.notebook_status.setText('Click around the central region; double-click at the growing tip to finish. Right-click cancels. Then analyze to follow notebook growth.')
+
+    def set_notebook_pink_seed(self,points):
+        if not self.notebook_active():return
+        self.notebook_pink_seeds[self.current_position]=dict(capture=self.current_time,
+            polygon=[[float(x)+BORDER_PX,float(y)+BORDER_PX] for x,y in points])
+        self.mark_notebook_stale()
+        self.notebook_status.setText('Pink seed saved for this position. Analyze to measure it and apply the notebook growth and connectivity rules.')
+        self.refresh_display()
+
+    def clear_notebook_pink(self):
+        self.image_view.set_edit_mode('Navigate')
+        self.notebook_pink_seeds.pop(self.current_position,None);self.mark_notebook_stale()
+        self.notebook_status.setText('Drawn seed cleared. Next analysis will use matching reviewed notebook masks when available.')
+
+    def notebook_group_selected(self,_rect):
+        return
+
+    def notebook_cut_selected(self,_line):
+        return
+
+    def open_notebook_results(self):
+        if self.notebook_result is not None:QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.notebook_result.output)))
 
     def create_scope_group(self) -> QWidget:
         """Create a vertically scrollable scope page with non-compressing rows.
@@ -805,6 +1373,99 @@ class VerifyColoniesDialog(QDialog):
         page_layout.addWidget(scroll)
         return page
 
+    def create_inside_roi_group(self) -> QWidget:
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(14, 12, 14, 14)
+        layout.setSpacing(10)
+        layout.addWidget(QLabel("ROI"))
+        self.inner_roi_combo = QComboBox()
+        self.inner_roi_combo.addItem("All selected ROIs", -1)
+        self.inner_roi_combo.currentIndexChanged.connect(self.on_inner_parameters_changed)
+        layout.addWidget(self.inner_roi_combo)
+        self.inner_controls = QWidget()
+        controls = QVBoxLayout(self.inner_controls)
+        controls.setContentsMargins(0, 0, 0, 0)
+        controls.setSpacing(10)
+        for name, label, low, high, default in (
+            ("threshold", "Dark cell detection", 0, 100, 24),
+            ("min_area", "Minimum area", 1, 1000, 36),
+            ("kernel", "Smoothing", 1, 31, 3),
+        ):
+            header = QHBoxLayout()
+            header.addWidget(QLabel(label))
+            header.addStretch()
+            readout = QLabel()
+            header.addWidget(readout)
+            controls.addLayout(header)
+            slider = QSlider(Qt.Horizontal)
+            slider.setRange(low, high)
+            slider.setValue(int(self.params.get("inner_" + name, default)))
+            slider.setMinimumHeight(28)
+            if name == "kernel":
+                slider.setSingleStep(2)
+            slider.valueChanged.connect(self.on_inner_parameters_changed)
+            controls.addWidget(slider)
+            setattr(self, "inner_" + name + "_slider", slider)
+            setattr(self, "inner_" + name + "_label", readout)
+        layout.addWidget(self.inner_controls)
+        self.inner_controls.setEnabled(False)
+        layout.addStretch()
+        scroll.setWidget(content)
+        page_layout.addWidget(scroll)
+        return page
+
+    def on_inside_roi_tab_changed(self, *_args) -> None:
+        if self.right_tabs.currentWidget() is self.inside_roi_page:
+            self.inner_enabled = True
+            self.on_inner_parameters_changed()
+
+    def on_inner_parameters_changed(self, *_args) -> None:
+        if hasattr(self,'notebook_page') and self.notebook_result is not None:
+            current=(self.inner_threshold_slider.value(),self.inner_min_area_slider.value(),self.inner_kernel_slider.value()|1,self.inner_roi_combo.currentData())
+            prior=self.notebook_result.selector_params
+            saved=(prior.get('inner_threshold'),prior.get('inner_min_area'),prior.get('inner_kernel'),prior.get('inner_roi_index',-1))
+            if current!=saved:self.mark_notebook_stale()
+        value = self.inner_threshold_slider.value()
+        self.inner_threshold_label.setText(f"{value}% → {round(value / 100 * 255)} / 255")
+        self.inner_min_area_label.setText(f"{self.inner_min_area_slider.value()} px²")
+        self.inner_kernel_label.setText(f"{self.inner_kernel_slider.value() | 1} px")
+        if hasattr(self, "status_label"):
+            self.refresh_display()
+            self.thumbnail_timer.start()
+
+    def inner_mask(self, key: FrameKey, colonies: list[dict]) -> np.ndarray:
+        state = self.get_state(key)
+        values = (self.inner_threshold_slider.value(), self.inner_min_area_slider.value(),
+                  self.inner_kernel_slider.value() | 1, self.inner_roi_combo.currentData())
+        signature = (values, self._colony_signature(colonies))
+        cached = state.get("inner_cache")
+        if cached is not None and cached[0] == signature:
+            return cached[1]
+        raw = self.get_frame(key)
+        roi = np.zeros(raw.shape, dtype=np.uint8)
+        for index, colony in enumerate(colonies):
+            if values[3] not in (-1, index):
+                continue
+            mask = colony.get("mask")
+            if isinstance(mask, np.ndarray) and mask.shape == roi.shape:
+                roi[mask > 0] = 1
+            elif colony.get("contour") is not None:
+                cv2.drawContours(roi, [np.asarray(colony["contour"], dtype=np.int32)], -1, 1, -1)
+        result = np.zeros(raw.shape, dtype=np.uint8)
+        result[BORDER_PX:-BORDER_PX, BORDER_PX:-BORDER_PX] = self.colony_separator.detect_dark_regions(
+            analysis_image(raw), analysis_image(roi), round(values[0] / 100 * 255), values[1], values[2]
+        )
+        state["inner_cache"] = (signature, result)
+        return result
+
     def create_current_frame_group(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -888,7 +1549,7 @@ class VerifyColoniesDialog(QDialog):
         return page
 
     def create_detection_controls(self) -> QGroupBox:
-        group = QGroupBox("Automatic detection controls — shared across scope")
+        group = QGroupBox("ROI selection")
         layout = QVBoxLayout(group)
         layout.setContentsMargins(10, 7, 10, 7)
         layout.setSpacing(4)
@@ -922,13 +1583,6 @@ class VerifyColoniesDialog(QDialog):
         ):
             slider.valueChanged.connect(self.on_detection_parameter_changed)
 
-        self.parameter_note_label = QLabel(
-            "Unedited frames update automatically. Manually edited frames are "
-            "preserved until Reset Current to Automatic is used."
-        )
-        self.parameter_note_label.setWordWrap(True)
-        self.parameter_note_label.setStyleSheet("color: #888;")
-        layout.addWidget(self.parameter_note_label)
         group.setMaximumHeight(170)
         return group
 
@@ -1111,6 +1765,11 @@ class VerifyColoniesDialog(QDialog):
         self.schedule_scope_refresh()
 
     def refresh_scope(self) -> None:
+        if self.notebook_result is not None and hasattr(self, "notebook_page"):
+            from nd2_analyzer.analysis.microcolony_notebook_analysis import sampled_frames
+            if (self.selected_positions() != self.notebook_result.positions or
+                sampled_frames(self.considered_timepoints(), self.notebook_result.settings.sample_step) != self.notebook_result.sampled):
+                self.mark_notebook_stale()
         positions = self.selected_positions()
         timepoints = self.considered_timepoints()
 
@@ -1206,11 +1865,23 @@ class VerifyColoniesDialog(QDialog):
         if self._updating_controls:
             return
         self.current_channel = int(self.channel_combo.currentData())
+        self.mark_notebook_stale()
         self.mark_unedited_states_dirty()
         self.load_current_frame()
         self.thumbnail_timer.start()
 
     def on_time_slider_changed(self, value: int) -> None:
+        if self.notebook_active() and not self._updating_controls:
+            times = self.navigation_timepoints()
+            if times:
+                value = min(times,key=lambda t: abs(t-value))
+                self.time_slider.blockSignals(True)
+                self.time_slider.setValue(value)
+                self.time_slider.blockSignals(False)
+            self.current_time = int(value)
+            self.time_value_label.setText(f"T={value}")
+            self.notebook_scrub_timer.start()
+            return
         self.time_value_label.setText(f"T={value}")
         self.current_time = int(value)
         if not self._updating_controls:
@@ -1320,6 +1991,8 @@ class VerifyColoniesDialog(QDialog):
         return state["colonies"]
 
     def detect_current_frame(self) -> None:
+        if self.notebook_active():
+            return
         key = self.current_frame_key()
         if key is None:
             return
@@ -1349,6 +2022,10 @@ class VerifyColoniesDialog(QDialog):
         self.thumbnail_timer.start()
 
     def load_current_frame(self) -> None:
+        if self.notebook_active():
+            self.refresh_notebook_frame()
+            self.refresh_display()
+            return
         key = self.current_frame_key()
         if key is None:
             return
@@ -1363,6 +2040,8 @@ class VerifyColoniesDialog(QDialog):
 
     def refresh_current_frame_ui(self) -> None:
         key = self.current_frame_key()
+        signatures=getattr(self,'_notebook_geometry_signatures',{})
+        if key in signatures and self._colony_signature(self.get_state(key)['colonies'])!=signatures[key]:self.mark_notebook_stale()
         if key is None:
             return
         state = self.get_state(key)
@@ -1392,8 +2071,18 @@ class VerifyColoniesDialog(QDialog):
         )
         self.time_value_label.setText(f"T={key[1]}")
         self.update_colonies_list()
+        selected_roi = self.inner_roi_combo.currentData()
+        self.inner_roi_combo.blockSignals(True)
+        self.inner_roi_combo.clear()
+        self.inner_roi_combo.addItem("All selected ROIs", -1)
+        for index in range(len(colonies)):
+            self.inner_roi_combo.addItem(f"ROI {index + 1}", index)
+        self.inner_roi_combo.setCurrentIndex(max(0, self.inner_roi_combo.findData(selected_roi)))
+        self.inner_roi_combo.blockSignals(False)
+        self.inner_roi_combo.setEnabled(bool(colonies))
+        self.inner_controls.setEnabled(bool(colonies))
         self.update_parameter_labels()
-        self.refresh_display()
+        self.on_inner_parameters_changed()
         self.refresh_scope_summary_only()
 
     @staticmethod
@@ -1419,6 +2108,8 @@ class VerifyColoniesDialog(QDialog):
         thumbnail: bool = False,
         force_labels: bool = False,
     ) -> np.ndarray:
+        if self.notebook_active() and not thumbnail and forced_mode is None:
+            return self.notebook_display(key)
         raw = self.get_frame(key)
         image = np.zeros(raw.shape, dtype=np.uint8)
         image[BORDER_PX:-BORDER_PX, BORDER_PX:-BORDER_PX] = self.normalize_for_display(analysis_image(raw))
@@ -1426,6 +2117,9 @@ class VerifyColoniesDialog(QDialog):
         colonies = state["colonies"]
         mode = forced_mode or self.view_mode_combo.currentText()
 
+        inner = self.inner_mask(key, colonies) if self.inner_enabled else None
+        if mode == "Binary Mask" and inner is not None:
+            return analysis_image(np.repeat((inner * 255)[..., None], 3, axis=2))
         if mode == "Binary Mask":
             union_mask = np.zeros(image.shape[:2], dtype=np.uint8)
             for colony in colonies:
@@ -1444,6 +2138,11 @@ class VerifyColoniesDialog(QDialog):
 
         output = rgb.astype(np.float32)
         alpha = self.opacity_slider.value() / 100.0
+        if inner is not None:
+            cyan = (0, 210, 230)
+            output[inner > 0] = (1.0 - alpha) * output[inner > 0] + alpha * np.asarray(cyan)
+            contours, _ = cv2.findContours(inner, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+            cv2.drawContours(output, contours, -1, cyan, 1)
         for index, colony in enumerate(colonies):
             contour = colony.get("contour")
             if contour is None:
@@ -1457,9 +2156,10 @@ class VerifyColoniesDialog(QDialog):
                 cv2.drawContours(mask, [contour], -1, 1, -1)
 
             color_array = np.asarray(color, dtype=np.float32)
-            output[mask > 0] = (
-                (1.0 - alpha) * output[mask > 0] + alpha * color_array
-            )
+            if inner is None:
+                output[mask > 0] = (
+                    (1.0 - alpha) * output[mask > 0] + alpha * color_array
+                )
             cv2.drawContours(output, [contour], -1, color, 2)
 
             if (force_labels or self.show_labels_checkbox.isChecked()) and not thumbnail:
@@ -1536,6 +2236,7 @@ class VerifyColoniesDialog(QDialog):
         )
 
     def on_detection_parameter_changed(self) -> None:
+        self.mark_notebook_stale()
         if self._updating_controls:
             return
         self.update_parameter_labels()
@@ -1559,6 +2260,9 @@ class VerifyColoniesDialog(QDialog):
         self.min_size_slider.setValue(int(self.params.get("min_size", 1)))
         self.threshold_slider.setValue(int(self.params.get("threshold", 50)))
         self.kernel_slider.setValue(int(self.params.get("kernel", 1)))
+        self.inner_threshold_slider.setValue(int(self.params.get("inner_threshold", 24)))
+        self.inner_min_area_slider.setValue(int(self.params.get("inner_min_area", 36)))
+        self.inner_kernel_slider.setValue(int(self.params.get("inner_kernel", 3)))
         self.opacity_slider.setValue(35)
         self.view_mode_combo.setCurrentText("Overlay")
 
@@ -1585,6 +2289,9 @@ class VerifyColoniesDialog(QDialog):
             state["history"].pop(0)
 
     def apply_rectangle_edit(self, rect: QRectF) -> None:
+        if self.notebook_active():
+            self.notebook_group_selected(rect)
+            return
         if self.modify_mode not in {"Add", "Trim"}:
             return
         key = self.current_frame_key()
@@ -1602,6 +2309,7 @@ class VerifyColoniesDialog(QDialog):
 
         state = self.get_state(key)
         self.push_history(state)
+        self.mark_notebook_stale()
         if self.modify_mode == "Add":
             self._add_colony_rectangle(state, key, x1, y1, x2, y2, image.shape)
         else:
@@ -1757,6 +2465,7 @@ class VerifyColoniesDialog(QDialog):
             colony["colony_id"] = index
 
     def delete_colony(self, index: int) -> None:
+        self.mark_notebook_stale()
         key = self.current_frame_key()
         if key is None:
             return
@@ -1774,6 +2483,7 @@ class VerifyColoniesDialog(QDialog):
         self.thumbnail_timer.start()
 
     def undo_current_frame(self) -> None:
+        self.mark_notebook_stale()
         key = self.current_frame_key()
         if key is None:
             return
@@ -1804,6 +2514,7 @@ class VerifyColoniesDialog(QDialog):
         )
 
     def reset_current_frame(self) -> None:
+        self.mark_notebook_stale()
         key = self.current_frame_key()
         if key is None:
             return
@@ -1915,6 +2626,8 @@ class VerifyColoniesDialog(QDialog):
             button.setVisible(False)
 
     def update_thumbnails(self) -> None:
+        if self.notebook_active():
+            return
         self.clear_thumbnails()
         position = self.current_preview_position()
         if position is None:
@@ -1969,22 +2682,22 @@ class VerifyColoniesDialog(QDialog):
             self.time_slider.setValue(int(time))
 
     def go_to_first(self) -> None:
-        values = self.considered_timepoints()
+        values = self.navigation_timepoints()
         if values:
             self.time_slider.setValue(values[0])
 
     def go_to_middle(self) -> None:
-        values = self.considered_timepoints()
+        values = self.navigation_timepoints()
         if values:
             self.time_slider.setValue(values[len(values) // 2])
 
     def go_to_last(self) -> None:
-        values = self.considered_timepoints()
+        values = self.navigation_timepoints()
         if values:
             self.time_slider.setValue(values[-1])
 
     def go_to_previous(self) -> None:
-        values = self.considered_timepoints()
+        values = self.navigation_timepoints()
         if not values:
             return
         current = self.time_slider.value()
@@ -1992,7 +2705,7 @@ class VerifyColoniesDialog(QDialog):
         self.time_slider.setValue(earlier[-1] if earlier else values[0])
 
     def go_to_next(self) -> None:
-        values = self.considered_timepoints()
+        values = self.navigation_timepoints()
         if not values:
             return
         current = self.time_slider.value()
@@ -2008,7 +2721,7 @@ class VerifyColoniesDialog(QDialog):
             self.play_timer.stop()
 
     def advance_playback(self) -> None:
-        values = self.considered_timepoints()
+        values = self.navigation_timepoints()
         if not values:
             return
         current = self.time_slider.value()
@@ -2028,6 +2741,10 @@ class VerifyColoniesDialog(QDialog):
         values = self.current_detector_parameters(shape)
         values.update(
             {
+                "inside_roi_enabled": self.inner_enabled,
+                "inner_threshold": self.inner_threshold_slider.value(),
+                "inner_min_area": self.inner_min_area_slider.value(),
+                "inner_kernel": self.inner_kernel_slider.value() | 1,
                 "positions": tuple(self.selected_positions()),
                 "time_start": int(self.time_start_spin.value()),
                 "time_end": int(self.time_end_spin.value()),
@@ -2054,6 +2771,15 @@ class VerifyColoniesDialog(QDialog):
         return values
 
     def accept_results(self) -> None:
+        if self.notebook_active():
+            if self.notebook_worker is not None or self._notebook_preparing is not None:
+                return
+            if self.notebook_result is None or self.notebook_stale or self.notebook_result.preview_key is not None:
+                QMessageBox.information(self, "Micro-colony analysis", "Run Analyze Selected Frames with the current settings before retaining results.")
+                return
+            self.notebook_analysis_completed.emit(self.notebook_result)
+            self.accept()
+            return
         keys = self.selected_frame_keys()
         if not keys:
             QMessageBox.warning(
@@ -2084,7 +2810,11 @@ class VerifyColoniesDialog(QDialog):
                     self.detect_frame(key)
                 colonies, _ = interior_colonies(state["colonies"], self.get_frame(key).shape)
                 self.renumber_colonies(colonies)
+                inner = self.inner_mask(key, colonies) if self.inner_enabled else None
                 for colony in colonies:
+                    if inner is not None:
+                        colony["inner_mask"] = (inner & (colony["mask"] > 0)).astype(np.uint8)
+                        colony["inner_area_px"] = int(np.count_nonzero(colony["inner_mask"]))
                     colony["position"] = key[0]
                     colony["time"] = key[1]
                     colony["channel"] = key[2]
@@ -2201,10 +2931,23 @@ class VerifyColoniesDialog(QDialog):
         return paths[0] if paths else None
 
     def reject(self) -> None:  # noqa: A003
+        self.notebook_scrub_timer.stop()
+        if self._notebook_preparing is not None:self.cancel_notebook_analysis()
+        if self.notebook_worker is not None:
+            self.notebook_worker.requestInterruption()
+            self.notebook_status.setText("Cancelling after the current operation. Keep this window open until it stops.")
+            return
         self.play_timer.stop()
         super().reject()
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        self.notebook_scrub_timer.stop()
+        if self._notebook_preparing is not None:self.cancel_notebook_analysis()
+        if self.notebook_worker is not None:
+            self.notebook_worker.requestInterruption()
+            self.notebook_status.setText("Cancelling after the current operation. Close again once it stops.")
+            event.ignore()
+            return
         self.play_timer.stop()
         self.detect_timer.stop()
         self.scope_timer.stop()
