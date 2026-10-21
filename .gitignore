@@ -35,3 +35,7 @@ SR_1_5_2h_Pre-C_3h_IPTG_After10h_05_MC.zip
 digital_twin_env/
 digital_twin_output/
 digital_twin_vivamunk/
+
+# Isolated PIV runtime and generated motion exports
+.venv-piv/
+analysis_results/microcolony_piv/

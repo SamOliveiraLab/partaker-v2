@@ -1,0 +1,318 @@
+{
+  "backend": "selector_darkness_watershed_v1",
+  "status": "complete",
+  "settings": {
+    "cell_channel": 0,
+    "sample_step": 1,
+    "mask_kind": "colony",
+    "width": 32,
+    "smooth_sigma": 2.0,
+    "prominence": 0.025,
+    "min_peak_distance": 18,
+    "min_region_area": 120,
+    "min_support_fraction": 0.5,
+    "match_iou": 0.3,
+    "motion": true,
+    "interval": 1.0,
+    "time_unit": "capture",
+    "pixel_um": 0.0
+  },
+  "selector_params": {
+    "min_size": 58,
+    "threshold": 24,
+    "kernel": 46,
+    "min_colony_size_px": 2084.81,
+    "intensity_threshold_uint8": 61,
+    "kernel_size_px": 35,
+    "inside_roi_enabled": true,
+    "inner_threshold": 39,
+    "inner_min_area": 1,
+    "inner_kernel": 1,
+    "positions": [
+      0
+    ],
+    "time_start": 0,
+    "time_end": 16,
+    "drop_frame_zero": false,
+    "channel": 0,
+    "frame_key_order": "(position, time, channel)",
+    "analysis_border_px": 15,
+    "coordinate_system": "source image",
+    "edited_frames_preserved_when_sliders_change": true,
+    "reviewed_frame_keys": [],
+    "edited_frame_keys": [],
+    "inner_roi_index": -1
+  },
+  "positions": [
+    0
+  ],
+  "frames": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16
+  ],
+  "preview_key": null,
+  "intensity_conversion": {
+    "method": "identity_uint8",
+    "low": 0,
+    "high": 255
+  },
+  "source_image": "['/Users/jiannae/Downloads/TIFF_Hours/66.00h.tif', '/Users/jiannae/Downloads/TIFF_Hours/66.25h.tif', '/Users/jiannae/Downloads/TIFF_Hours/66.50h.tif', '/Users/jiannae/Downloads/TIFF_Hours/66.75h.tif', '/Users/jiannae/Downloads/TIFF_Hours/67.00h.tif', '/Users/jiannae/Downloads/TIFF_Hours/67.25h.tif', '/Users/jiannae/Downloads/TIFF_Hours/67.50h.tif', '/Users/jiannae/Downloads/TIFF_Hours/67.75h.tif', '/Users/jiannae/Downloads/TIFF_Hours/68.00h.tif', '/Users/jiannae/Downloads/TIFF_Hours/68.25h.tif', '/Users/jiannae/Downloads/TIFF_Hours/68.50h.tif', '/Users/jiannae/Downloads/TIFF_Hours/68.75h.tif', '/Users/jiannae/Downloads/TIFF_Hours/69.00h.tif', '/Users/jiannae/Downloads/TIFF_Hours/69.25h.tif', '/Users/jiannae/Downloads/TIFF_Hours/69.50h.tif', '/Users/jiannae/Downloads/TIFF_Hours/69.75h.tif', '/Users/jiannae/Downloads/TIFF_Hours/70.00h.tif']",
+  "coordinate_system": "source analysis-image pixels; viewer excludes 15px image border",
+  "border_px": 15,
+  "inputs": [
+    {
+      "position": 0,
+      "time": 0,
+      "file": "inputs/p0_t0_c0.npy",
+      "masks": "inputs/p0_t0_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "44233a216eabf2e33a86b1c4a2d130f708afb9ba56afbf1312f230a630351c13",
+      "masks_sha256": {
+        "colony_1": "835ec57f7c0d632af6bfe1cf6774ee2c054e14688275c293e4b3c5ac6529ee24",
+        "inner_1": "a2885b4848b6159ce26460f795a4d10e052262b8e6cad34f649384d29c159dea"
+      }
+    },
+    {
+      "position": 0,
+      "time": 1,
+      "file": "inputs/p0_t1_c0.npy",
+      "masks": "inputs/p0_t1_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "21bce7e1000dab2b5efe62603c78e1fdb7c9638e181ef45129051942b075e809",
+      "masks_sha256": {
+        "colony_1": "6a52e2910eac93cdc204a62b212f85bde274af3be36ce0458bc9d29b175459ba",
+        "inner_1": "bb2954b6d84030f8dea11bacbb5e0e12ad6f9591baaafe010de50f0ddb3b1431"
+      }
+    },
+    {
+      "position": 0,
+      "time": 2,
+      "file": "inputs/p0_t2_c0.npy",
+      "masks": "inputs/p0_t2_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "cd3211101d9cc8c6f77807e0cbcde0a2553af44c68189041754206db20f18a25",
+      "masks_sha256": {
+        "colony_1": "d202af80e6d2857eab6616ff82d862bc183841018e4641ba5d0dd25d7d3ca399",
+        "inner_1": "743343745ae440e74505ce4692e7d5addb421555fe840fc019e2d73d1733e415"
+      }
+    },
+    {
+      "position": 0,
+      "time": 3,
+      "file": "inputs/p0_t3_c0.npy",
+      "masks": "inputs/p0_t3_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "dc2807e742f3f5cbf66c53465b5544b370edeef200a5698eac454eaeeee69db7",
+      "masks_sha256": {
+        "colony_1": "dc8f150878bb1af7553b1c8774e2509ef63ac98933fabc5d50ec5139743af962",
+        "inner_1": "151ab313d2c8facaccf85b4e692fb1765528f33a8bfd7e3085c0d743e8d6e2f0"
+      }
+    },
+    {
+      "position": 0,
+      "time": 4,
+      "file": "inputs/p0_t4_c0.npy",
+      "masks": "inputs/p0_t4_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "acf072075c126cc4f5a1c2a8bbdf95fdcb5f774ec08f44baf1b8f81f11b1e865",
+      "masks_sha256": {
+        "colony_1": "2ff1abb14368c25db62b6a465b630cb94e7daa065776d70467a14f20e4421d07",
+        "inner_1": "3f9f0f35b7b5a2b7ac03c3701af96b7df24973d33d13a2f3cf5140e90e334fe9"
+      }
+    },
+    {
+      "position": 0,
+      "time": 5,
+      "file": "inputs/p0_t5_c0.npy",
+      "masks": "inputs/p0_t5_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "1fac41e3eff50f885a2f6921d4766b931881e3eaf5158dc59d719333d3d30def",
+      "masks_sha256": {
+        "colony_1": "4751174a035cdac935a87c00078201baba0cd6cf478e523bbab6de7e8c1bbfba",
+        "inner_1": "44f0292853373cc77515c07d02d9a150445232520fc0fd4544d73eedb121ae44"
+      }
+    },
+    {
+      "position": 0,
+      "time": 6,
+      "file": "inputs/p0_t6_c0.npy",
+      "masks": "inputs/p0_t6_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "3deaf54aa9bae69b6cfabfb945146e2f4420c00a132fd977bd1ee5e7a2f8d657",
+      "masks_sha256": {
+        "colony_1": "7314ded9c6e97ce0b3f608ed3a7e07b982fa3502e84f76d3c832c83d599735ff",
+        "inner_1": "14839eeee67fb54280bf96c4fcd473b7ba6cd5aa1bf4eea5e96e12236e29d6f4"
+      }
+    },
+    {
+      "position": 0,
+      "time": 7,
+      "file": "inputs/p0_t7_c0.npy",
+      "masks": "inputs/p0_t7_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "d44036f98955284057b2d1529c725422016a4d4f296c5fb3d936eece0ff4ef27",
+      "masks_sha256": {
+        "colony_1": "bf50b68e2269dd5e9ef49f4609c2bb5c29091b601e6c2ca54d50692ef645bcb6",
+        "inner_1": "2cf59b74f2572a28fc056e2e49c001947e7186a347b2bc897adc69f3aff7c36a"
+      }
+    },
+    {
+      "position": 0,
+      "time": 8,
+      "file": "inputs/p0_t8_c0.npy",
+      "masks": "inputs/p0_t8_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "93c994169cef77408d897ec77312ebc18b6fe017686aa03ab5b53732da2b1dca",
+      "masks_sha256": {
+        "colony_1": "ba15ed5243d1a1c91f4f835e808b0c6d0cd27cc7c51fb5ebb60ddf960a9d9856",
+        "inner_1": "c3a532d134a50e047f9c3d7cc44c38e02bdf39339f6a441c14fd73aff870bdff"
+      }
+    },
+    {
+      "position": 0,
+      "time": 9,
+      "file": "inputs/p0_t9_c0.npy",
+      "masks": "inputs/p0_t9_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "78951400b1aa82f475f24e3ed734974e35109afb1d74d90e55081ea7686c1fe0",
+      "masks_sha256": {
+        "colony_1": "054d83bc570181a65070d1b5bb19d16a681283980a88ae8f9a2b1143ca0d94d4",
+        "inner_1": "09e3c03ca3c2a660978017c02184085197e0deca8bad00c391519517b5b483bf"
+      }
+    },
+    {
+      "position": 0,
+      "time": 10,
+      "file": "inputs/p0_t10_c0.npy",
+      "masks": "inputs/p0_t10_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "0acd770808c2facd6c86df22710e798411a422722090c92119d8f090bd9bba16",
+      "masks_sha256": {
+        "colony_1": "97636c055d005ce6cb55b8ad937b9435f0048fd690772866a40d1a9f85d0f075",
+        "inner_1": "29aa47c7a7a21c6768f8b067f9c9dba4f4130ff275e35854e94985bee8e45edc"
+      }
+    },
+    {
+      "position": 0,
+      "time": 11,
+      "file": "inputs/p0_t11_c0.npy",
+      "masks": "inputs/p0_t11_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "b47f7f9d62adf965320d8bd4c0ee1fdaa2cc582746fa8b7b223421bf3efbd734",
+      "masks_sha256": {
+        "colony_1": "96476f22bde3f699cfb6a5a0ac6daa4cde8ad2eeaebc1c723deea2280a73eae6",
+        "inner_1": "8fdda32c3ed4cc3ea40a004330aca25694d1f9ff14cde6117a071d645aa93095"
+      }
+    },
+    {
+      "position": 0,
+      "time": 12,
+      "file": "inputs/p0_t12_c0.npy",
+      "masks": "inputs/p0_t12_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "855f5b7c33f5290022589016d9c87145446a41d0df958ca2f7a9bb139b0861b4",
+      "masks_sha256": {
+        "colony_1": "f13127fd0a5b95d647a9c97ed99d173b7df09c2f499a5f8c1360b43da6c689af",
+        "inner_1": "cd97b05d2038203f7d088827caef732ba6d54aea242758e891388d62f7750192"
+      }
+    },
+    {
+      "position": 0,
+      "time": 13,
+      "file": "inputs/p0_t13_c0.npy",
+      "masks": "inputs/p0_t13_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "d0b678cfabb4e6bc03dbaab0f695a142e29c5c1ed02ea2d873cd06e6241b25dc",
+      "masks_sha256": {
+        "colony_1": "be8988f79f8b53497dc821815585f3ed94d36de3e4d043296e68f6d4a7a20194",
+        "inner_1": "046c093a51c293c240bf64d5eb6ffe02c8f88678515de706ed99a1c4227b4659"
+      }
+    },
+    {
+      "position": 0,
+      "time": 14,
+      "file": "inputs/p0_t14_c0.npy",
+      "masks": "inputs/p0_t14_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "0245a7bfff71986101647b57c35ba391b0570d40fcce21f2c045dc761b684bd8",
+      "masks_sha256": {
+        "colony_1": "06e20b4da5e150b317c17e0277d29977d8b287a4140bdcc22ccf546ef0043d24",
+        "inner_1": "5f8230fb3457c21715cbb21ca7a4d5966c535b39f37ffa0ebba63729a0bb3e84"
+      }
+    },
+    {
+      "position": 0,
+      "time": 15,
+      "file": "inputs/p0_t15_c0.npy",
+      "masks": "inputs/p0_t15_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "ee537c1d2fa232af224b0f378b3bf582890cd33e45378a8a34d0a1157adca3e8",
+      "masks_sha256": {
+        "colony_1": "9f3bebed56a4128383880ae3296fb2e2fe34fded313522f6d0d093bbb7d85326",
+        "inner_1": "3f9e82c99da8304ea7ff235a7793d75198ce9ecc7e3f6158b4d2ee98a3615ffd"
+      }
+    },
+    {
+      "position": 0,
+      "time": 16,
+      "file": "inputs/p0_t16_c0.npy",
+      "masks": "inputs/p0_t16_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "871d86929acf098fdb9575174a7d802231034abf83bc7cb2a35c4b79545d11f9",
+      "masks_sha256": {
+        "colony_1": "73087ac05c68434454e01d0be753298ed5ae02f1897cb5378044249b5489322e",
+        "inner_1": "cf7eef177a81e5c29ad88fe2d45c25bd3ab27e8e38961fad5f64af4660433b67"
+      }
+    }
+  ],
+  "note": "Dark area is exactly Inside ROI support. Region territory includes valley pixels. Counts are image regions/dark objects, not individual cells. Motion uses raw-image evidence; unsupported motion stays unavailable."
+}

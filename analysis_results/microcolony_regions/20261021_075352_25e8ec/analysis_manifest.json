@@ -1,0 +1,334 @@
+{
+  "backend": "selector_darkness_watershed_v1",
+  "status": "complete",
+  "settings": {
+    "cell_channel": 0,
+    "sample_step": 1,
+    "mask_kind": "colony",
+    "width": 32,
+    "smooth_sigma": 2.0,
+    "prominence": 0.025,
+    "min_peak_distance": 18,
+    "min_region_area": 120,
+    "min_support_fraction": 0.5,
+    "match_iou": 0.3,
+    "motion": true,
+    "interval": 1.0,
+    "time_unit": "capture",
+    "dark_measurement": "inside_roi",
+    "pink_source": "/Users/jiannae/Documents/Codex/2026-10-19/t/outputs/microcolony_motion_memory/current_crop15/results/region_ids.tif",
+    "pixel_um": 0.0
+  },
+  "selector_params": {
+    "min_size": 1,
+    "threshold": 50,
+    "kernel": 1,
+    "min_colony_size_px": 35.945,
+    "intensity_threshold_uint8": 128,
+    "kernel_size_px": 1,
+    "inside_roi_enabled": false,
+    "inner_threshold": 24,
+    "inner_min_area": 36,
+    "inner_kernel": 3,
+    "positions": [
+      0
+    ],
+    "time_start": 0,
+    "time_end": 16,
+    "drop_frame_zero": false,
+    "channel": 0,
+    "frame_key_order": "(position, time, channel)",
+    "analysis_border_px": 15,
+    "coordinate_system": "source image",
+    "edited_frames_preserved_when_sliders_change": true,
+    "reviewed_frame_keys": [],
+    "edited_frame_keys": []
+  },
+  "positions": [
+    0
+  ],
+  "frames": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16
+  ],
+  "preview_key": null,
+  "intensity_conversion": {
+    "method": "identity_uint8",
+    "low": 0,
+    "high": 255
+  },
+  "pink_region": {
+    "method": "reviewed_notebook_id_1",
+    "source": "/Users/jiannae/Documents/Codex/2026-10-19/t/outputs/microcolony_motion_memory/current_crop15/results/region_ids.tif",
+    "sha256": "37cfeab804e9e3da2f60bc4107dc62761fe3863a847cd7a5a18483481f74cf49",
+    "paired_manifest": "/Users/jiannae/Documents/Codex/2026-10-19/t/outputs/microcolony_motion_memory/current_crop15/input_run/manifest.json",
+    "accepted_partition": "all canonical IDs, including pink, recovered colonies, shared borders and continuity aliases",
+    "matched_raw_frames": 17,
+    "position": 0,
+    "coordinates": "paired input; 15px crop restored when applicable"
+  },
+  "source_image": "['/Users/jiannae/Downloads/TIFF_Hours/66.00h.tif', '/Users/jiannae/Downloads/TIFF_Hours/66.25h.tif', '/Users/jiannae/Downloads/TIFF_Hours/66.50h.tif', '/Users/jiannae/Downloads/TIFF_Hours/66.75h.tif', '/Users/jiannae/Downloads/TIFF_Hours/67.00h.tif', '/Users/jiannae/Downloads/TIFF_Hours/67.25h.tif', '/Users/jiannae/Downloads/TIFF_Hours/67.50h.tif', '/Users/jiannae/Downloads/TIFF_Hours/67.75h.tif', '/Users/jiannae/Downloads/TIFF_Hours/68.00h.tif', '/Users/jiannae/Downloads/TIFF_Hours/68.25h.tif', '/Users/jiannae/Downloads/TIFF_Hours/68.50h.tif', '/Users/jiannae/Downloads/TIFF_Hours/68.75h.tif', '/Users/jiannae/Downloads/TIFF_Hours/69.00h.tif', '/Users/jiannae/Downloads/TIFF_Hours/69.25h.tif', '/Users/jiannae/Downloads/TIFF_Hours/69.50h.tif', '/Users/jiannae/Downloads/TIFF_Hours/69.75h.tif', '/Users/jiannae/Downloads/TIFF_Hours/70.00h.tif']",
+  "coordinate_system": "source analysis-image pixels; viewer excludes 15px image border",
+  "border_px": 15,
+  "inputs": [
+    {
+      "position": 0,
+      "time": 0,
+      "file": "inputs/p0_t0_c0.npy",
+      "masks": "inputs/p0_t0_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "44233a216eabf2e33a86b1c4a2d130f708afb9ba56afbf1312f230a630351c13",
+      "masks_sha256": {
+        "colony_1": "975269edaaf05b20d1bfa9b35c2e311a3621f5ad077c8ca8368792435711f49a",
+        "inner_1": "8ae1d1090a39b8418aa50245925146faf68c5531f9941976e42797f044c6818e"
+      }
+    },
+    {
+      "position": 0,
+      "time": 1,
+      "file": "inputs/p0_t1_c0.npy",
+      "masks": "inputs/p0_t1_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "21bce7e1000dab2b5efe62603c78e1fdb7c9638e181ef45129051942b075e809",
+      "masks_sha256": {
+        "colony_1": "353c1e96064bdb31d14d6a7ab190513d8d41fcbdfaec0d66ad9490ea4c9e2f0c",
+        "inner_1": "17a5053e95ed6ed3816718c4a14fdd54c0b002e76d542747b79fae7001367b5a"
+      }
+    },
+    {
+      "position": 0,
+      "time": 2,
+      "file": "inputs/p0_t2_c0.npy",
+      "masks": "inputs/p0_t2_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "cd3211101d9cc8c6f77807e0cbcde0a2553af44c68189041754206db20f18a25",
+      "masks_sha256": {
+        "colony_1": "af049885108d1f85f8bc5c43cb476b9256202243fc96ca1c0095232aa0038ff3",
+        "inner_1": "3594b030528fa4e8b0b87faae8c0980222ca6c09013456bccd2d220b13bbd7f5"
+      }
+    },
+    {
+      "position": 0,
+      "time": 3,
+      "file": "inputs/p0_t3_c0.npy",
+      "masks": "inputs/p0_t3_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "dc2807e742f3f5cbf66c53465b5544b370edeef200a5698eac454eaeeee69db7",
+      "masks_sha256": {
+        "colony_1": "eb9edfd1586b1859293f7c4ba38a5e31b0cf9f2250255fbcbe8b8aca33ec6738",
+        "inner_1": "1d196d30997e0e9584b1187f75e489f21b94f34b48b79d6ae3fef76bc3586db2"
+      }
+    },
+    {
+      "position": 0,
+      "time": 4,
+      "file": "inputs/p0_t4_c0.npy",
+      "masks": "inputs/p0_t4_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "acf072075c126cc4f5a1c2a8bbdf95fdcb5f774ec08f44baf1b8f81f11b1e865",
+      "masks_sha256": {
+        "colony_1": "85d92bd2717dde3f7798f31d60e77a671857564a883be6656d26a36005602125",
+        "inner_1": "4580572e5a0b1aead0d429666b7fd72d90272f3a5530ad1673d91fbacbc46213"
+      }
+    },
+    {
+      "position": 0,
+      "time": 5,
+      "file": "inputs/p0_t5_c0.npy",
+      "masks": "inputs/p0_t5_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "1fac41e3eff50f885a2f6921d4766b931881e3eaf5158dc59d719333d3d30def",
+      "masks_sha256": {
+        "colony_1": "463c7fff447c14ab76be3103f8028de194dd73e9973dee77d35f6ace347a1729",
+        "inner_1": "82b4a6cb20f63a69c6c695bd5691bb560469281dee413731250c4dc02d162734"
+      }
+    },
+    {
+      "position": 0,
+      "time": 6,
+      "file": "inputs/p0_t6_c0.npy",
+      "masks": "inputs/p0_t6_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "3deaf54aa9bae69b6cfabfb945146e2f4420c00a132fd977bd1ee5e7a2f8d657",
+      "masks_sha256": {
+        "colony_1": "52217f59d441f0e995f34ad002dd019c8ac559cb5acab679c847a5a161549123",
+        "inner_1": "90539f067a74b8cea1aa13fe3a374a6dd2d555e32fce5411dbb83b27eefcb1f6"
+      }
+    },
+    {
+      "position": 0,
+      "time": 7,
+      "file": "inputs/p0_t7_c0.npy",
+      "masks": "inputs/p0_t7_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "d44036f98955284057b2d1529c725422016a4d4f296c5fb3d936eece0ff4ef27",
+      "masks_sha256": {
+        "colony_1": "89322907d8a057a50934ca14064b65c4fe7e8885d0327ac39d1535b68a445a5c",
+        "inner_1": "e3fdd1889746d39a87ec9a3767fae48ea70f1be7fb17e349dd4d22b68184f226"
+      }
+    },
+    {
+      "position": 0,
+      "time": 8,
+      "file": "inputs/p0_t8_c0.npy",
+      "masks": "inputs/p0_t8_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "93c994169cef77408d897ec77312ebc18b6fe017686aa03ab5b53732da2b1dca",
+      "masks_sha256": {
+        "colony_1": "d7773af7978cfe0c0ef4620fd0c54920f93451788cd32af6ccec9ad6a61a7ebf",
+        "inner_1": "8c1613a4f221ddad1458ed2dd286b43577ec94cbf1371f2c8c5f8fccb258ab35"
+      }
+    },
+    {
+      "position": 0,
+      "time": 9,
+      "file": "inputs/p0_t9_c0.npy",
+      "masks": "inputs/p0_t9_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "78951400b1aa82f475f24e3ed734974e35109afb1d74d90e55081ea7686c1fe0",
+      "masks_sha256": {
+        "colony_1": "c1276a58f976bad99680d5fb2bcb587698a34067e9654d450b5f533fa8209989",
+        "inner_1": "7c49edebf719d19f7a6df59b875a3c0c5b2b094d5b8470f581f435a534f98f51"
+      }
+    },
+    {
+      "position": 0,
+      "time": 10,
+      "file": "inputs/p0_t10_c0.npy",
+      "masks": "inputs/p0_t10_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "0acd770808c2facd6c86df22710e798411a422722090c92119d8f090bd9bba16",
+      "masks_sha256": {
+        "colony_1": "f4246c3156cc87087f10cad700b19adbed4691dc538130bff4594206a730e325",
+        "inner_1": "301d9584c8cb4ba7a1a192ea697915214deedc964873e49165fcb7582f8f0a97"
+      }
+    },
+    {
+      "position": 0,
+      "time": 11,
+      "file": "inputs/p0_t11_c0.npy",
+      "masks": "inputs/p0_t11_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "b47f7f9d62adf965320d8bd4c0ee1fdaa2cc582746fa8b7b223421bf3efbd734",
+      "masks_sha256": {
+        "colony_1": "e3cee64c4d45cfcec9f00213213edfee805e5c97addc8b4a4fb9be69b3d32223",
+        "inner_1": "c8633303232508ddb5482119baa916150e27302eedc1dc1073e96444e45b9e78"
+      }
+    },
+    {
+      "position": 0,
+      "time": 12,
+      "file": "inputs/p0_t12_c0.npy",
+      "masks": "inputs/p0_t12_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "855f5b7c33f5290022589016d9c87145446a41d0df958ca2f7a9bb139b0861b4",
+      "masks_sha256": {
+        "colony_1": "24a7791f1bbf14b1902083c2ebe6f6ae599aba643bb07c2801ab45094f42efca",
+        "inner_1": "f0d2175f4c64ab9187d044b2b33c3bbe80b91f672332d119090f51c531db655c"
+      }
+    },
+    {
+      "position": 0,
+      "time": 13,
+      "file": "inputs/p0_t13_c0.npy",
+      "masks": "inputs/p0_t13_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "d0b678cfabb4e6bc03dbaab0f695a142e29c5c1ed02ea2d873cd06e6241b25dc",
+      "masks_sha256": {
+        "colony_1": "c0893f85f151bd50c2bd1444fac27c7ae7befb0604358cd7c52afed3878fa098",
+        "inner_1": "6bab43a22f5818a4a6eb9d6dd0e5c944f47b8d2176e8648e5cc24fa52281835e"
+      }
+    },
+    {
+      "position": 0,
+      "time": 14,
+      "file": "inputs/p0_t14_c0.npy",
+      "masks": "inputs/p0_t14_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "0245a7bfff71986101647b57c35ba391b0570d40fcce21f2c045dc761b684bd8",
+      "masks_sha256": {
+        "colony_1": "d303219958dff237db707ffba9303ebbcbe9ae2863a4097edb16e4ad8717b4a4",
+        "inner_1": "f509e22a68488f84ec1eb2f9da3556f8b48ff36949e3a8f818916a50b7fe795a"
+      }
+    },
+    {
+      "position": 0,
+      "time": 15,
+      "file": "inputs/p0_t15_c0.npy",
+      "masks": "inputs/p0_t15_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "ee537c1d2fa232af224b0f378b3bf582890cd33e45378a8a34d0a1157adca3e8",
+      "masks_sha256": {
+        "colony_1": "76abca6510b168ce1d042cede41bf3204b82659b156ae2459cfa47cd2efbd9a1",
+        "inner_1": "858bf4c5cd2b377853b6ca6ee5424287295cf8829db0b877a0ad5958aa8c2ef9"
+      }
+    },
+    {
+      "position": 0,
+      "time": 16,
+      "file": "inputs/p0_t16_c0.npy",
+      "masks": "inputs/p0_t16_c0_masks.npz",
+      "parents": [
+        1
+      ],
+      "raw_sha256": "871d86929acf098fdb9575174a7d802231034abf83bc7cb2a35c4b79545d11f9",
+      "masks_sha256": {
+        "colony_1": "6ef20a9876df0ec0fbee2d67c611a0a6e3135d975c1ea7721d4047750e9451bc",
+        "inner_1": "125a1bb34eec44ae75bd94e3415f20e3ae8f8a61d85d703e8633f6b7dd68a039"
+      }
+    }
+  ],
+  "dark_area_methods": {
+    "inside_roi": "exact saved Inside ROI",
+    "hybrid": "32px fraction, 0.65/0.35 validated temporal blend; within 3px; 0.65 new / 0.55 temporal fill",
+    "raw_z": "Gaussian 0.6/7px; SD floor 5; z>0.8; eight-connected area >=4px"
+  },
+  "note": "Dark-area method is explicit. Saved Inside ROI is always retained; inferred support and normalized raw-image detection have separate fields. Region territory includes valley pixels. Counts are image regions/dark objects, not individual cells. Motion uses raw-image evidence; unsupported motion stays unavailable."
+}

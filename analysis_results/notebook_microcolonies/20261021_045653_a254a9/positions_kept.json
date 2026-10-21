@@ -1,0 +1,9 @@
+{
+  "kept": [
+    0
+  ],
+  "rule": {
+    "mask_max_pct": 90.0,
+    "contrast_min": 2.3
+  }
+}

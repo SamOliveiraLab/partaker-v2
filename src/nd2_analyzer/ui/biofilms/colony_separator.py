@@ -227,6 +227,26 @@ class ColonySeparator:
         self.detected_colonies = colonies
         return colonies
 
+    @staticmethod
+    def detect_dark_regions(raw_image, roi_mask, threshold, min_area, kernel_size):
+        """Return dark components confined to the supplied ROI, preserving holes."""
+        roi = np.asarray(roi_mask, dtype=bool)
+        if roi.shape != raw_image.shape:
+            raise ValueError("ROI mask must match the image shape")
+        if not np.any(roi):
+            return np.zeros(roi.shape, dtype=np.uint8)
+        image = cv2.normalize(raw_image, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        image = cv2.GaussianBlur(image, (5, 5), 0)
+        mask = ((image <= threshold) & roi).astype(np.uint8)
+        kernel_size = max(1, int(kernel_size)) | 1
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel) & roi
+        mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_OPEN, kernel) & roi
+        count, labels, stats, _ = cv2.connectedComponentsWithStats(mask.astype(np.uint8))
+        keep = np.zeros(count, dtype=np.uint8)
+        keep[1:] = stats[1:, cv2.CC_STAT_AREA] >= min_area
+        return keep[labels]
+
     def update_parameters(self,
                           intensity_threshold: float = None,
                           closing_radius: int = None,
