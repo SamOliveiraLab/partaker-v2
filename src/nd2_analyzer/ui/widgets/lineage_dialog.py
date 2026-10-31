@@ -1,270 +1,228 @@
-# lineage_dialog.py
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (
-    QDialog,
-    QVBoxLayout,
-    QHBoxLayout,
-    QLabel,
-    QPushButton,
-    QComboBox,
-    QRadioButton,
-    QButtonGroup,
-    QFileDialog,
-    QMessageBox,
-)
+"""The lineage window: one family followed in the image on the left, its tree drawing itself on the right, played frame by
+frame. Pick a family from the list (largest first) or click a cell in the image; Album shows the stills at each division;
+Save film writes the GIF. Drawing is analysis.tracking.film_render, shared with the export and the tests."""
+from __future__ import annotations
+
+import numpy as np
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import (QComboBox, QDialog, QFileDialog, QHBoxLayout, QLabel, QMessageBox, QProgressDialog, QPushButton,
+                               QSlider, QVBoxLayout)
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from pubsub import pub
+
+from nd2_analyzer.analysis.tracking import family as F
+from nd2_analyzer.analysis.tracking.film_render import FamilyFilm
 
 
 class LineageDialog(QDialog):
-    """
-    Dialog for visualizing cell lineage trees and relationships.
-    """
+    MS_PER_FRAME = 350
 
     def __init__(self, lineage_tracks, parent=None):
         super().__init__(parent)
-
-        self.lineage_tracks = lineage_tracks
-        self.current_tree_index = 0
-        self.available_trees = []
-
-        # Set dialog properties
+        self.lineage_tracks = list(lineage_tracks or [])
+        self.by_id = F.index_tracks(self.lineage_tracks)
+        self.families = F.families_by_size(self.by_id)
+        self._masks = {}
+        self.film = None
+        self.t = 0
+        self.ax_img = self.ax_tree = self.ax_inset = None
+        self._reading_data()
         self.setWindowTitle("Cell Lineage Visualization")
-        self.setMinimumWidth(800)
+        self.setMinimumWidth(1000)
         self.setMinimumHeight(700)
-
-        # Initialize UI
         self.init_ui()
+        if self.families:
+            self.set_family(self.families[0][0])
 
-        # Generate initial visualization
-        self.generate_visualization()
+    # ---------------------------------------------------------------- data
+    def _reading_data(self):
+        """Where the masks, the frame count, the hours and the pixel size come from."""
+        from nd2_analyzer.data.appstate import ApplicationState
+        from nd2_analyzer.data.image_data import ImageData
+        self.image_data = ImageData.get_instance()
+        st = ApplicationState.get_instance()
+        self.position = int(self.lineage_tracks[0].get("position", 0)) if self.lineage_tracks else 0
+        if self.position == 0 and st is not None and getattr(st, "view_index", None):
+            self.position = int(st.view_index[1])
+        self.roi_mask = getattr(st, "roi_mask", None) if st is not None else None
+        shape = self.image_data.data.shape if self.image_data is not None else (1, 1, 1, 1, 1)
+        self.n_frames = int(shape[0])
+        self.shape = (int(shape[-2]), int(shape[-1]))
+        interval_h = None
+        exp = getattr(st, "experiment", None) if st is not None else None
+        if exp is not None:
+            interval_h = getattr(exp, "time_interval_hours", None) or (float(getattr(exp, "phc_interval", 0) or 0) / 3600 or None)
+        self.hours = np.arange(self.n_frames) * (interval_h or 5 / 60)
+        self.pixel_um = self.image_data.pixel_size_um() if self.image_data is not None and hasattr(self.image_data, "pixel_size_um") else None
 
+    def masks_at(self, t: int) -> np.ndarray:
+        """The label frame of t (ROI applied), cached."""
+        t = int(t)
+        if t not in self._masks:
+            if self.image_data is None:
+                self._masks[t] = np.zeros(self.shape, np.int32)
+            else:
+                m = np.asarray(self.image_data.segmentation_cache[t, self.position, 0])
+                if self.roi_mask is not None and self.roi_mask.shape == m.shape:
+                    from nd2_analyzer.analysis.segmentation.segmentation_service import apply_roi_mask
+                    m = apply_roi_mask(m, self.roi_mask)
+                self._masks[t] = m
+        return self._masks[t]
+
+    # ---------------------------------------------------------------- ui
     def init_ui(self):
-        """Initialize the dialog UI"""
         layout = QVBoxLayout(self)
+        top = QHBoxLayout()
+        top.addWidget(QLabel("Family:"))
+        self.family_combo = QComboBox()
+        for root, size in self.families:
+            self.family_combo.addItem(f"Cell {root}  ({size} cells)", root)
+        self.family_combo.currentIndexChanged.connect(self._on_family_combo)
+        top.addWidget(self.family_combo)
+        top.addSpacing(16)
+        top.addWidget(QLabel("View:"))
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItems(["Film", "Album"])
+        self.mode_combo.currentIndexChanged.connect(lambda _i: self.redraw())
+        top.addWidget(self.mode_combo)
+        top.addSpacing(16)
+        self.hint = QLabel("Click a cell in the image to follow its family.")
+        top.addWidget(self.hint)
+        top.addStretch()
+        layout.addLayout(top)
 
-        # Visualization type selection
-        viz_layout = QHBoxLayout()
-        viz_layout.addWidget(QLabel("Visualization Style:"))
-        self.viz_type = QComboBox()
-        self.viz_type.addItems(["Standard Lineage Tree", "Morphology-Enhanced Tree"])
-        self.viz_type.currentIndexChanged.connect(self.generate_visualization)
-        viz_layout.addWidget(self.viz_type)
-        layout.addLayout(viz_layout)
-
-        # Tree selection options
-        selection_layout = QHBoxLayout()
-        option_group = QButtonGroup(self)
-
-        self.top_radio = QRadioButton("Top 5 Largest Lineage Trees")
-        self.top_radio.setChecked(True)
-        option_group.addButton(self.top_radio)
-        selection_layout.addWidget(self.top_radio)
-
-        self.cell_radio = QRadioButton("Specific Cell Lineage:")
-        option_group.addButton(self.cell_radio)
-        selection_layout.addWidget(self.cell_radio)
-
-        self.cell_combo = QComboBox()
-        self.cell_combo.setEnabled(False)
-        selection_layout.addWidget(self.cell_combo)
-
-        # Populate cell dropdown
-        dividing_cells = [
-            track["ID"] for track in self.lineage_tracks if track.get("children", [])
-        ]
-        dividing_cells.sort()
-        for cell_id in dividing_cells:
-            self.cell_combo.addItem(f"Cell {cell_id}")
-
-        layout.addLayout(selection_layout)
-
-        # Connect radio button signals
-        self.top_radio.toggled.connect(self.update_combo_state)
-        self.cell_radio.toggled.connect(self.update_combo_state)
-
-        # Canvas for visualization
-        self.figure = Figure(figsize=(8, 6), tight_layout=True)
+        self.figure = Figure(figsize=(10, 4.6))
         self.canvas = FigureCanvas(self.figure)
-        layout.addWidget(self.canvas)
+        self.canvas.mpl_connect("button_press_event", self._on_click)
+        layout.addWidget(self.canvas, 1)
 
-        # Tree navigation controls
-        nav_layout = QHBoxLayout()
-        self.prev_button = QPushButton("Previous Tree")
-        self.prev_button.clicked.connect(self.previous_tree)
+        time_row = QHBoxLayout()
+        self.play_button = QPushButton("Play")
+        self.play_button.setCheckable(True)
+        self.play_button.toggled.connect(self._on_play)
+        time_row.addWidget(self.play_button)
+        self.slider = QSlider(Qt.Horizontal)
+        self.slider.setMinimum(0); self.slider.setMaximum(max(self.n_frames - 1, 0))
+        self.slider.valueChanged.connect(self._on_slider)
+        time_row.addWidget(self.slider, 1)
+        self.time_label = QLabel("")
+        self.time_label.setMinimumWidth(150)
+        time_row.addWidget(self.time_label)
+        layout.addLayout(time_row)
 
-        self.tree_counter = QLabel("Tree 1/1")
-        self.tree_counter.setAlignment(Qt.AlignCenter)
-
-        self.next_button = QPushButton("Next Tree")
-        self.next_button.clicked.connect(self.next_tree)
-
-        nav_layout.addWidget(self.prev_button)
-        nav_layout.addWidget(self.tree_counter)
-        nav_layout.addWidget(self.next_button)
-        layout.addLayout(nav_layout)
-
-        # Action buttons
-        button_layout = QHBoxLayout()
-
-        self.view_button = QPushButton("Refresh View")
-        self.view_button.clicked.connect(self.generate_visualization)
-
+        buttons = QHBoxLayout()
+        self.save_film_button = QPushButton("Save Film")
+        self.save_film_button.clicked.connect(self.save_film)
+        buttons.addWidget(self.save_film_button)
         self.save_button = QPushButton("Save Image")
-        self.save_button.clicked.connect(self.save_visualization)
-
+        self.save_button.clicked.connect(self.save_image)
+        buttons.addWidget(self.save_button)
+        buttons.addStretch()
         self.close_button = QPushButton("Close")
-        self.close_button.clicked.connect(self.accept)
+        self.close_button.clicked.connect(self.close)
+        buttons.addWidget(self.close_button)
+        layout.addLayout(buttons)
 
-        self.time_comp_button = QPushButton("Time Zero vs Time Last")
-        self.time_comp_button.clicked.connect(self.show_time_comparison)
+        self.timer = QTimer(self)
+        self.timer.setInterval(self.MS_PER_FRAME)
+        self.timer.timeout.connect(self._step)
+        if not self.families:
+            self.hint.setText("No tracks to show.")
 
-        button_layout.addWidget(self.view_button)
-        button_layout.addWidget(self.save_button)
-        button_layout.addWidget(self.time_comp_button)
-        button_layout.addWidget(self.close_button)
+    # ---------------------------------------------------------------- state
+    def set_family(self, root: int):
+        root = int(root)
+        self.film = FamilyFilm(self.lineage_tracks, root, self.masks_at, self.shape, self.hours, pixel_um=self.pixel_um)
+        self.ax_img = self.ax_tree = self.ax_inset = None
+        i = self.family_combo.findData(root)
+        if i >= 0 and self.family_combo.currentIndex() != i:
+            self.family_combo.blockSignals(True); self.family_combo.setCurrentIndex(i); self.family_combo.blockSignals(False)
+        self.slider.blockSignals(True)
+        self.slider.setMinimum(self.film.t_first); self.slider.setMaximum(self.film.t_last)
+        self.t = int(np.clip(self.t, self.film.t_first, self.film.t_last))
+        self.slider.setValue(self.t)
+        self.slider.blockSignals(False)
+        self.redraw()
 
-        layout.addLayout(button_layout)
+    def _on_family_combo(self, i):
+        root = self.family_combo.itemData(i)
+        if root is not None:
+            self.t = 0
+            self.set_family(root)
 
-    def update_combo_state(self):
-        """Update the cell combobox state based on radio selection"""
-        self.cell_combo.setEnabled(self.cell_radio.isChecked())
+    def _on_slider(self, v):
+        self.t = int(v)
+        self.redraw()
 
-    def generate_visualization(self):
-        """Generate lineage tree visualization"""
-        # This is just the core logic - actual visualization would use LineageVisualization
-        # Clear figure
-        self.figure.clear()
-
-        # Get root cell ID
-        root_cell_id = self.get_root_cell_id()
-        if root_cell_id is None:
-            return
-
-        # Create visualization
-        if self.viz_type.currentText() == "Standard Lineage Tree":
-            # Call the standard visualization function
-            from nd2_analyzer.analysis.lineage_visualization import LineageVisualization
-
-            visualizer = LineageVisualization()
-            visualizer.create_lineage_tree(
-                self.lineage_tracks, self.canvas, root_cell_id
-            )
+    def _on_play(self, on):
+        self.play_button.setText("Pause" if on else "Play")
+        if on:
+            self.timer.start()
         else:
-            # Call the morphology-enhanced visualization function
-            from nd2_analyzer.analysis.lineage_visualization import LineageVisualization
+            self.timer.stop()
 
-            visualizer = LineageVisualization()
-            visualizer.visualize_morphology_lineage_tree(
-                self.lineage_tracks, self.canvas, root_cell_id
-            )
-
-        # Update UI
-        self.update_ui_for_current_tree()
-
-    def get_root_cell_id(self):
-        """Determine the root cell ID for visualization based on selection"""
-        if self.cell_radio.isChecked():
-            # Use selected cell
-            text = self.cell_combo.currentText()
-            if text:
-                return int(text.replace("Cell ", ""))
-            return None
-        else:
-            # Use top tree mode - find connected components
-            import networkx as nx
-
-            G = nx.DiGraph()
-
-            # Build graph
-            for track in self.lineage_tracks:
-                G.add_node(track["ID"])
-                if "children" in track and track["children"]:
-                    for child_id in track["children"]:
-                        G.add_edge(track["ID"], child_id)
-
-            # Find components
-            components = list(nx.weakly_connected_components(G))
-            if not components:
-                return None
-
-            # Sort by size
-            self.available_trees = sorted(components, key=len, reverse=True)[:5]
-
-            if not self.available_trees:
-                return None
-
-            # Get current tree
-            if self.current_tree_index >= len(self.available_trees):
-                self.current_tree_index = 0
-
-            current_tree = list(self.available_trees[self.current_tree_index])
-
-            # Find root nodes
-            root_candidates = []
-            for node in current_tree:
-                is_root = True
-                for track in self.lineage_tracks:
-                    if "children" in track and node in track["children"]:
-                        if track["ID"] in current_tree:
-                            is_root = False
-                            break
-                if is_root:
-                    root_candidates.append(node)
-
-            # Return first root or smallest ID
-            return root_candidates[0] if root_candidates else min(current_tree)
-
-    def update_ui_for_current_tree(self):
-        """Update UI for the current tree"""
-        # Update tree counter
-        if self.cell_radio.isChecked():
-            self.tree_counter.setText("Custom Tree")
-            self.prev_button.setEnabled(False)
-            self.next_button.setEnabled(False)
-        else:
-            self.tree_counter.setText(
-                f"Tree {self.current_tree_index + 1}/{len(self.available_trees)}"
-            )
-            self.prev_button.setEnabled(len(self.available_trees) > 1)
-            self.next_button.setEnabled(len(self.available_trees) > 1)
-
-    def next_tree(self):
-        """Show next tree"""
-        if not self.available_trees or len(self.available_trees) <= 1:
+    def _step(self):
+        if self.film is None:
             return
+        nxt = self.t + 1 if self.t < self.film.t_last else self.film.t_first
+        self.slider.setValue(nxt)
 
-        self.current_tree_index = (self.current_tree_index + 1) % len(
-            self.available_trees
-        )
-        self.generate_visualization()
-
-    def previous_tree(self):
-        """Show previous tree"""
-        if not self.available_trees or len(self.available_trees) <= 1:
+    def _on_click(self, event):
+        """A click on a cell of the image: follow that cell's family."""
+        if self.film is None or event.inaxes is None or event.inaxes is not self.ax_img or event.xdata is None:
             return
+        sl = self.film.crop(self.t)
+        x, y = float(event.xdata) + sl[1].start, float(event.ydata) + sl[0].start
+        i = F.track_at_point(self.by_id, self.t, x, y, max_dist=15.0)
+        if i is None:
+            return
+        root = F.root_of(self.by_id, i)
+        if root != self.film.root:
+            self.set_family(root)
 
-        self.current_tree_index = (self.current_tree_index - 1) % len(
-            self.available_trees
-        )
-        self.generate_visualization()
+    # ---------------------------------------------------------------- drawing
+    def redraw(self):
+        if self.film is None:
+            return
+        if self.mode_combo.currentText() == "Album":
+            self.film.draw_album(self.figure)
+            self.ax_img = self.ax_tree = self.ax_inset = None
+            self.time_label.setText(f"{len(self.film.fam)} cells, {len(F.divisions(self.by_id, self.film.fam, self.film.kids))} divisions")
+        else:
+            self.ax_img, self.ax_tree = self.film.draw(self.figure, self.t, self.ax_img, self.ax_tree)
+            self.time_label.setText(f"frame {self.t}   {self.hours[self.t]:.2f} h")
+        self.canvas.draw_idle()
 
-    def save_visualization(self):
-        """Save the tree visualization as an image"""
-        output_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save Lineage Tree",
-            "",
-            "PNG Files (*.png);;PDF Files (*.pdf);;SVG Files (*.svg)",
-        )
+    # ---------------------------------------------------------------- export
+    def save_film(self):
+        if self.film is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Save Film", f"family_{self.film.root}.gif", "GIF (*.gif)")
+        if not path:
+            return
+        n = self.film.t_last - self.film.t_first + 1
+        progress = QProgressDialog("Drawing the film...", "Cancel", 0, n, self)
+        progress.setWindowModality(Qt.WindowModal)
 
-        if output_path:
-            self.figure.savefig(output_path, dpi=300, bbox_inches="tight")
-            QMessageBox.information(self, "Success", f"Image saved to {output_path}")
+        def step(k, total):
+            progress.setValue(k)
+            return not progress.wasCanceled()
 
-    def show_time_comparison(self):
-        """Open the time comparison dialog"""
-        pub.sendMessage(
-            "show_time_comparison_request", lineage_tracks=self.lineage_tracks
-        )
+        try:
+            self.film.save_gif(path, progress=step)
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Could not save the film: {e}")
+            return
+        finally:
+            progress.close()
+        self.hint.setText(f"Film saved: {path}")
+
+    def save_image(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Save Image", f"family_{self.film.root if self.film else 0}.png", "PNG (*.png);;PDF (*.pdf)")
+        if path:
+            self.figure.savefig(path, dpi=300, bbox_inches="tight", facecolor="white")
+            self.hint.setText(f"Image saved: {path}")
+
+    def closeEvent(self, event):
+        self.timer.stop()
+        super().closeEvent(event)
