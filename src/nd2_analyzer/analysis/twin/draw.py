@@ -23,16 +23,22 @@ def real_panel(mask_roi: np.ndarray) -> np.ndarray:
     return np.clip(rgb, 0, 1)
 
 
+def cell_colour(aid) -> np.ndarray:
+    """One fixed colour per twin cell, the same rule as the real cells' tag colours (hashed from the cell's id)."""
+    import hashlib
+    return id_colour(int(hashlib.md5(str(aid).encode()).hexdigest()[:8], 16) % 100_000)
+
+
 def draw_sim(ax, cells, w_um: float, h_um: float, fig_dpi: float):
-    """The twin's capsules (x, y, total length, radius, angle in um) on black, drawn to scale."""
+    """The twin's capsules (x, y, total length, radius, angle in um) on black, to scale, one colour per cell like the real ones."""
     ax.set_facecolor("black"); ax.set_aspect("equal")
     ax.set_xlim(0, w_um); ax.set_ylim(h_um, 0); ax.set_xticks([]); ax.set_yticks([])
     # points per um once the axes has its size (the figure must be laid out first)
     bb = ax.get_window_extent(); ppu = (bb.height / h_um) * 72.0 / fig_dpi if bb.height > 0 else 4.0
-    for _, x, y, L, r, ang in cells:
+    for aid, x, y, L, r, ang in cells:
         half = max(L - 2 * r, 0.0) / 2
         dx, dy = half * np.cos(ang), half * np.sin(ang)
-        ax.plot([x - dx, x + dx], [y - dy, y + dy], color=SIM, lw=max(2 * r * ppu, 0.5), solid_capstyle="round", solid_joinstyle="round")
+        ax.plot([x - dx, x + dx], [y - dy, y + dy], color=cell_colour(aid) * 0.8, lw=max(2 * r * ppu, 0.5), solid_capstyle="round", solid_joinstyle="round")
 
 
 def draw_twin(fig, t: int, hours: np.ndarray, mask_roi: Optional[np.ndarray], sim_cells, w_um: float, h_um: float,
