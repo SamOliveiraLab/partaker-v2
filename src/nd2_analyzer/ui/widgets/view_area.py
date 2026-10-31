@@ -62,6 +62,11 @@ class ViewAreaWidget(QWidget):
         # Subscribe to relevant topics
         pub.subscribe(self.on_image_data_loaded, "image_data_loaded")
         pub.subscribe(self.on_image_ready, "image_ready")
+        # the chamber: once drawn, the panel shows the frame inside it (see view_roi.py)
+        self.view_roi = None
+        self._view_box = None
+        pub.subscribe(self.on_view_roi_selected, "roi_selected")
+        pub.subscribe(self.on_view_roi_reset, "roi_reset")
         pub.subscribe(self.highlight_cell, "highlight_cell_requested")
         pub.subscribe(self.provide_current_param, "get_current_t")
         pub.subscribe(self.provide_current_param, "get_current_p")
@@ -351,6 +356,24 @@ class ViewAreaWidget(QWidget):
 
         return img
 
+    # ------------------------------------------------------------------ the view inside the ROI
+    def on_view_roi_selected(self, mask):
+        self.view_roi = np.asarray(mask) > 0 if mask is not None else None
+        self.refresh_view()
+
+    def on_view_roi_reset(self):
+        self.view_roi = None
+        self.refresh_view()
+
+    def refresh_view(self):
+        """Fetch and show the current frame again (after registration, an ROI, or a reset)."""
+        if ImageData.get_instance() is None:
+            return
+        try:
+            self.on_slider_changed()
+        except Exception as exc:
+            print(f"view refresh failed: {exc}")
+
     def _create_qimage_and_display(self, image):
         """
         Create QImage from processed array and display it.
@@ -358,9 +381,11 @@ class ViewAreaWidget(QWidget):
         Args:
             image: Processed image array ready for display
         """
+        from nd2_analyzer.ui.widgets.view_roi import roi_window
         normalize = self.normalize_checkbox.isChecked()
+        shown, self._view_box = roi_window(image, self.view_roi)
         processed_img, width, height, bytes_per_line, qt_format = (
-            self._prepare_image_for_display(image, normalize)
+            self._prepare_image_for_display(shown, normalize)
         )
 
         # Own the buffer before the temporary NumPy array goes out of scope.
@@ -399,8 +424,13 @@ class ViewAreaWidget(QWidget):
         x, y = point.x() - rect.x(), point.y() - rect.y()
         if not (0 <= x < rect.width() and 0 <= y < rect.height()):
             return None  # Ignore clicks in the letterboxed margins.
-        height, width = self.current_image.shape[:2]
-        return int(x * width / rect.width()), int(y * height / rect.height())
+        from nd2_analyzer.ui.widgets.view_roi import window_to_frame
+        box = getattr(self, "_view_box", None)
+        if box is not None:
+            height, width = box["row1"] - box["row0"], box["col1"] - box["col0"]
+        else:
+            height, width = self.current_image.shape[:2]
+        return window_to_frame(x * width / rect.width(), y * height / rect.height(), box)
 
     # SIMPLIFIED EVENT HANDLERS
 
