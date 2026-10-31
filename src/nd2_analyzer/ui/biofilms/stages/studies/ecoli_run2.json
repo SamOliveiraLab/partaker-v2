@@ -1,0 +1,12 @@
+{
+  "name": "E. coli run 2 (30 June 2026), 24 to 68 h",
+  "pipeline_dir": "/Users/smdoliveira/Library/Caches/Partaker/run2_pipeline/runs/gui_20261025_145305",
+  "masks_dir": "/Users/smdoliveira/Workspace/results/story_v2",
+  "nd2": "/Users/smdoliveira/Workspace/Datasets/ecoli-run2-june30-2026/mcherry-tl-t24-t72-07-01-2026.nd2",
+  "frame_3h": "/Users/smdoliveira/Workspace/results/story_v2/frame_3h.npz",
+  "pixel_um": 0.04333,
+  "hour0": 24.0,
+  "dt_h": 0.5,
+  "literature": "hallmarks.json",
+  "note": "results = the tool's run-2 pipeline (25 Oct 2026, 104 numbers equal to the notebook); masks = the notebook's cell and dye masks"
+}

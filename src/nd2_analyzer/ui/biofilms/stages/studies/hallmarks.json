@@ -1,0 +1,26 @@
+{
+  "source": "Hallmarks and Growth States, 11 Oct 2026 (story_v2 Step 13); Lee et al. 2018 PNAS 115:4471; Hubert et al. 2024 Nat Commun 15:6161",
+  "hallmarks": [
+    {"n": 1, "hallmark": "Cells arrive and land; the flow decides where and how many", "shown_by": "Secchi 2020, Lecuyer 2011", "partaker": "Cells on the glass over time sit on Lee et al.'s curve (their Fig. 2B)", "status": "matches"},
+    {"n": 2, "hallmark": "Most cells leave again within seconds (reversible attachment)", "shown_by": "Lee 2018, Lecuyer 2011", "partaker": "96.9 % of landings leave within 30 s, theirs 96.7 %", "status": "matches"},
+    {"n": 3, "hallmark": "A cell standing on its end can still leave; a cell lying flat settles (pose)", "shown_by": "Conrad 2011, Gibiansky 2010", "partaker": "Flat landings stay far more often (13 % against under 1 %); no published number", "status": "measured"},
+    {"n": 4, "hallmark": "Stronger flow: fewer cells land, but those that land stay longer", "shown_by": "Lecuyer 2011", "partaker": "Their data were not shared", "status": "not measured"},
+    {"n": 5, "hallmark": "Cells crawl on the glass; committed cells go still", "shown_by": "Lee 2018 (Fig. 5B)", "partaker": "Flow cell 1 matches; the stillness of flow cell 2 is not reproduced", "status": "partly"},
+    {"n": 6, "hallmark": "After a division one daughter often leaves; later both stay", "shown_by": "Lee 2018 (Fig. 3B)", "partaker": "Wild type and pilA match; pilU's shift not reproduced", "status": "partly"},
+    {"n": 7, "hallmark": "Cells that met a surface stick sooner (memory)", "shown_by": "Lee 2018 (Fig. 2B, 4C)", "partaker": "All seven lag times within 0.24 h", "status": "matches"},
+    {"n": 8, "hallmark": "Under flow some cells stop dividing and hold on; the colony grows slower", "shown_by": "Hubert 2024", "partaker": "Growth rate matches at 7 and 72 per s and the share of holders under gentle flow; strong flow not reproduced", "status": "partly"},
+    {"n": 9, "hallmark": "Only some landed cells switch on the biofilm programme", "shown_by": "Armbruster 2019, Lee 2020", "partaker": "Needs a reporter channel", "status": "not measured"},
+    {"n": 10, "hallmark": "Early cells leave sugar trails that steer the next ones", "shown_by": "Zhao 2013, Schmidt 2025", "partaker": "Needs a matrix stain", "status": "not measured"}
+  ],
+  "lag_times": [
+    {"recording": "wild type, flow cell 1 (Fig. 2B)", "published_h": 17.56, "partaker_h": 17.59},
+    {"recording": "wild type, flow cell 2 (Fig. 2B)", "published_h": 4.68, "partaker_h": 4.68},
+    {"recording": "pilU, flow cell 1 (Fig. 2B)", "published_h": -0.35, "partaker_h": -0.31},
+    {"recording": "second run, flow cell 1 (Fig. S4)", "published_h": 23.14, "partaker_h": 23.17},
+    {"recording": "second run, flow cell 2 (Fig. S4)", "published_h": 12.26, "partaker_h": 12.02},
+    {"recording": "kept 14 h off a surface (Fig. 4C)", "published_h": 5.46, "partaker_h": 5.45},
+    {"recording": "kept 37 h off a surface (Fig. 4C)", "published_h": 13.41, "partaker_h": 13.41}
+  ],
+  "residence": {"published": "96.7 % of 1,365 landings leave within 30 s", "partaker": "96.9 % of 1,343"},
+  "division_outcome_wt": {"published_2_1_0_pct": [24, 66, 10], "partaker_2_1_0_pct": [25, 53, 22], "n_scored": 36}
+}
