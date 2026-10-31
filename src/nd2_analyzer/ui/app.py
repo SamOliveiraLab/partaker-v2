@@ -482,6 +482,9 @@ class App(QMainWindow):
     def on_registration_pressed(self):
         # Get current P from ViewArea
         ImageData.get_instance().do_registration_p(self.viewArea.current_p)
+        # the frames changed: show the registered one
+        if hasattr(self.viewArea, "refresh_view"):
+            self.viewArea.refresh_view()
 
     def on_reset_crop(self):
         pub.sendMessage("crop_reset")
