@@ -102,10 +102,61 @@ def draw_tree(ax, by_id, rows: Dict[int, float], hours: np.ndarray, upto: Option
     ax.set_xlim(-0.05 * float(hours[-1] or 1), float(hours[-1]) * 1.12 + 0.05)
 
 
-def house_rc() -> dict:
-    return {"font.family": "sans-serif", "font.sans-serif": ARIAL, "axes.spines.top": False, "axes.spines.right": False,
-            "axes.linewidth": 0.8, "xtick.direction": "out", "ytick.direction": "out", "font.size": 9, "axes.titlesize": 10,
-            "axes.labelsize": 9, "xtick.labelsize": 8, "ytick.labelsize": 8, "figure.facecolor": "white", "axes.facecolor": "white"}
+def house_rc(scale: float = 1.0) -> dict:
+    """Partaker 2's publication figure rules (headless_analysis/figure_style.apply_style, the DARPA Q9 figures), sized for a
+    screen canvas: Arial, bold titles and axis labels, large numbers, no grid, open frame, ticks out. scale > 1 for export."""
+    k = float(scale)
+    # the family is given by name (not "sans-serif"): matplotlib resolves a generic family when it draws, with whatever the
+    # application's rcParams say then, and the GUI's say DejaVu
+    return {"font.family": ARIAL, "font.sans-serif": ARIAL, "axes.grid": False,
+            "axes.spines.top": False, "axes.spines.right": False, "axes.linewidth": 1.2 * k,
+            "lines.linewidth": 2.0 * k, "font.size": 10 * k, "axes.titlesize": 11 * k, "axes.titleweight": "bold",
+            "axes.labelsize": 10.5 * k, "axes.labelweight": "bold", "xtick.labelsize": 9.5 * k, "ytick.labelsize": 9.5 * k,
+            "legend.fontsize": 9.5 * k, "legend.frameon": False,
+            "xtick.direction": "out", "ytick.direction": "out", "xtick.major.size": 4 * k, "ytick.major.size": 4 * k,
+            "xtick.major.width": 1.2 * k, "ytick.major.width": 1.2 * k, "xtick.major.pad": 4 * k, "ytick.major.pad": 4 * k,
+            "axes.titlepad": 8 * k, "axes.labelpad": 6 * k, "pdf.fonttype": 42, "ps.fonttype": 42,
+            "figure.facecolor": "white", "axes.facecolor": "white"}
+
+
+def collisions(fig, gap_in: float = 0.1, gap_same: float = 0.03):
+    """Pairs of figure elements (texts, tick labels, axis titles, legends, images, plots) closer than gap_in inches, as in the
+    DARPA Q9 figure check: a publication figure has none. Labels of one plot may sit gap_same from each other."""
+    fig.canvas.draw(); r = fig.canvas.get_renderer(); dpi = fig.dpi; W, H = fig.get_size_inches(); items = []
+
+    def add(name, art, kind, owner=None):
+        if not art.get_visible() or (hasattr(art, "get_text") and not art.get_text().strip()):
+            return
+        bb = art.get_window_extent(r); items.append((name, (bb.x0 / dpi, bb.y0 / dpi, bb.x1 / dpi, bb.y1 / dpi), kind, owner))
+
+    for t in fig.texts:
+        add(f"text '{t.get_text()[:30]}'", t, "text")
+    for ax in fig.axes:
+        kind = "img" if ax.images or ax.get_facecolor()[:3] == (0.0, 0.0, 0.0) else "plot"
+        add(f"{kind} '{ax.get_title(loc='left') or ax.get_title()}'", ax, kind, ax)
+        if kind == "img":
+            add(f"title '{ax.get_title(loc='left')[:30]}'", ax._left_title, "label", ax)
+            continue
+        for t in ax.texts:
+            add(f"call-out '{t.get_text()[:30]}'", t, "own", ax)
+        if ax.get_legend():
+            add("legend", ax.get_legend(), "own", ax)
+        for t in (ax.title, ax._left_title, ax.xaxis.label, ax.yaxis.label):
+            add(f"title '{t.get_text()[:30]}'", t, "label", ax)
+        for t in ax.get_xticklabels() + ax.get_yticklabels():
+            add(f"tick '{t.get_text()}'", t, "label", ax)
+    out = []
+    for i in range(len(items)):
+        n1, b1, k1, o1 = items[i]
+        for j in range(i + 1, len(items)):
+            n2, b2, k2, o2 = items[j]
+            same = o1 is not None and o1 is o2
+            if same and ("plot" in (k1, k2) or "img" in (k1, k2)):
+                continue                                   # a plot's own labels sit inside or beside it
+            m = gap_same if same else gap_in
+            if b1[0] < b2[2] + m and b2[0] < b1[2] + m and b1[1] < b2[3] + m and b2[1] < b1[3] + m:
+                out.append(f"{n1}  x  {n2}")
+    return out
 
 
 class FamilyFilm:

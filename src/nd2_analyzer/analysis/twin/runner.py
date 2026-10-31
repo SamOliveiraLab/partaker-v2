@@ -13,18 +13,31 @@ from typing import Callable, Dict, List, Optional
 VIVA_DIR_DEFAULT = "/Volumes/SAM1/Oliveira_lab_workspace/Oliveira_lab_workspace/Bukola/Viva-munk"
 VIVA_PYTHON_DEFAULT = str(Path.home() / "miniconda3" / "envs" / "vivamunk" / "bin" / "python")
 SCRIPT = str(Path(__file__).with_name("vivamunk_twin.py"))
+FLOW_NPZ_DEFAULT = "/Volumes/SAM1/Oliveira_lab_workspace/Oliveira_lab_workspace/Bukola/DigitalTwin_rerun/comsol/flow_grid.npz"
 RULE_SETS = ["base", "position", "lag", "crowding"]
 
 
-def rule_set(position: bool, lag: bool, crowding: bool) -> str:
-    """The rule set name for the chosen rules (the sets nest: lag needs position, crowding needs both)."""
+def rule_set(position: bool, lag: bool, crowding: bool, flow: bool = False) -> str:
+    """The rule set name for the chosen rules (growth rules nest: lag needs position, crowding needs both; flow adds +flow)."""
     if crowding:
-        return "crowding"
-    if lag:
-        return "lag"
-    if position:
-        return "position"
-    return "base"
+        name = "crowding"
+    elif lag:
+        name = "lag"
+    elif position:
+        name = "position"
+    else:
+        name = "base"
+    return name + ("+flow" if flow else "")
+
+
+def rule_flags(name: str) -> Dict[str, bool]:
+    base, _, extra = name.partition("+")
+    return dict(position=base in ("position", "lag", "crowding"), lag=base in ("lag", "crowding"), crowding=base == "crowding",
+                flow=extra == "flow")
+
+
+def flow_available(path: str = FLOW_NPZ_DEFAULT) -> Optional[str]:
+    return None if Path(path).exists() else f"COMSOL flow grid not found: {path}"
 
 
 def viva_available(viva_dir: str = VIVA_DIR_DEFAULT, python: str = VIVA_PYTHON_DEFAULT) -> Optional[str]:
@@ -46,11 +59,15 @@ def prepare_run(out_dir, seed_df, adder: Dict, chamber: Dict) -> Dict[str, str]:
 
 
 def run_seed(paths: Dict[str, str], rule: str, seed: int, out_dir, sim_time: float, viva_dir=VIVA_DIR_DEFAULT, python=VIVA_PYTHON_DEFAULT,
-             log: Optional[Callable[[str], None]] = None, cancelled: Optional[Callable[[], bool]] = None) -> str:
-    """One Viva-munk run; returns the pickle path. Raises RuntimeError with the process output on failure."""
+             log: Optional[Callable[[str], None]] = None, cancelled: Optional[Callable[[], bool]] = None, flow_npz: str = FLOW_NPZ_DEFAULT) -> str:
+    """One Viva-munk run of the named rule set; returns the pickle path. Raises RuntimeError with the process output on failure."""
     seed_dir = Path(out_dir) / f"seed{seed}"; seed_dir.mkdir(parents=True, exist_ok=True)
+    flags = rule_flags(rule)
     cmd = [python, SCRIPT, "--viva", viva_dir, "--seed_csv", paths["seed_csv"], "--adder_json", paths["adder_json"],
            "--chamber_json", paths["chamber_json"], "--rule", rule, "--seed", str(seed), "--out_dir", str(seed_dir), "--sim_time", str(sim_time)]
+    cmd += [f"--{k}" for k, v in flags.items() if v]
+    if flags["flow"]:
+        cmd += ["--flow_npz", flow_npz]
     env = dict(os.environ); env["PYTHONUNBUFFERED"] = "1"
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     lines = []

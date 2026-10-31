@@ -48,22 +48,22 @@ def draw_twin(fig, t: int, hours: np.ndarray, mask_roi: Optional[np.ndarray], si
     import matplotlib
     with matplotlib.rc_context(house_rc()):
         fig.clear()
-        gs = fig.add_gridspec(2, 3, width_ratios=[1, 1, 2.2], left=0.03, right=0.98, top=0.92, bottom=0.13, wspace=0.18, hspace=0.30)
-        a1 = fig.add_subplot(gs[:, 0]); a2 = fig.add_subplot(gs[:, 1]); c = fig.add_subplot(gs[0, 2]); d = fig.add_subplot(gs[1, 2])
+        gs = fig.add_gridspec(2, 4, width_ratios=[1, 1, 0.42, 2.2], left=0.02, right=0.985, top=0.92, bottom=0.14, wspace=0.10, hspace=0.45)
+        a1 = fig.add_subplot(gs[:, 0]); a2 = fig.add_subplot(gs[:, 1]); c = fig.add_subplot(gs[0, 3]); d = fig.add_subplot(gs[1, 3])
         rc = np.asarray(real_counts, float); ra = np.asarray(real_areas, float)
         if mask_roi is not None:
             a1.imshow(real_panel(mask_roi), interpolation="nearest", extent=(0, w_um, h_um, 0))
         a1.set_xticks([]); a1.set_yticks([]); a1.set_facecolor("black")
-        a1.set_title(f"real cells   {int(rc[t]) if t < len(rc) else ''}", fontsize=9, loc="left")
+        a1.set_title(f"real cells   {int(rc[t]) if t < len(rc) else ''}", loc="left")
         fig.canvas.draw_idle() if hasattr(fig, "canvas") and fig.canvas is not None else None
         if sim_cells is not None:
             draw_sim(a2, sim_cells, w_um, h_um, fig.dpi)
-            a2.set_title(f"twin   {len(sim_cells)}", fontsize=9, loc="left")
+            a2.set_title(f"twin   {len(sim_cells)}", loc="left")
         else:
             a2.set_facecolor("black"); a2.set_xticks([]); a2.set_yticks([]); a2.set_xlim(0, w_um); a2.set_ylim(h_um, 0); a2.set_aspect("equal")
-            a2.set_title("twin   not run yet", fontsize=9, loc="left")
+            a2.set_title("twin   not run yet", loc="left")
             if message:
-                a2.text(0.5, 0.5, message, transform=a2.transAxes, color="white", ha="center", va="center", fontsize=8, wrap=True)
+                a2.text(0.5, 0.5, message, transform=a2.transAxes, color="white", ha="center", va="center", wrap=True)
         c.plot(hours[: len(rc)], rc, "o", color=REAL, ms=3, label="real cells")
         d.plot(hours[: len(ra)], ra / max(ra[0], 1e-9), "o", color=REAL, ms=3)
         if sim_counts is not None and len(sim_counts):
@@ -74,8 +74,11 @@ def draw_twin(fig, t: int, hours: np.ndarray, mask_roi: Optional[np.ndarray], si
             d.fill_between(hh, (am - asd) / am[0], (am + asd) / am[0], color=SIM, alpha=0.2, lw=0); d.plot(hh, am / am[0], color=SIM, lw=1.8)
         for ax in (c, d):
             ax.axvline(float(hours[t]), color=GREY, lw=1)
-        c.set_ylabel("cells in chamber"); c.legend(frameon=False, fontsize=8, loc="upper left"); c.set_xticklabels([])
+        c.set_ylabel("cells in chamber"); c.legend(frameon=False, loc="upper left"); c.set_xticklabels([])
         d.set_ylabel("area / area at 0 h"); d.set_xlabel("time (h)")
+        for ax in (a1, a2):
+            for sp in ax.spines.values():
+                sp.set_visible(True); sp.set_linewidth(0.8); sp.set_color("#555555")
         if rules_text:
             fig.text(0.03, 0.015, rules_text, fontsize=8.5, color="#333333")
         return a1, a2, c, d
