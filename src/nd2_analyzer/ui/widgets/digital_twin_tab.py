@@ -97,8 +97,11 @@ class DigitalTwinTab(QWidget):
         for w in (self.position_check, self.lag_check, self.crowding_check):
             rules.addWidget(w)
         rules.addSpacing(16)
-        rules.addWidget(QLabel("Runs:"))
+        repeats_label = QLabel("Repeats:")
+        repeats_label.setToolTip("How many times the twin is run, each from a different random start. The curves show their mean and spread.")
+        rules.addWidget(repeats_label)
         self.seeds_spin = QSpinBox(); self.seeds_spin.setRange(1, 12); self.seeds_spin.setValue(4)
+        self.seeds_spin.setToolTip(repeats_label.toolTip())
         rules.addWidget(self.seeds_spin)
         rules.addSpacing(16)
         self.run_button = QPushButton("Run Twin")
@@ -126,6 +129,10 @@ class DigitalTwinTab(QWidget):
         time_row.addWidget(self.time_label)
         layout.addLayout(time_row)
 
+        self.rules_label = QLabel("")
+        self.rules_label.setWordWrap(True)
+        layout.addWidget(self.rules_label)
+
         bottom = QHBoxLayout()
         self.open_folder_button = QPushButton("Open Output Folder"); self.open_folder_button.setEnabled(False)
         self.open_folder_button.clicked.connect(self._open_output_folder)
@@ -133,9 +140,14 @@ class DigitalTwinTab(QWidget):
         self.save_button = QPushButton("Save Image"); self.save_button.clicked.connect(self._save_image)
         bottom.addWidget(self.save_button)
         bottom.addStretch()
+        self.console_button = QPushButton("Console"); self.console_button.setCheckable(True)
+        self.console_button.setToolTip("Show what the twin run prints")
+        bottom.addWidget(self.console_button)
         layout.addLayout(bottom)
 
-        self.log_text = QTextEdit(); self.log_text.setReadOnly(True); self.log_text.setMaximumHeight(70)
+        self.log_text = QTextEdit(); self.log_text.setReadOnly(True); self.log_text.setMaximumHeight(90)
+        self.log_text.setVisible(False)
+        self.console_button.toggled.connect(self.log_text.setVisible)
         layout.addWidget(self.log_text)
         self.setLayout(layout)
 
@@ -272,8 +284,8 @@ class DigitalTwinTab(QWidget):
         if self._results is not None:
             sim_cells = R.cells_at(self._results["runs"][0], self.t, self.frame_s)
             sim_counts, sim_areas = self._results["counts"], self._results["areas"]
-        draw_twin(self.figure, self.t, self.hours, mask_roi, sim_cells, w_um, h_um, rc, ra, sim_counts, sim_areas,
-                  rules_text=self._rules_text(), message="press Run Twin")
+        draw_twin(self.figure, self.t, self.hours, mask_roi, sim_cells, w_um, h_um, rc, ra, sim_counts, sim_areas, message="press Run Twin")
+        self.rules_label.setText(self._rules_text())
         self.time_label.setText(f"frame {self.t}   {self.hours[self.t]:.2f} h")
         self.canvas.draw_idle()
 

@@ -48,7 +48,7 @@ def draw_twin(fig, t: int, hours: np.ndarray, mask_roi: Optional[np.ndarray], si
     import matplotlib
     with matplotlib.rc_context(house_rc()):
         fig.clear()
-        gs = fig.add_gridspec(2, 3, width_ratios=[1, 1, 2.2], left=0.03, right=0.98, top=0.90, bottom=0.12, wspace=0.18, hspace=0.35)
+        gs = fig.add_gridspec(2, 3, width_ratios=[1, 1, 2.2], left=0.03, right=0.98, top=0.92, bottom=0.13, wspace=0.18, hspace=0.30)
         a1 = fig.add_subplot(gs[:, 0]); a2 = fig.add_subplot(gs[:, 1]); c = fig.add_subplot(gs[0, 2]); d = fig.add_subplot(gs[1, 2])
         rc = np.asarray(real_counts, float); ra = np.asarray(real_areas, float)
         if mask_roi is not None:
@@ -76,5 +76,6 @@ def draw_twin(fig, t: int, hours: np.ndarray, mask_roi: Optional[np.ndarray], si
             ax.axvline(float(hours[t]), color=GREY, lw=1)
         c.set_ylabel("cells in chamber"); c.legend(frameon=False, fontsize=8, loc="upper left"); c.set_xticklabels([])
         d.set_ylabel("area / area at 0 h"); d.set_xlabel("time (h)")
-        fig.text(0.03, 0.03, rules_text, fontsize=8.5, color="#333333")
+        if rules_text:
+            fig.text(0.03, 0.015, rules_text, fontsize=8.5, color="#333333")
         return a1, a2, c, d
