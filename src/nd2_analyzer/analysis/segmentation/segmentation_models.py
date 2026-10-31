@@ -10,6 +10,22 @@ from skimage.restoration import richardson_lucy
 
 from .unet import unet_segmentation
 
+# Omnipose's bacterial models were trained at about 0.065 um per pixel (100x phase contrast).
+# A frame recorded at another pixel size is rescaled to that scale before inference, and
+# objects smaller than one square micron (debris, halo fragments) are dropped. These are the
+# same two rules the digital-twin rerun notebook used (DigitalTwin_rerun, Oct 2026).
+OMNIPOSE_TRAIN_PX_UM = 0.065
+MIN_CELL_AREA_UM2 = 1.0
+
+
+def omnipose_scale_params(pixel_size_um):
+    """Rescale factor and minimum object size (px) for a frame at `pixel_size_um`; {} if unknown."""
+    if not pixel_size_um or pixel_size_um <= 0:
+        return {}
+    px = float(pixel_size_um)
+    return {"rescale": px / OMNIPOSE_TRAIN_PX_UM,
+            "min_size": int(round(MIN_CELL_AREA_UM2 / px ** 2))}
+
 use_gpu = True
 
 class SegmentationModels:
@@ -186,7 +202,7 @@ class SegmentationModels:
 
         return binary_mask_display
 
-    def segment_omnipose(self, images, progress, model):
+    def segment_omnipose(self, images, progress, model, pixel_size_um=None):
         chans = [0, 0]
 
         # define parameters
@@ -208,6 +224,10 @@ class SegmentationModels:
             # 'affinity_seg': True, # new feature, stay tuned...
             "batch_size": 12  # default is 8, halved to prevent (out of memory) OOM errors
         }
+        scale = omnipose_scale_params(pixel_size_um)
+        if scale:
+            params.update(scale)
+            print(f"omnipose: pixel {float(pixel_size_um):.4f} um -> rescale {scale['rescale']:.2f}, min_size {scale['min_size']} px")
 
         print("type:", type(images))
         print("len:", len(images))
@@ -218,7 +238,7 @@ class SegmentationModels:
 
         return masks
 
-    def segment_images(self, images, mode, progress=None, preprocess=True):
+    def segment_images(self, images, mode, progress=None, preprocess=True, pixel_size_um=None):
         print(f"Segmenting images using {mode} model")
 
         original_shape = images[0].shape
@@ -283,7 +303,7 @@ class SegmentationModels:
                 )
 
             segmented_images = self.segment_omnipose(
-                images, progress, self.models[mode]
+                images, progress, self.models[mode], pixel_size_um=pixel_size_um
             )
 
         elif mode == SegmentationModels.OMNIPOSE_BACT_FLUOR:
@@ -293,7 +313,7 @@ class SegmentationModels:
                 )
 
             segmented_images = self.segment_omnipose(
-                images, progress, self.models[mode]
+                images, progress, self.models[mode], pixel_size_um=pixel_size_um
             )
 
         else:

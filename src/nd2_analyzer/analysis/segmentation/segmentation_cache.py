@@ -12,10 +12,26 @@ from .segmentation_models import SegmentationModels
 
 
 class SegmentationCache:
-    def __init__(self, image_data):
+    def __init__(self, image_data, frame_getter=None, pixel_size_getter=None):
         self.image_data = image_data
         self.mmap_arrays_idx = {}
         self.model_name = None
+        # frame_getter(t, p, c) -> the frame the model should see (registered, uncropped).
+        # Without it the raw frame is used, which was the behaviour before Oct 2026.
+        self.frame_getter = frame_getter
+        # pixel_size_getter() -> um per pixel, or None when the file does not say.
+        self.pixel_size_getter = pixel_size_getter
+
+    def invalidate_position(self, p):
+        """Forget every cached frame of position p (after registration changed the frames)."""
+        n = 0
+        for model_name, (array, indices) in self.mmap_arrays_idx.items():
+            stale = {idx for idx in indices if idx[1] == p}
+            for idx in stale:
+                array[idx] = 0
+            indices.difference_update(stale)
+            n += len(stale)
+        return n
 
     def with_model(self, model_name):
         self.model_name = model_name
@@ -293,7 +309,11 @@ class SegmentationCache:
         idx = tuple(i % s for i, s in zip(idx, self.shape))
 
         try:
-            frame = self.image_data[idx].compute()
+            if self.frame_getter is not None:
+                frame = np.asarray(self.frame_getter(*idx))
+            else:
+                frame = self.image_data[idx]
+                frame = frame.compute() if hasattr(frame, "compute") else np.asarray(frame)
             if frame.dtype == bool:
                 frame = frame.astype(np.uint8) * 255
             elif frame.dtype != np.uint8 and frame.dtype != np.uint16:
@@ -306,8 +326,9 @@ class SegmentationCache:
                     np.uint16
                 )
 
+            pixel_size_um = self.pixel_size_getter() if self.pixel_size_getter else None
             segmented_frame = SegmentationModels().segment_images(
-                [frame], mode=self.model_name
+                [frame], mode=self.model_name, pixel_size_um=pixel_size_um
             )[0]
 
             if hasattr(self, "binary_mask") and self.binary_mask is not None:

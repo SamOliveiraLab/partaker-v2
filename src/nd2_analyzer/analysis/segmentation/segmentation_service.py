@@ -120,44 +120,12 @@ class SegmentationService:
             np.ndarray: Masked segmentation
         """
 
-        is_labeled = True if len(np.unique(segmented)) > 2 else False
-
-        # Convert binary segmentation to labeled regions if needed
-        if not is_labeled:
-            from skimage.measure import label
-
-            labeled_frame = label(segmented)
-        else:
-            labeled_frame = segmented
-
-        # Find regions that overlap with the mask boundary
-        from scipy.ndimage import binary_dilation
-
-        # Crop roi_mask
         crop_roi_mask = self.roi_mask
         if self.crop_coordinates is not None:
             x, y, width, height = self.crop_coordinates
             crop_roi_mask = crop_roi_mask[y: y + height, x: x + width]
+        return apply_roi_mask(segmented, crop_roi_mask)
 
-        mask_boundary = binary_dilation(crop_roi_mask) & ~crop_roi_mask
-
-        # Get labels of regions touching the boundary
-        boundary_labels = set(np.unique(labeled_frame * mask_boundary))
-        if 0 in boundary_labels:
-            boundary_labels.remove(0)  # Remove background label
-
-        # Create a new segmentation with only regions inside mask and not touching boundary
-        result = np.zeros_like(segmented)
-        for label_id in np.unique(labeled_frame):
-            if label_id > 0:  # Skip background
-                if label_id not in boundary_labels and np.any(
-                    (labeled_frame == label_id) & crop_roi_mask
-                ):
-                    result[labeled_frame == label_id] = (
-                        255 if np.max(segmented) <= 255 else label_id
-                    )
-
-        return result
 
     def _post_process(self, raw_image, segmented, mode):
         """Apply final transformations based on display mode"""
@@ -417,3 +385,42 @@ class SegmentationService:
             f"T={time} P={position} C={channel} "
             f"model={model} margin={self.EDGE_CENTROID_MARGIN_PX}px"
         )
+
+
+def apply_roi_mask(segmented: np.ndarray, roi_mask: np.ndarray) -> np.ndarray:
+    """Keep the objects inside the ROI; drop those outside and those touching its boundary.
+
+    One rule for the display, for tracking and for the digital-twin rerun notebook.
+    A binary input comes back binary (255 inside); a labeled input keeps its label ids.
+    """
+    if roi_mask is None:
+        return segmented
+    segmented = np.asarray(segmented)
+    roi = np.asarray(roi_mask).astype(bool)
+    if roi.shape != segmented.shape:
+        raise ValueError(f"ROI mask {roi.shape} does not match the frame {segmented.shape}")
+
+    from scipy.ndimage import binary_dilation
+
+    is_labeled = len(np.unique(segmented)) > 2
+    if is_labeled:
+        labeled_frame = segmented
+    else:
+        from skimage.measure import label
+
+        labeled_frame = label(segmented)
+
+    boundary = binary_dilation(roi) & ~roi
+    touching = np.unique(labeled_frame[boundary])
+    inside = np.unique(labeled_frame[roi])
+    keep = np.setdiff1d(inside[inside > 0], touching)
+
+    lut = np.zeros(int(labeled_frame.max()) + 1, dtype=bool)
+    lut[keep] = True
+    kept = lut[labeled_frame]
+    result = np.zeros_like(segmented)
+    if is_labeled:
+        result[kept] = labeled_frame[kept]
+    else:
+        result[kept] = 255
+    return result

@@ -37,8 +37,13 @@ class ImageData:
         self.crop_coordinates = None
         self.channel_n = channel_n
 
-        # Initialize segmentation components
-        self.segmentation_cache = SegmentationCache(data)
+        # Initialize segmentation components. The model sees the registered frame,
+        # the same one the view shows, so masks and tracks do not drift with the stage.
+        self.segmentation_cache = SegmentationCache(
+            data,
+            frame_getter=self.get_registered,
+            pixel_size_getter=self.pixel_size_um,
+        )
         self.segmentation_service = SegmentationService(
             cache=self.segmentation_cache,
             models=SegmentationModels(),
@@ -116,6 +121,33 @@ class ImageData:
     def get_channel_n(self):
         return self.channel_n
 
+    def pixel_size_um(self):
+        """Pixel size in um from the file metadata, or None when the file does not say."""
+        voxel = getattr(self, "voxel_size", None)
+        try:
+            x = float(voxel.x) if voxel is not None else None
+        except (AttributeError, TypeError, ValueError):
+            try:
+                x = float(voxel[0])
+            except Exception:
+                x = None
+        return x if x and x > 0 else None
+
+    def get_registered(self, t, p, c):
+        """The full frame at (t, p, c) with the registration shift applied, never cropped."""
+        if len(self.data.shape) == 5:
+            raw_image = self.data[t, p, c]
+        elif len(self.data.shape) == 4:
+            raw_image = self.data[t, p]
+        else:
+            raw_image = self.data[t, p] if len(self.data.shape) >= 3 else self.data[t]
+        if hasattr(raw_image, "compute"):
+            raw_image = raw_image.compute()
+        if self.registration_offsets is not None:
+            _x, _y = self.registration_offsets[t]
+            raw_image = ShiftedImage_2D_numba(raw_image, _x, _y)
+        return raw_image
+
     def get(self, t, p, c):
         """Helper method to retrieve raw images"""
 
@@ -168,6 +200,13 @@ class ImageData:
 
         # Store offsets here
         self.registration_offsets = res.offsets
+        # Frames of this position changed, so their cached masks are stale.
+        try:
+            n = self.segmentation_cache.invalidate_position(p)
+            if n:
+                print(f"Registration: dropped {n} cached masks of position {p}; they will be segmented again on request")
+        except Exception as exc:
+            print(f"Registration: could not clear cached masks of position {p}: {exc}")
 
     @classmethod
     def load_nd2(cls, file_paths: Union[str, Sequence[str]], import_mode: str | None = None):

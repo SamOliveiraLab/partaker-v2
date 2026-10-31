@@ -549,6 +549,10 @@ class TrackingWidget(QWidget):
             progress.show()
 
             # Prepare frames for tracking - only process frames with existing data
+            from nd2_analyzer.analysis.roi_helper import ROIHelper
+            from nd2_analyzer.analysis.segmentation.segmentation_service import apply_roi_mask
+
+            roi_mask_for_tracking = ROIHelper.get_roi_mask()
             labeled_frames = []
             raw_frames = []  # parallel list; only used by Trackastra
             frame_count = 0
@@ -574,6 +578,11 @@ class TrackingWidget(QWidget):
                     print(f"WARNING: No cached segmentation for T={t}, P={p}, C={selected_channel}")
                     continue
 
+                # Same ROI rule as the view: drop cells outside the ROI and those on its edge,
+                # on the masks themselves, before the tracker sees them.
+                if roi_mask_for_tracking is not None:
+                    labeled_frame = apply_roi_mask(np.asarray(labeled_frame), roi_mask_for_tracking)
+
                 # Check if it's binary or already labeled
                 max_value = labeled_frame.max()
                 unique_values = len(np.unique(labeled_frame))
@@ -595,13 +604,17 @@ class TrackingWidget(QWidget):
                 # index vs. name) varies; on failure we just skip raw frames
                 # and the tracker will fall back to a mask-based proxy.
                 try:
-                    raw_data = self.image_data.data
-                    if raw_data.ndim == 5:
-                        raw_frame = raw_data[t, p, selected_channel]
-                    elif raw_data.ndim == 4:
-                        raw_frame = raw_data[t, p]
+                    # The registered frame, so the intensities line up with the masks.
+                    if hasattr(image_data_instance, "get_registered"):
+                        raw_frame = image_data_instance.get_registered(t, p, selected_channel)
                     else:
-                        raw_frame = None
+                        raw_data = self.image_data.data
+                        if raw_data.ndim == 5:
+                            raw_frame = raw_data[t, p, selected_channel]
+                        elif raw_data.ndim == 4:
+                            raw_frame = raw_data[t, p]
+                        else:
+                            raw_frame = None
                     if raw_frame is not None:
                         raw_frames.append(np.asarray(raw_frame))
                     else:
