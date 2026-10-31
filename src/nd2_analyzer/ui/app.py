@@ -130,6 +130,10 @@ class App(QMainWindow):
         self.tab_widget.addTab(self.colony_separation_tab, "Colony Separation")
         self.tab_widget.addTab(self.cube_analysis_tab, "Colony Analysis")
         self.tab_widget.addTab(self.live_dead_analysis_tab, "Live-Dead Analysis")
+        # the results of the biofilm route, one page per stage of the story
+        from nd2_analyzer.ui.biofilms.stages.tab import BiofilmStagesTab
+        self.biofilm_stages_tab = BiofilmStagesTab()
+        self.tab_widget.addTab(self.biofilm_stages_tab, "Biofilm Stages")
 
     # ── Drag & Drop ──────────────────────────────────────────────────
 

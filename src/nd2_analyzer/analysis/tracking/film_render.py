@@ -132,10 +132,12 @@ def collisions(fig, gap_in: float = 0.1, gap_same: float = 0.03):
     for t in fig.texts:
         add(f"text '{t.get_text()[:30]}'", t, "text")
     for ax in fig.axes:
-        kind = "img" if ax.images or ax.get_facecolor()[:3] == (0.0, 0.0, 0.0) else "plot"
+        kind = "img" if ax.images or ax.get_facecolor()[:3] == (0.0, 0.0, 0.0) or not ax.axison else "plot"
         add(f"{kind} '{ax.get_title(loc='left') or ax.get_title()}'", ax, kind, ax)
         if kind == "img":
             add(f"title '{ax.get_title(loc='left')[:30]}'", ax._left_title, "label", ax)
+            for t in ax.texts:                                    # call-outs on a picture or a drawn table still count
+                add(f"call-out '{t.get_text()[:30]}'", t, "own", ax)
             continue
         for t in ax.texts:
             add(f"call-out '{t.get_text()[:30]}'", t, "own", ax)
@@ -143,8 +145,12 @@ def collisions(fig, gap_in: float = 0.1, gap_same: float = 0.03):
             add("legend", ax.get_legend(), "own", ax)
         for t in (ax.title, ax._left_title, ax.xaxis.label, ax.yaxis.label):
             add(f"title '{t.get_text()[:30]}'", t, "label", ax)
-        for t in ax.get_xticklabels() + ax.get_yticklabels():
-            add(f"tick '{t.get_text()}'", t, "label", ax)
+        # tick labels that matplotlib keeps outside the axis range are clipped away: they do not count
+        x0, x1 = sorted(ax.get_xlim()); y0, y1 = sorted(ax.get_ylim())
+        for pos, t in zip(ax.get_xticks(), ax.get_xticklabels()):
+            if x0 <= pos <= x1: add(f"tick '{t.get_text()}'", t, "label", ax)
+        for pos, t in zip(ax.get_yticks(), ax.get_yticklabels()):
+            if y0 <= pos <= y1: add(f"tick '{t.get_text()}'", t, "label", ax)
     out = []
     for i in range(len(items)):
         n1, b1, k1, o1 = items[i]
