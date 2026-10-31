@@ -84,5 +84,9 @@ def test_film_frame_and_album_render():
     img = film.frame_image(4, size=(6, 2.5), dpi=60)
     assert img.shape == (150, 360, 3) and img.max() == 255
     from matplotlib.figure import Figure
+    from nd2_analyzer.analysis.tracking.film_render import collisions
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    fig = Figure(figsize=(10, 4.6), dpi=100); FigureCanvasAgg(fig); film.draw(fig, 4)
+    assert collisions(fig) == [], collisions(fig)
     fig = Figure(figsize=(8, 4)); film.draw_album(fig)
     assert len(fig.axes) == 1 + 4                                   # the tree and four stills: start, divisions at 2 and 5, end

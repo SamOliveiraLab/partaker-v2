@@ -63,6 +63,28 @@ def test_rule_sets_nest():
     assert RUN.rule_set(True, False, False) == "position"
     assert RUN.rule_set(True, True, False) == "lag" and RUN.rule_set(False, True, False) == "lag"
     assert RUN.rule_set(True, True, True) == "crowding"
+    assert RUN.rule_set(True, True, False, flow=True) == "lag+flow"
+    assert RUN.rule_flags("lag+flow") == dict(position=True, lag=True, crowding=False, flow=True)
+    assert RUN.rule_flags("base") == dict(position=False, lag=False, crowding=False, flow=False)
+
+
+def test_twin_page_has_no_overlapping_elements():
+    """The page at the canvas size the tab uses: nothing closer than 0.1 in to anything else (the DARPA figure rule)."""
+    from matplotlib.figure import Figure
+    from nd2_analyzer.analysis.twin.draw import draw_twin
+    from nd2_analyzer.analysis.tracking.film_render import collisions
+    rng = np.random.default_rng(0)
+    mask = np.zeros((300, 180), np.int32)
+    for i in range(1, 60):
+        y, x = rng.integers(5, 290), rng.integers(5, 170); mask[y:y + 6, x:x + 14] = i
+    cells = [(f"c{i}", rng.uniform(1, 10), rng.uniform(1, 18), 3.0, 0.5, rng.uniform(0, 3.14)) for i in range(60)]
+    hours = np.arange(28) * 5 / 60; rc = 250 + 10 * np.arange(28); ra = 580 + 16 * np.arange(28)
+    sim_counts = np.vstack([rc * 1.05, rc * 1.1]); sim_areas = np.vstack([ra * 1.05, ra * 1.1])
+    fig = Figure(figsize=(10.8, 5.2), dpi=100)
+    from matplotlib.backends.backend_agg import FigureCanvasAgg; FigureCanvasAgg(fig)
+    draw_twin(fig, 14, hours, mask, cells, 11.6, 19.4, rc, ra, sim_counts, sim_areas)
+    hits = collisions(fig)
+    assert hits == [], hits
 
 
 def test_measure_adder_on_a_toy_generation():

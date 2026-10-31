@@ -94,7 +94,9 @@ class DigitalTwinTab(QWidget):
         self.position_check = QCheckBox("position (growth falls away from the opening)"); self.position_check.setChecked(True)
         self.lag_check = QCheckBox("slow start (first 75 min)"); self.lag_check.setChecked(True)
         self.crowding_check = QCheckBox("crowding")
-        for w in (self.position_check, self.lag_check, self.crowding_check):
+        self.flow_check = QCheckBox("flow (COMSOL)")
+        self.flow_check.setToolTip("The chip's flow field from COMSOL: each cell takes the velocity of its grid point, one field per frame.")
+        for w in (self.position_check, self.lag_check, self.crowding_check, self.flow_check):
             rules.addWidget(w)
         rules.addSpacing(16)
         repeats_label = QLabel("Repeats:")
@@ -140,8 +142,8 @@ class DigitalTwinTab(QWidget):
         self.save_button = QPushButton("Save Image"); self.save_button.clicked.connect(self._save_image)
         bottom.addWidget(self.save_button)
         bottom.addStretch()
-        self.console_button = QPushButton("Console"); self.console_button.setCheckable(True)
-        self.console_button.setToolTip("Show what the twin run prints")
+        self.console_button = QPushButton("Run log"); self.console_button.setCheckable(True)
+        self.console_button.setToolTip("Show what the twin run printed")
         bottom.addWidget(self.console_button)
         layout.addLayout(bottom)
 
@@ -225,7 +227,10 @@ class DigitalTwinTab(QWidget):
         if self.roi_mask is None:
             QMessageBox.warning(self, "No ROI", "Draw the chamber ROI first (Image > ROI): the twin is seeded inside it.")
             return
-        rule = RUN.rule_set(self.position_check.isChecked(), self.lag_check.isChecked(), self.crowding_check.isChecked())
+        if self.flow_check.isChecked() and RUN.flow_available():
+            QMessageBox.warning(self, "No flow field", RUN.flow_available())
+            return
+        rule = RUN.rule_set(self.position_check.isChecked(), self.lag_check.isChecked(), self.crowding_check.isChecked(), self.flow_check.isChecked())
         out_dir = str(Path(DT_OUTPUT_DIR) / f"twin_{time.strftime('%Y%m%d_%H%M%S')}_{rule}")
         self.run_button.setEnabled(False); self.cancel_button.setEnabled(True)
         self.log_text.clear(); self._log(f"run folder {out_dir}")
@@ -260,16 +265,19 @@ class DigitalTwinTab(QWidget):
 
     def _rules_text(self) -> str:
         if self._results is None:
-            on = [n for n, w in (("position", self.position_check), ("slow start", self.lag_check), ("crowding", self.crowding_check)) if w.isChecked()]
+            on = [n for n, w in (("position", self.position_check), ("slow start", self.lag_check), ("crowding", self.crowding_check), ("flow (COMSOL)", self.flow_check)) if w.isChecked()]
             return "adder growth" + ("".join(f" + {n}" for n in on)) + ".   Seeded from frame 0 inside the ROI; rules measured from the tracks when you press Run."
         r = self._results; a = r["adder"]; p = r["position"]
         parts = [f"adder: birth {a['birth_total_um']:.2f} um, added {a['added_um']:.2f} um, alpha {a['alpha_per_h']:.2f}/h ({a['n_full_generations']} generations)"]
-        if r["rule"] in ("position", "lag", "crowding"):
+        flags = __import__("nd2_analyzer.analysis.twin.runner", fromlist=["rule_flags"]).rule_flags(r["rule"])
+        if flags["position"]:
             parts.append(f"position slope {p['pos_slope']:.4f}/um")
-        if r["rule"] in ("lag", "crowding"):
+        if flags["lag"]:
             parts.append("slow start 75 min")
-        if r["rule"] == "crowding":
+        if r["rule"].startswith("crowding"):
             parts.append("crowding")
+        if r["rule"].endswith("+flow"):
+            parts.append("flow (COMSOL)")
         return "   |   ".join(parts) + f"   |   {r['n_seed_cells']} seed cells, {len(r['counts'])} runs"
 
     def redraw(self):

@@ -12,20 +12,23 @@ import argparse, json, math, os, pickle, random, sys, time, uuid
 import numpy as np
 import pandas as pd
 
-RULES = {"base": dict(position=False, lag=False, crowding=False),
-         "position": dict(position=True, lag=False, crowding=False),
-         "lag": dict(position=True, lag=True, crowding=False),
-         "crowding": dict(position=True, lag=True, crowding=True)}
+RULE_FLAGS = ("position", "lag", "crowding", "flow")
 DENSITY, INTERVAL = 0.02, 30.0
 FREE_DAMPING = 0.1
 ALPHA_CV, DELTA_CV, BIRTH_CV = 0.25, 0.20, 0.15
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--viva", required=True); ap.add_argument("--seed_csv", required=True); ap.add_argument("--adder_json", required=True)
-ap.add_argument("--chamber_json", required=True); ap.add_argument("--rule", choices=list(RULES), required=True)
+ap.add_argument("--chamber_json", required=True); ap.add_argument("--rule", required=True, help="name of the rule set (file name)")
+for flag in RULE_FLAGS:
+    ap.add_argument(f"--{flag}", action="store_true")
+ap.add_argument("--flow_npz", default="", help="COMSOL u, v grid (frame, row, col) in um/s on a 1 um grid, sim coordinates")
 ap.add_argument("--seed", type=int, required=True); ap.add_argument("--out_dir", required=True)
 ap.add_argument("--sim_time", type=float, default=8100); ap.add_argument("--damping", type=float, default=None)
 a = ap.parse_args()
+R = {flag: bool(getattr(a, flag)) for flag in RULE_FLAGS}
+if R["flow"] and not os.path.exists(a.flow_npz):
+    sys.exit(f"flow rule needs --flow_npz, not found: {a.flow_npz!r}")
 
 AD = json.load(open(a.adder_json)); CH = json.load(open(a.chamber_json))
 ALPHA_MEAN_H, DELTA_UM, BIRTH_UM = float(AD["alpha_per_h"]), float(AD["added_um"]), float(AD["birth_total_um"])
@@ -54,6 +57,49 @@ from multi_cell.experiments.runner import PYMUNK_CORE
 from multi_cell.processes.grow_divide import AdderGrowDivide, _build_segment_daughters
 from multi_cell.processes.remove_crossing import make_remove_crossing_process
 from multi_cell.processes.pressure import make_pressure_process
+from process_bigraph import Process
+
+
+class FlowDragComsolTime(Process):
+    """The chip's flow (COMSOL u, v on a 1 um grid, one field per frame): each cell takes the velocity of its grid point,
+    capped at v_cap um/s. From DigitalTwin_rerun/run_twin.py (Oct 2026)."""
+    config_schema = {"grid_npz": {"_type": "string", "_default": ""}, "v_cap": {"_type": "float", "_default": 2.0},
+                     "frame_s": {"_type": "float", "_default": 300.0}, "agents_key": {"_type": "string", "_default": "cells"}}
+
+    def __init__(self, config=None, core=None):
+        super().__init__(config, core)
+        g = np.load(self.config["grid_npz"])
+        self.u, self.v = g["u"], g["v"]
+        self.nf, self.ny, self.nx = self.u.shape
+        self.t = 0.0
+
+    def inputs(self):
+        return {"agents": "map[pymunk_agent]"}
+
+    def outputs(self):
+        return {"agents": "map[pymunk_agent]"}
+
+    def update(self, state, interval):
+        k = min(int(round(self.t / self.config["frame_s"])), self.nf - 1)
+        self.t += float(interval)
+        cap = float(self.config["v_cap"]); out = {}
+        for aid, ag in (state.get("agents") or {}).items():
+            loc = ag.get("location")
+            if loc is None:
+                continue
+            x, y = float(loc[0]), float(loc[1])
+            if not (0 <= x < self.nx and 0 <= y < self.ny):
+                out[aid] = {"velocity": (0.0, 0.0)}; continue
+            c, r = int(x), int(y)
+            vx, vy = float(self.u[k, r, c]), float(self.v[k, r, c])
+            s_ = math.hypot(vx, vy)
+            if cap > 0 and s_ > cap:
+                vx, vy = vx * cap / s_, vy * cap / s_
+            out[aid] = {"velocity": (vx, vy)}
+        return {"agents": out}
+
+
+PYMUNK_CORE.register_link("FlowDragComsolTime", FlowDragComsolTime)
 
 
 def capsule_mass(L, r):
@@ -124,7 +170,7 @@ seed_df = pd.read_csv(a.seed_csv)
 W_um, H_um = float(CH["width_um"]), float(CH["height_um"])
 OX, OY = 1.0, 5.0                                             # the ROI sits inside a slightly larger world, opening on the right
 ENV_W, ENV_H = float(math.ceil(W_um + 11.0)), float(math.ceil(H_um + 10.0))
-R = RULES[a.rule]; damping = a.damping if a.damping is not None else FREE_DAMPING
+damping = a.damping if a.damping is not None else FREE_DAMPING
 gd_cfg = dict(agents_key="cells", alpha_mean_per_h=ALPHA_MEAN_H / (1 - POS_SLOPE * 17 if R["position"] else 1), alpha_cv=ALPHA_CV,
               delta_mean=DELTA_UM, delta_cv=DELTA_CV, division_noise_cv=0.07, pressure_k=5.0, seed_cell=True, birth_mean=BIRTH_UM, birth_cv=BIRTH_CV,
               open_x=ENV_W, pos_slope=POS_SLOPE if R["position"] else 0.0, lag_on=bool(R["lag"]), t0=0.0)
@@ -144,11 +190,15 @@ doc = {"cells": agents, "particles": {},
        "emitter": emitter_from_wires({"agents": ["cells"], "particles": ["particles"], "time": ["global_time"]})}
 if R["crowding"]:
     doc["pressure"] = make_pressure_process(agents_key="cells", env_size=ENV_W)
+if R["flow"]:
+    doc["flow_drag"] = {"_type": "process", "address": "local:FlowDragComsolTime", "interval": INTERVAL,
+                        "config": {"grid_npz": a.flow_npz, "v_cap": 2.0, "frame_s": float(CH["frame_interval_s"]), "agents_key": "cells"},
+                        "inputs": {"agents": ["cells"]}, "outputs": {"agents": ["cells"]}}
 print(f"{a.rule} seed {a.seed}: {len(agents)} cells, alpha {gd_cfg['alpha_mean_per_h']:.3f}/h, delta {DELTA_UM:.2f}, birth {BIRTH_UM:.2f}, rules {R}", flush=True)
 t0 = time.time(); sim = Composite({"state": doc}, core=PYMUNK_CORE); sim.run(a.sim_time)
 results = gather_emitter_results(sim)[("emitter",)]; os.makedirs(a.out_dir, exist_ok=True)
 roi = dict(x0=OX, y0=OY, w=W_um, h=H_um)
 with open(os.path.join(a.out_dir, f"montage_{a.rule}.pkl"), "wb") as f:
     pickle.dump({"results": results, "env_size": ENV_W, "env_height": ENV_H, "roi": roi, "seed": a.seed, "rule": a.rule, "sim_time": a.sim_time,
-                 "gd": gd_cfg, "damping": damping, "version": 3, "adder": AD, "chamber": CH}, f)
+                 "gd": gd_cfg, "damping": damping, "version": 3, "adder": AD, "chamber": CH, "rules": R, "flow_npz": a.flow_npz if R["flow"] else None}, f)
 print(f"{a.rule} seed {a.seed}: {len(results)} steps in {time.time() - t0:.0f} s", flush=True)
