@@ -29,16 +29,41 @@ def cell_colour(aid) -> np.ndarray:
     return id_colour(int(hashlib.md5(str(aid).encode()).hexdigest()[:8], 16) % 100_000)
 
 
-def draw_sim(ax, cells, w_um: float, h_um: float, fig_dpi: float):
-    """The twin's capsules (x, y, total length, radius, angle in um) on black, to scale, one colour per cell like the real ones."""
-    ax.set_facecolor("black"); ax.set_aspect("equal")
-    ax.set_xlim(0, w_um); ax.set_ylim(h_um, 0); ax.set_xticks([]); ax.set_yticks([])
-    # points per um once the axes has its size (the figure must be laid out first)
-    bb = ax.get_window_extent(); ppu = (bb.height / h_um) * 72.0 / fig_dpi if bb.height > 0 else 4.0
-    for aid, x, y, L, r, ang in cells:
+def sim_label_image(cells, w_um: float, h_um: float, pixel_um: float) -> np.ndarray:
+    """The twin's capsules (x, y, total length, radius, angle in um) rasterised at pixel_um, one label per cell, like a mask
+    of the real cells: later cells overwrite earlier ones where they overlap."""
+    H, W = max(int(round(h_um / pixel_um)), 1), max(int(round(w_um / pixel_um)), 1)
+    lab = np.zeros((H, W), np.int32)
+    yy, xx = np.mgrid[:H, :W]
+    px = (xx + 0.5) * pixel_um; py = (yy + 0.5) * pixel_um
+    for k, (aid, x, y, L, r, ang) in enumerate(cells, start=1):
         half = max(L - 2 * r, 0.0) / 2
-        dx, dy = half * np.cos(ang), half * np.sin(ang)
-        ax.plot([x - dx, x + dx], [y - dy, y + dy], color=cell_colour(aid) * 0.8, lw=max(2 * r * ppu, 0.5), solid_capstyle="round", solid_joinstyle="round")
+        c, s_ = np.cos(ang), np.sin(ang)
+        # only the pixels near the cell
+        y0 = max(int((y - L) / pixel_um), 0); y1 = min(int((y + L) / pixel_um) + 2, H)
+        x0 = max(int((x - L) / pixel_um), 0); x1 = min(int((x + L) / pixel_um) + 2, W)
+        if y1 <= y0 or x1 <= x0:
+            continue
+        u = (px[y0:y1, x0:x1] - x) * c + (py[y0:y1, x0:x1] - y) * s_
+        v = -(px[y0:y1, x0:x1] - x) * s_ + (py[y0:y1, x0:x1] - y) * c
+        du = np.clip(np.abs(u) - half, 0, None)
+        inside = du ** 2 + v ** 2 <= r * r
+        lab[y0:y1, x0:x1][inside] = k
+    return lab
+
+
+def draw_sim(ax, cells, w_um: float, h_um: float, pixel_um: float):
+    """The twin's cells drawn exactly as the real ones: a label image at the same pixel size, one colour per cell, dark seams."""
+    lab = sim_label_image(cells, w_um, h_um, pixel_um)
+    ids = {k: aid for k, (aid, *_rest) in enumerate(cells, start=1)}
+    from skimage.segmentation import find_boundaries
+    rgb = np.zeros((*lab.shape, 3), np.float32)
+    for k in np.unique(lab):
+        if k:
+            rgb[lab == k] = cell_colour(ids[int(k)]) * 0.8
+    rgb[find_boundaries(lab, mode="inner")] *= 0.35
+    ax.imshow(np.clip(rgb, 0, 1), interpolation="nearest", extent=(0, w_um, h_um, 0))
+    ax.set_facecolor("black"); ax.set_xticks([]); ax.set_yticks([])
 
 
 def draw_twin(fig, t: int, hours: np.ndarray, mask_roi: Optional[np.ndarray], sim_cells, w_um: float, h_um: float,
@@ -57,7 +82,8 @@ def draw_twin(fig, t: int, hours: np.ndarray, mask_roi: Optional[np.ndarray], si
         a1.set_title(f"real cells   {int(rc[t]) if t < len(rc) else ''}", loc="left")
         fig.canvas.draw_idle() if hasattr(fig, "canvas") and fig.canvas is not None else None
         if sim_cells is not None:
-            draw_sim(a2, sim_cells, w_um, h_um, fig.dpi)
+            pixel_um = (w_um / mask_roi.shape[1]) if mask_roi is not None and mask_roi.shape[1] else 0.065
+            draw_sim(a2, sim_cells, w_um, h_um, pixel_um)
             a2.set_title(f"twin   {len(sim_cells)}", loc="left")
         else:
             a2.set_facecolor("black"); a2.set_xticks([]); a2.set_yticks([]); a2.set_xlim(0, w_um); a2.set_ylim(h_um, 0); a2.set_aspect("equal")
