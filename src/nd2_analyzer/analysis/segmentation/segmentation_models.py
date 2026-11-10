@@ -36,6 +36,9 @@ class SegmentationModels:
     OMNIPOSE_BACT_FLUOR = "omnipose_bact_fluo"
     UNET = "unet"
     CELLPOSE = "cellpose_deepbacs"
+    # A channel that already holds binary masks (a deposited data set, or masks from another tool):
+    # every connected blob becomes one label. No model, no preprocessing; the source is recorded as imported.
+    IMPORTED_MASKS = "imported_masks"
 
     available_models = [
         OMNIPOSE_BACT_PHASE,
@@ -44,6 +47,7 @@ class SegmentationModels:
         CELLPOSE_BACT_FLUOR,
         UNET,
         CELLPOSE,
+        IMPORTED_MASKS,
     ]
 
     _instance = None
@@ -238,8 +242,20 @@ class SegmentationModels:
 
         return masks
 
+    @staticmethod
+    def label_imported_masks(image):
+        """Label the connected blobs of a binary mask image (anything above zero is cell)."""
+        from scipy import ndimage as ndi
+
+        labels, n = ndi.label(np.asarray(image) > 0)
+        dtype = np.uint16 if n < 65535 else np.int32
+        return labels.astype(dtype)
+
     def segment_images(self, images, mode, progress=None, preprocess=True, pixel_size_um=None):
         print(f"Segmenting images using {mode} model")
+
+        if mode == SegmentationModels.IMPORTED_MASKS:
+            return [self.label_imported_masks(img) for img in images]
 
         original_shape = images[0].shape
 

@@ -242,7 +242,8 @@ class SegmentationWidget(QWidget):
             SegmentationModels.CELLPOSE_BACT_PHASE,
             SegmentationModels.CELLPOSE_BACT_FLUOR,
             SegmentationModels.CELLPOSE,
-            SegmentationModels.UNET
+            SegmentationModels.UNET,
+            SegmentationModels.IMPORTED_MASKS,
         ])
 
     def select_all_positions(self):
@@ -357,6 +358,15 @@ class SegmentationWidget(QWidget):
         # Update status
         self.progress_label.setText(f"Processing T={time}, P={position}")
 
+    SEGMENTED_KEEP = 200  # frames kept in memory for export and colony detection; the cache on disk holds the rest
+
+    def _remember_segmented(self, key, image):
+        """Keep the latest segmented frames only. Keeping every frame of a 35,000 frame recording filled the machine's memory."""
+        self.segmented_storage[key] = image
+        if len(self.segmented_storage) > self.SEGMENTED_KEEP:
+            for old_key in list(self.segmented_storage.keys())[: len(self.segmented_storage) - self.SEGMENTED_KEEP]:
+                self.segmented_storage.pop(old_key, None)
+
     def on_image_ready(self, image, time, position, channel, mode):
         """Handle when images are ready"""
         print(
@@ -377,7 +387,7 @@ class SegmentationWidget(QWidget):
 
         # Store segmented image for other analysis
         if mode == "segmented" and hasattr(self, 'analysis_config'):
-            self.segmented_storage[(position, time, channel)] = image
+            self._remember_segmented((position, time, channel), image)
             self.current_segmented_image = image
             print(f"✅ Stored segmented image (shape={image.shape})")
             print(f"✅ Stored segmented image (T={time}, P={position}, shape={image.shape})")
@@ -386,13 +396,18 @@ class SegmentationWidget(QWidget):
         if not self.is_segmenting:
             return
 
+        # Only a segmentation result advances the queue. The view area also broadcasts the plain frame it shows
+        # ("normal"); counting that as the result once made the loop skip a frame and then stop for good.
+        if mode not in ("segmented", "labeled"):
+            return
+
         # Check if this is a response to one of our requests
         if (channel != self.channel or
                 position not in self.positions or
                 not (self.time_range[0] <= time <= self.time_range[1])):
             return
         if mode in ["segmented", "labeled"]:
-            self.segmented_storage[(position, time, channel)] = image
+            self._remember_segmented((position, time, channel), image)
 
         # Create a unique key for this frame
         frame_key = (time, position, channel)
@@ -412,7 +427,7 @@ class SegmentationWidget(QWidget):
         self.progress_bar.setValue(len(self.processed_frames))
 
         # Schedule next processing with a small delay
-        self.request_timer.start(50)  # 50ms delay
+        self.request_timer.start(10)  # short pause so the window stays responsive between frames
 
     def export_segmented(self, output_folder):
 
@@ -1324,5 +1339,5 @@ class SegmentationWidget(QWidget):
     def receive_external_segmentation(self, image, time, position, channel, model):
         if not hasattr(self, "segmented_storage"):
             self.segmented_storage = {}
-        self.segmented_storage[(position, time, channel)] = image
+        self._remember_segmented((position, time, channel), image)
         print(f"📥 Stored external segmentation T={time}, P={position}, C={channel}")

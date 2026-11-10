@@ -202,8 +202,9 @@ class FamilyFilm:
             mask = np.asarray(self.masks_at(t)); sl = self.crop(t)
             draw_panel(ax_img, mask, self.by_id, self.fam, t, sl, trail_n=self.trail_n, pixel_um=self.pixel_um)
             ax_img.set_title(f"cell {self.root} and {len(self.fam) - 1} descendants   frame {t}   {self.hours[t]:.2f} h", fontsize=9, loc="left")
-            # where the camera is: the whole frame, small, top right of the image (made anew: clearing the axes removes it)
-            ax_inset = ax_img.inset_axes([0.76, 0.70, 0.22, 0.28])
+            # where the camera is: the whole frame, small, top left of the image so it is read first (made anew: clearing
+            # the axes removes it)
+            ax_inset = ax_img.inset_axes([0.02, 0.70, 0.22, 0.28])
             ax_inset.imshow(mask > 0, cmap="gray", interpolation="nearest"); ax_inset.set_xticks([]); ax_inset.set_yticks([])
             from matplotlib.patches import Rectangle
             ax_inset.add_patch(Rectangle((sl[1].start, sl[0].start), sl[1].stop - sl[1].start, sl[0].stop - sl[0].start, fill=False, color=TRAIL, lw=1))
@@ -211,8 +212,8 @@ class FamilyFilm:
                 sp.set_color("#888888")
             draw_tree(ax_tree, self.by_id, self.rows, self.hours, upto=float(self.hours[t]))
             ax_tree.axvline(float(self.hours[t]), color=GREY, lw=1.2)
-            ax_tree.set_title("family tree, drawn as it happens", fontsize=9, loc="left")
-            ax_tree.text(0.99, 0.97, f"{self.alive(t)} cells alive", transform=ax_tree.transAxes, ha="right", va="top", fontsize=9)
+            n = self.alive(t)                                    # on the title row, where the time line never goes
+            ax_tree.set_title(f"{n} cell{'s' if n != 1 else ''} alive", fontsize=9, loc="right")
         return ax_img, ax_tree
 
     def frame_image(self, t: int, size=(10, 4.2), dpi=100) -> np.ndarray:

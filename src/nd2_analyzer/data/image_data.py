@@ -64,6 +64,40 @@ class ImageData:
         with cls._lock:
             return cls._instance
 
+    @staticmethod
+    def _read_ome_scale(ome_xml: str):
+        """Pixel size (as an object with .x .y .z in um) and the time step in seconds from OME-XML.
+
+        Either may be None when the file does not say. Units are converted to um and s.
+        """
+        import re
+        from types import SimpleNamespace
+
+        to_um = {"nm": 1e-3, "µm": 1.0, "um": 1.0, "micron": 1.0, "mm": 1e3, "cm": 1e4, "m": 1e6}
+        to_s = {"ms": 1e-3, "s": 1.0, "min": 60.0, "h": 3600.0}
+
+        def attr(name):
+            m = re.search(rf'\b{name}="([^"]*)"', ome_xml)
+            return m.group(1) if m else None
+
+        def length(name):
+            raw = attr(name)
+            if raw is None:
+                return None
+            unit = attr(name + "Unit") or "µm"
+            return float(raw) * to_um.get(unit, 1.0)
+
+        sx, sy, sz = length("PhysicalSizeX"), length("PhysicalSizeY"), length("PhysicalSizeZ")
+        voxel = None
+        if sx and sx > 0:
+            voxel = SimpleNamespace(x=sx, y=sy if sy else sx, z=sz if sz else 1.0)
+
+        time_increment = None
+        raw_t = attr("TimeIncrement")
+        if raw_t is not None:
+            time_increment = float(raw_t) * to_s.get(attr("TimeIncrementUnit") or "s", 1.0)
+        return voxel, time_increment
+
     @classmethod
     def create_instance(cls, data, path, is_image=True, channel_n=0) -> "ImageData":
         """Create/replace the singleton instance"""
@@ -77,6 +111,7 @@ class ImageData:
             first_path = str(first_path)
             lower_path = first_path.lower()
             voxel = None
+            time_increment_s = None
 
             # ND2 branch
             if lower_path.endswith(".nd2"):
@@ -88,20 +123,18 @@ class ImageData:
                 import tifffile
 
                 with tifffile.TiffFile(first_path) as tif:
-                    # Try OME metadata first
+                    # OME metadata carries the pixel size and the time step when the writer put them there
                     try:
                         if tif.is_ome and tif.ome_metadata:
-                            # Keep raw metadata around if useful later
-                            ome_xml = tif.ome_metadata
-                            # Pixel sizes here later if needed
-                            voxel = None
-                    except Exception:
-                        pass
+                            voxel, time_increment_s = cls._read_ome_scale(tif.ome_metadata)
+                    except Exception as exc:
+                        print(f"OME metadata not readable: {exc}")
             else:
                 raise ValueError(f"Unsupported image format: {first_path}")
 
             instance = cls(data, path, is_image, channel_n)
             instance.voxel_size = voxel
+            instance.time_increment_s = time_increment_s
             cls._instance = instance
 
         pub.sendMessage("image_data_loaded", image_data=cls._instance)
@@ -228,8 +261,19 @@ class ImageData:
                 arr = nd2.imread(path, dask=True)  # Lazy load dask
             else:
                 import tifffile
+                import zarr
+
                 store = tifffile.imread(path, aszarr=True)
-                arr = da.from_zarr(store) # Lazy load dask
+                z = zarr.open(store, mode="r")
+                with tifffile.TiffFile(path) as tif:
+                    tiff_axes = tif.series[0].axes.upper()
+                # One chunk per frame (all channels of one time point): a slider step then costs one page
+                # read, about 20 ms, instead of a dask graph over every strip of the file.
+                chunks = tuple(
+                    z.shape[i] if (ax == "C" or i >= z.ndim - 2) else 1
+                    for i, ax in enumerate(tiff_axes)
+                )
+                arr = da.from_array(z, chunks=chunks, asarray=True, fancy=False)
 
             shape = arr.shape
 
@@ -442,7 +486,11 @@ class ImageData:
             cache_path = base_dir / "segmentation_cache.h5"
             self.segmentation_cache.save(str(cache_path))
 
-        self.biofilm_metric_service.save(base_dir / "biofilm_metrics")
+        try:
+            self.biofilm_metric_service.save(base_dir / "biofilm_metrics")
+        except Exception as exc:
+            # the recording's own metadata below must be written even when this optional part fails
+            print(f"Biofilm metrics not saved: {exc}")
 
         # Save other container data
         container_data = {"image_filename": self.image_filename, "is_image": self.is_image}

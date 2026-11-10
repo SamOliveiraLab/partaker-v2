@@ -785,7 +785,7 @@ class VerifyColoniesDialog(QDialog):
         self.notebook_cancel_button=QPushButton("Cancel");self.notebook_cancel_button.setEnabled(False)
         self.notebook_cancel_button.clicked.connect(self.cancel_notebook_analysis)
         actions.addWidget(self.notebook_run_button,1);actions.addWidget(self.notebook_cancel_button);layout.addLayout(actions)
-        self.notebook_load_button=QPushButton('Load saved notebook results…')
+        self.notebook_load_button=QPushButton('Load saved results…')
         self.notebook_load_button.clicked.connect(self.load_saved_notebook_results);layout.addWidget(self.notebook_load_button)
         pink_actions=QHBoxLayout()
         self.notebook_draw_pink_button=QPushButton('Draw pink region')
@@ -1087,7 +1087,7 @@ class VerifyColoniesDialog(QDialog):
         self.notebook_status.setText(f"Complete: {len(analysis.colony_rows)} region observations, {len(analysis.frames)} frames. Dark area: {method_name}.")
         pink_count=sum(r.get('region_type')=='central_pink' for r in analysis.colony_rows)
         self.notebook_status.setText(self.notebook_status.text()+
-            (f' Pink region: {pink_count} observations; '+('accepted notebook territories applied.' if analysis.reviewed_regions else 'notebook growth applied.') if pink_count else ' Pink region unavailable: draw a seed on the first frame.'))
+            (f' Pink region: {pink_count} observations; '+('accepted territories applied.' if analysis.reviewed_regions else 'notebook growth applied.') if pink_count else ' Pink region unavailable: draw a seed on the first frame.'))
         if not analysis.colony_rows:
             self.notebook_status.setText('The selector masks were retained, but no candidate peaks passed the notebook settings. Review peak prominence and neighborhood size in Analysis settings.')
         self.status_label.setText(self.notebook_status.text())
