@@ -107,6 +107,7 @@ class ExperimentDialog(QDialog):
         main_layout.addLayout(button_layout)
 
         self.setLayout(main_layout)
+        self._update_create_enabled()
 
     def create_basic_tab(self) -> QWidget:
         """Create the basic settings tab"""
@@ -144,6 +145,59 @@ class ExperimentDialog(QDialog):
 
         details_group.setLayout(details_layout)
         layout.addWidget(details_group)
+
+        # Biofilm recordings need three things the file cannot say. The group only shows in biofilm
+        # mode, and Create stays disabled until every box is filled.
+        self.biofilm_group = QGroupBox("Biofilm recording (required)")
+        biofilm_layout = QFormLayout()
+
+        self.start_hour_spinbox = QDoubleSpinBox()
+        self.start_hour_spinbox.setRange(-1.0, 10000.0)
+        self.start_hour_spinbox.setDecimals(2)
+        self.start_hour_spinbox.setSingleStep(0.5)
+        self.start_hour_spinbox.setSuffix(" h")
+        self.start_hour_spinbox.setSpecialValueText("not set")
+        self.start_hour_spinbox.setValue(-1.0)
+        self.start_hour_spinbox.setToolTip("Hours after inoculation at the first frame of this recording")
+        self.start_hour_spinbox.valueChanged.connect(self._update_create_enabled)
+        biofilm_layout.addRow("Start after inoculation:", self.start_hour_spinbox)
+
+        self.flow_combo = QComboBox()
+        self.flow_combo.addItems(["not set", "No flow", "Flow"])
+        self.flow_combo.currentIndexChanged.connect(self._on_flow_changed)
+        biofilm_layout.addRow("Flow:", self.flow_combo)
+
+        self.shear_spinbox = QDoubleSpinBox()
+        self.shear_spinbox.setRange(0.0, 100000.0)
+        self.shear_spinbox.setDecimals(1)
+        self.shear_spinbox.setSuffix(" mPa")
+        self.shear_spinbox.setSpecialValueText("unknown")
+        self.shear_spinbox.setValue(0.0)
+        self.shear_spinbox.setToolTip("Wall shear stress; leave unknown if the chip geometry is not known")
+        self.shear_spinbox.setEnabled(False)
+        self.shear_spinbox.valueChanged.connect(self._update_create_enabled)
+        biofilm_layout.addRow("Wall shear stress:", self.shear_spinbox)
+
+        self.flow_direction_combo = QComboBox()
+        self.flow_direction_combo.addItems(["not set", "left to right", "right to left", "top to bottom", "bottom to top"])
+        self.flow_direction_combo.setEnabled(False)
+        self.flow_direction_combo.currentIndexChanged.connect(self._update_create_enabled)
+        biofilm_layout.addRow("Flow direction:", self.flow_direction_combo)
+
+        # One row per channel of the file is added by _refresh_biofilm_channels, in front of this label.
+        self.biofilm_layout = biofilm_layout
+        self.channel_role_combos = []
+        self.channel_role_labels = []
+        self.biofilm_missing_label = QLabel("")
+        self.biofilm_missing_label.setWordWrap(True)
+        biofilm_layout.addRow("", self.biofilm_missing_label)
+
+        self.biofilm_group.setLayout(biofilm_layout)
+        in_biofilm = self._in_biofilm_mode()
+        self.biofilm_group.setVisible(in_biofilm)
+        if in_biofilm:
+            self.setMinimumHeight(780)
+        layout.addWidget(self.biofilm_group)
 
         # Files group container
         self.file_group = QGroupBox("Image Files")
@@ -525,6 +579,196 @@ class ExperimentDialog(QDialog):
             self.file_group.hide()
             self.directory_group.show()
 
+    CHANNEL_ROLES = [
+        ("not set", None),
+        ("cells (phase contrast or masks)", "phase"),
+        ("cell marker (fluorescence)", "cell_marker"),
+        ("matrix dye", "matrix"),
+        ("other", "other"),
+    ]
+
+    def _in_biofilm_mode(self) -> bool:
+        """Biofilm mode comes from the main window; without one, from the saved mode choice."""
+        try:
+            from nd2_analyzer.ui.biofilms.analysis_mode import AnalysisMode, AnalysisModeConfig
+
+            parent = self.parent()
+            mode = getattr(parent, "current_analysis_mode", None)
+            if mode is None:
+                mode = AnalysisModeConfig().current_mode
+            return mode == AnalysisMode.BIOFILM_CLOUD
+        except Exception:
+            return False
+
+    @staticmethod
+    def _channels_in_file(path):
+        """Channel names of one ND2 or TIFF file, from the file's own metadata when it has them."""
+        import re as _re
+
+        lower = str(path).lower()
+        try:
+            if lower.endswith(".nd2"):
+                import nd2
+
+                with nd2.ND2File(path) as f:
+                    n = int(f.sizes.get("C", 1))
+                    names = []
+                    try:
+                        names = [c.channel.name for c in f.metadata.channels]
+                    except Exception:
+                        names = []
+                    return [names[i] if i < len(names) and names[i] else f"Channel {i}" for i in range(n)]
+            if lower.endswith((".tif", ".tiff", ".tf2", ".tf8", ".btf")):
+                import tifffile
+
+                with tifffile.TiffFile(path) as tif:
+                    series = tif.series[0]
+                    axes = series.axes.upper()
+                    n = int(series.shape[axes.index("C")]) if "C" in axes else 1
+                    names = []
+                    if tif.is_ome and tif.ome_metadata:
+                        names = _re.findall(r'<Channel[^>]*\bName="([^"]*)"', tif.ome_metadata)
+                    return [names[i] if i < len(names) and names[i] else f"Channel {i}" for i in range(n)]
+        except Exception as exc:
+            print(f"Could not read channels of {path}: {exc}")
+        return ["Channel 0"]
+
+    def _refresh_biofilm_channels(self):
+        """One role box per channel of the first file, as rows of the biofilm group."""
+        for combo in self.channel_role_combos:
+            self.biofilm_layout.removeRow(combo)
+        self.channel_role_combos = []
+        self.channel_role_labels = []
+        if not self.file_paths:
+            self._update_create_enabled()
+            return
+        names = self._channels_in_file(self.file_paths[0])
+        saved = (getattr(self.experiment, "biofilm", None) or {}).get("channel_roles", {}) if self.experiment else {}
+        missing_row = self.biofilm_layout.rowCount() - 1  # the "Needed" label stays last
+        for i, name in enumerate(names):
+            combo = QComboBox()
+            for label, _key in self.CHANNEL_ROLES:
+                combo.addItem(label)
+            key = saved.get(str(i))
+            if key is not None:
+                for j, (_label, k) in enumerate(self.CHANNEL_ROLES):
+                    if k == key:
+                        combo.setCurrentIndex(j)
+            combo.currentIndexChanged.connect(self._update_create_enabled)
+            self.biofilm_layout.insertRow(missing_row + i, f"Channel {i} ({name}):", combo)
+            self.channel_role_combos.append(combo)
+            self.channel_role_labels.append(name)
+        self._update_create_enabled()
+
+    def _on_flow_changed(self, _index=None):
+        has_flow = self.flow_combo.currentText() == "Flow"
+        self.shear_spinbox.setEnabled(has_flow)
+        self.flow_direction_combo.setEnabled(has_flow)
+        self._update_create_enabled()
+
+    def _biofilm_missing(self):
+        """What still has to be filled before a biofilm recording can be created, in plain words."""
+        missing = []
+        if self.start_hour_spinbox.value() < 0:
+            missing.append("start hour after inoculation")
+        if self.flow_combo.currentText() == "not set":
+            missing.append("flow: yes or no")
+        elif self.flow_combo.currentText() == "Flow" and self.flow_direction_combo.currentText() == "not set":
+            missing.append("flow direction")
+        if not self.channel_role_combos:
+            missing.append("a file, to list its channels")
+        else:
+            roles = [self.CHANNEL_ROLES[c.currentIndex()][1] for c in self.channel_role_combos]
+            unset = [str(i) for i, r in enumerate(roles) if r is None]
+            if unset:
+                missing.append("role of channel " + ", ".join(unset))
+            elif not any(r in ("phase", "cell_marker") for r in roles):
+                missing.append("one channel that shows the cells (phase contrast or cell marker)")
+        return missing
+
+    def _update_create_enabled(self, *_args):
+        if not hasattr(self, "biofilm_group") or self.biofilm_group.isHidden():
+            self.create_button.setEnabled(True)
+            if hasattr(self, "biofilm_missing_label"):
+                self.biofilm_missing_label.setText("")
+            return
+        missing = self._biofilm_missing()
+        self.create_button.setEnabled(not missing)
+        self.biofilm_missing_label.setText(("Needed: " + "; ".join(missing)) if missing else "Ready.")
+
+    def biofilm_settings(self):
+        """The biofilm block for the Experiment, or None outside biofilm mode."""
+        if not hasattr(self, "biofilm_group") or self.biofilm_group.isHidden():
+            return None
+        has_flow = self.flow_combo.currentText() == "Flow"
+        roles = {str(i): self.CHANNEL_ROLES[c.currentIndex()][1] for i, c in enumerate(self.channel_role_combos)}
+        labels = {str(i): name for i, name in enumerate(self.channel_role_labels)}
+        return {
+            "start_hour": float(self.start_hour_spinbox.value()),
+            "channel_roles": roles,
+            "channel_labels": labels,
+            "flow": {
+                "present": has_flow,
+                "shear_mpa": float(self.shear_spinbox.value()) if has_flow and self.shear_spinbox.value() > 0 else None,
+                "direction": self.flow_direction_combo.currentText() if has_flow else None,
+            },
+        }
+
+    @staticmethod
+    def _frames_in_file(path) -> int | None:
+        """Number of time points in one ND2 or TIFF file, or None when it cannot be read quickly."""
+        try:
+            lower = str(path).lower()
+            if lower.endswith(".nd2"):
+                import nd2
+
+                with nd2.ND2File(path) as f:
+                    return int(f.sizes.get("T", 1))
+            if lower.endswith((".tif", ".tiff", ".tf2", ".tf8", ".btf")):
+                import tifffile
+
+                with tifffile.TiffFile(path) as tif:
+                    series = tif.series[0]
+                    axes = series.axes.upper()
+                    return int(series.shape[axes.index("T")]) if "T" in axes else 1
+        except Exception as exc:
+            print(f"Could not count frames in {path}: {exc}")
+        return None
+
+    def _set_time_range_from_files(self):
+        """The analysis range covers the whole recording unless the user narrows it."""
+        if not self.file_paths:
+            return
+        n = self._frames_in_file(self.file_paths[0])
+        if n:
+            self.time_start_spinbox.setValue(0)
+            self.time_end_spinbox.setValue(max(0, n - 1))
+
+    @staticmethod
+    def _is_ome(path) -> bool:
+        return str(path).lower().endswith((".ome.tif", ".ome.tiff", ".ome.tf2", ".ome.tf8", ".ome.btf"))
+
+    def _apply_ome_defaults(self) -> bool:
+        """OME-TIFF files go straight to the lazy loader, and the time step comes from the file when it says.
+
+        Returns True when every file in the list is OME-TIFF, so the callers skip the filename detection.
+        """
+        if not self.file_paths or not all(self._is_ome(f) for f in self.file_paths):
+            return False
+        self.import_mode = "File"
+        try:
+            import tifffile
+            from nd2_analyzer.data.image_data import ImageData
+
+            with tifffile.TiffFile(self.file_paths[0]) as tif:
+                if tif.is_ome and tif.ome_metadata:
+                    _voxel, dt = ImageData._read_ome_scale(tif.ome_metadata)
+                    if dt and dt > 0:
+                        self.time_step_spinbox.setValue(float(dt))
+        except Exception as exc:
+            print(f"OME metadata not readable: {exc}")
+        return True
+
     def _populate_from_files(self, paths, skip_naming_detection=False):
         """Pre-populate the dialog with dropped files."""
         self.import_mode_combo.setCurrentText("File")
@@ -538,6 +782,11 @@ class ExperimentDialog(QDialog):
         if not self.name_edit.text().strip():
             first_name = os.path.splitext(os.path.basename(paths[0]))[0]
             self.name_edit.setText(first_name)
+
+        self._set_time_range_from_files()
+        self._refresh_biofilm_channels()
+        if self._apply_ome_defaults():
+            return
 
         if all(f.lower().endswith((".tif", ".tiff")) for f in self.file_paths):
             if not skip_naming_detection:
@@ -610,8 +859,12 @@ class ExperimentDialog(QDialog):
                 self.file_paths.append(file_path)
                 self.file_list_widget.addItem(os.path.basename(file_path))
 
+            self._set_time_range_from_files()
+            self._refresh_biofilm_channels()
             # Try to detect TPC from filenames first (same as drag-drop path)
-            if all(f.lower().endswith((".tif", ".tiff")) for f in self.file_paths):
+            if self._apply_ome_defaults():
+                pass
+            elif all(f.lower().endswith((".tif", ".tiff")) for f in self.file_paths):
                 from nd2_analyzer.ui.app import App
                 file_map = App.reconstruct_file_map_from_paths(self.file_paths)
                 all_matched = file_map and len(file_map) == len(self.file_paths)
@@ -785,6 +1038,18 @@ class ExperimentDialog(QDialog):
 
         self.focus_conversion_help.setText(helper_text)
 
+    def _load_biofilm_settings(self, block):
+        if not block:
+            return
+        self.start_hour_spinbox.setValue(float(block.get("start_hour", -1.0)))
+        flow = block.get("flow") or {}
+        self.flow_combo.setCurrentText("Flow" if flow.get("present") else "No flow")
+        if flow.get("shear_mpa"):
+            self.shear_spinbox.setValue(float(flow["shear_mpa"]))
+        if flow.get("direction"):
+            self.flow_direction_combo.setCurrentText(flow["direction"])
+        self._refresh_biofilm_channels()
+
     def load_experiment_data(self):
         """Load data from existing experiment into the form"""
         if not self.experiment:
@@ -826,6 +1091,8 @@ class ExperimentDialog(QDialog):
         # Focus loss intervals
         self.focus_loss_intervals = list(self.experiment.focus_loss_intervals)
         self._refresh_focus_loss_list()
+
+        self._load_biofilm_settings(getattr(self.experiment, "biofilm", None))
 
     def create_experiment(self):
         """Create or update experiment from form data"""
@@ -885,7 +1152,8 @@ class ExperimentDialog(QDialog):
                 component_intervals=self.component_intervals,
                 focus_loss_intervals=self.focus_loss_intervals,
                 file_map=self.file_map,
-                import_mode=self.import_mode
+                import_mode=self.import_mode,
+                biofilm=self.biofilm_settings(),
             )
 
             from nd2_analyzer.data.image_data import ImageData

@@ -40,6 +40,7 @@ class Experiment:
             focus_loss_intervals: Optional[List[Tuple[float, float]]] = None,
             file_map: Optional[Dict] = None,
             import_mode: Optional[str] = None,
+            biofilm: Optional[Dict] = None,
     ):
         """
         Initialize an experiment with analysis configuration.
@@ -67,6 +68,10 @@ class Experiment:
         self.epsilon = epsilon
         self.file_map = file_map or {}
         self.import_mode = import_mode
+        # Biofilm recordings carry what the stage pages need and the file cannot say:
+        # start_hour (h after inoculation at frame 0), channel_roles ({"0": "phase", ...}),
+        # flow ({"present": bool, "shear_mpa": float or None, "direction": str or None}).
+        self.biofilm = biofilm
 
         # Set defaults for optional parameters
         self.selected_positions = selected_positions if selected_positions is not None else [0, 1, 2, 3]
@@ -217,6 +222,7 @@ class Experiment:
             "rpu_values": self.rpu_values,
             "component_intervals": self.component_intervals,
             "focus_loss_intervals": self.focus_loss_intervals,
+            "biofilm": self.biofilm,
             "has_roi": roi_mask is not None,
             "has_registration": registration_offsets is not None,
             "crop_coordinates": crop_coordinates,
@@ -308,6 +314,7 @@ class Experiment:
             rpu_values=config.get("rpu_values"),
             component_intervals=config.get("component_intervals"),
             focus_loss_intervals=config.get("focus_loss_intervals", []),
+            biofilm=config.get("biofilm"),
         )
 
         # Load ROI mask if it exists

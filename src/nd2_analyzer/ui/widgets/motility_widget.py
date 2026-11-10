@@ -41,6 +41,14 @@ from nd2_analyzer.analysis.tracking.tracking import (
 # Modify in motility_widget.py
 
 
+def export_um_per_px(image_data, default=0.07):
+    """um per pixel for the exported x_um/y_um: the file's pixel size, or the default when the file
+    gives none (an uncalibrated ND2 reports 1.0)."""
+    pixel_size = getattr(image_data, "pixel_size_um", None)
+    um = pixel_size() if callable(pixel_size) else None
+    return um if um and um != 1.0 else default
+
+
 class MotilityDialog(QDialog):
     """
     Dialog for analyzing and visualizing cell motility.
@@ -1756,6 +1764,8 @@ class MotilityDialog(QDialog):
                 # Cache for metrics to avoid repeated queries
                 metrics_cache = {}
 
+                um_per_px = export_um_per_px(self.image_data, self.calibration)
+
                 print(f"Starting export with morphology matching for {len(tracks)} tracks")
                 print(f"Total positions to process: {total_positions}")
                 print(f"Position: {p}, Channel: {c}")
@@ -1782,8 +1792,8 @@ class MotilityDialog(QDialog):
                             'position_in_track': i,
                             'x_pixels': x,
                             'y_pixels': y,
-                            'x_um': x * 0.07,  # Default calibration
-                            'y_um': y * 0.07,
+                            'x_um': x * um_per_px,
+                            'y_um': y * um_per_px,
                             'parent_id': parent_id,
                             'has_children': len(children_ids) > 0,
                             'children_ids': str(children_ids) if children_ids else '',

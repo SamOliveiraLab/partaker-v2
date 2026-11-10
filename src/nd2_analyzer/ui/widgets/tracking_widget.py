@@ -826,7 +826,8 @@ class TrackingWidget(QWidget):
         ax.set_xlabel("X Position")
         ax.set_ylabel("Y Position")
 
-        self.figure.tight_layout()
+        if min(self.figure.get_size_inches()) > 0:     # a tab never shown has no size yet; tight_layout would fail
+            self.figure.tight_layout()
         self.canvas.draw()
 
     def show_lineage_dialog(self):

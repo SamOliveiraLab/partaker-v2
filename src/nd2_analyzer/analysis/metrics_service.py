@@ -231,7 +231,9 @@ class MetricsService:
                 fluorescence_channel = 0
                 fluorescence_level = float(np.mean(pix)) if pix.size else 0.0
 
-            elif has_fluorescence:
+            # A frame with no fluorescence image (all zeros, e.g. between timed fluorescence shots)
+            # keeps channel -1 and level 0 instead of being called YFP
+            elif has_fluorescence and max_signal > 0:
                 # compute BOTH channels exist
                 if _frame.mcherry is not None and _frame.yfp is not None:
                     mcherry_fluo = _frame.mcherry[mask].mean()

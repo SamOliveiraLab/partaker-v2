@@ -134,6 +134,13 @@ class App(QMainWindow):
         from nd2_analyzer.ui.biofilms.stages.tab import BiofilmStagesTab
         self.biofilm_stages_tab = BiofilmStagesTab()
         self.tab_widget.addTab(self.biofilm_stages_tab, "Biofilm Stages")
+        self.biofilm_stages_tab.connect_main_window(
+            set_frame=lambda frame: self.viewArea.slider_t.setValue(self.viewArea._map_frame_to_slider(frame)),
+            tracking_widget=lambda: getattr(getattr(self, "trackingTab", None), "tracking_widget", None),
+        )
+        # and the other way: the stage strip's cursor follows the T slider
+        self.viewArea.slider_t.valueChanged.connect(
+            lambda v: self.biofilm_stages_tab.follow_frame(self.viewArea._map_slider_to_frame(v)))
 
     # ── Drag & Drop ──────────────────────────────────────────────────
 
@@ -524,7 +531,7 @@ class App(QMainWindow):
             self.init_biofilm_cloud_tabs()
 
     def show_experiment_dialog(self):
-        experiment = ExperimentDialog()
+        experiment = ExperimentDialog(parent=self)
         experiment.exec_()
 
     def show_about_dialog(self):
@@ -596,10 +603,8 @@ class App(QMainWindow):
                     # Get ROI from appstate
                     roi_mask = self.appstate.roi_mask if hasattr(self.appstate, 'roi_mask') else None
 
-                    # Get registration offsets from image_data
-                    registration_offsets = None
-                    if self.appstate.image_data and hasattr(self.appstate.image_data, 'registration_offsets'):
-                        registration_offsets = self.appstate.image_data.registration_offsets
+                    # Get registration offsets from the loaded image data (Image > Registration stores them there)
+                    registration_offsets = getattr(ImageData.get_instance(), 'registration_offsets', None)
 
                     # Get crop coordinates from segmentation service
                     crop_coordinates = None
@@ -619,10 +624,17 @@ class App(QMainWindow):
 
                 traceback.print_exc()
 
+            # Save the Seeding page's results next to the experiment
+            try:
+                if hasattr(self, "biofilm_stages_tab"):
+                    self.biofilm_stages_tab.save_results(folder_path)
+            except Exception as e:
+                print(f"ERROR: Failed to save seeding results: {str(e)}")
+
             # Save tracking data
             try:
                 print(f"DEBUG: Saving tracking data to {folder_path}")
-                tracking_saved = self.trackingTab.tracking_widget.save_tracking_data(folder_path)
+                tracking_saved = (self.trackingTab.tracking_widget.save_tracking_data(folder_path) if hasattr(self, "trackingTab") else False)
                 if tracking_saved:
                     print(f"DEBUG: Tracking data saved successfully")
                 else:
@@ -742,7 +754,7 @@ class App(QMainWindow):
                 tracking_loaded = False
                 try:
                     print(f"DEBUG: Loading tracking data from {folder_path}")
-                    tracking_loaded = self.trackingTab.tracking_widget.load_tracking_data(folder_path)
+                    tracking_loaded = (self.trackingTab.tracking_widget.load_tracking_data(folder_path) if hasattr(self, "trackingTab") else False)
                     if tracking_loaded:
                         print(f"DEBUG: Tracking data loaded successfully")
                     else:
