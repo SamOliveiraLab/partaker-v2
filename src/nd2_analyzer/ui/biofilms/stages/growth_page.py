@@ -48,6 +48,7 @@ class GrowthPage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.shared = None                         # see set_shared
         self.measured = None; self.film = None; self.hour = 0.0
         self.step_states = {s: ("todo", "") for s in STEPS}
         self.play_timer = QTimer(self); self.play_timer.setInterval(PLAY_TICK_MS); self.play_timer.timeout.connect(self._play_step)
@@ -148,6 +149,11 @@ class GrowthPage(QWidget):
         self.every_spin.blockSignals(True); self.every_spin.setMinimum(step_h); self.every_spin.setSingleStep(step_h)
         self.every_spin.setValue(step_h if value_h is None else value_h); self.every_spin.blockSignals(False)
 
+    def set_shared(self, shared):
+        """What another page measured and this page's plots also draw: {"cells_in_pct": (hours, mean, s.d.)} from the
+        Microcolonies tab's measure of every position (Figure 5 b), or None."""
+        self.shared = shared; self._render_plots()
+
     def set_measured(self, measured, film=None):
         """The growth-states measure of the recording (None clears the page)."""
         self.measured, self.film = measured, film; self.candidates.clear(); self.play_timer.stop(); self.strip_play_button.setText("Play")
@@ -226,7 +232,7 @@ class GrowthPage(QWidget):
                 canvas.figure.clear(); ax = canvas.figure.add_axes([0, 0, 1, 1]); ax.axis("off")
                 ax.text(0.5, 0.5, "Measure the growth states to see this plot", ha="center", va="center", color="#777777", transform=ax.transAxes); canvas.draw_idle()
             else:
-                canvas.render(GP.DRAW[combo.currentData()], self.measured, self.hour, self.selected())
+                canvas.render(GP.DRAW[combo.currentData()], self.measured, self.hour, self.selected(), shared=self.shared)
 
     def _render_film(self):
         self.film_canvas.render(draw_film_strip, self.film if self.measured is not None and self.selected() is not None else None, 4, self.hour)

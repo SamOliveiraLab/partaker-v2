@@ -109,7 +109,7 @@ def test_the_page_lists_the_positions_and_its_cards_follow_the_cursor(page):
     assert page.cards[4].value.text() == "5 cells at 24 h" and page.cards[6].value.text() == "0.0 % at 24 h"
     page.set_hour(34.5)
     assert page.cards[4].value.text() == "19 cells at 34.5 h"
-    assert [c.currentText() for c in page.plot_combos] == ["Number of cells and Th2", "Matrix stain and Th1"]
+    assert [c.currentText() for c in page.plot_combos] == ["Cell count and growth rate, Th2", "Microcolonies and matrix stain"]
 
 
 def test_the_page_asks_for_the_dye_frames_the_measure_and_the_window(page):

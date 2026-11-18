@@ -45,6 +45,7 @@ class BiofilmStagesTab(QWidget):
         self.growth_controller = GrowthController(self.growth_page, self.controller.recording_info, self)
         self.microcolony_controller.stain_source = self.growth_controller.counted_at_for      # the matrix stain box of the Microcolonies window
         self.growth_controller.measured_changed.connect(self._share_th1)                      # one Th1 in the tool: the Maturation tab's
+        self.microcolony_controller.metrics_changed.connect(self._share_microcolonies)        # Figure 5 b: cells in microcolonies, on the Maturation plot
         self.live_pages = (self.seeding_page, self.microcolony_page, self.growth_page)
         self.pages = [self.seeding_page, self.microcolony_page, self.growth_page, DispersionPage()]
         for p in self.pages:
@@ -102,6 +103,12 @@ class BiofilmStagesTab(QWidget):
         """The Microcolonies strip splits at the Th1 the Maturation tab measured (the mean of its positions)."""
         measured = self.growth_controller.measured
         self.microcolony_page.set_th1(measured.th1["th1_h"] if measured is not None and measured.th1 else None)
+
+    def _share_microcolonies(self):
+        """The Maturation plot "Microcolonies and matrix stain" also draws the cells in microcolonies, once the
+        Microcolonies tab has measured every position."""
+        metrics = self.microcolony_controller.metrics
+        self.growth_page.set_shared({"cells_in_pct": metrics.mean_of("cells_in_pct")} if metrics is not None else None)
 
     def save_results(self, folder: str):
         """Write the pages' results next to the experiment when the user saves: what the Microcolonies and Maturation

@@ -109,6 +109,7 @@ class MetricsWorker(QThread):
 
 
 class MicrocolonyController(QObject):
+    metrics_changed = Signal()                 # the all-positions measure arrived, was loaded or was cleared
     # the tool's messages and the methods that hear them; each asks for the names the message carries (as the Seeding
     # controller does), because the message bus takes the shape of a message from whoever listens first
     LISTENS = (("experiment_loaded", "on_experiment_loaded"), ("image_data_loaded", "on_new_recording"),
@@ -154,7 +155,7 @@ class MicrocolonyController(QObject):
 
     def on_new_recording(self, image_data):
         self.generation += 1; self.tracked = {}; self.drawn = {}; self.metrics = None; self.close_window()
-        self.page.set_tracks(None); self.page.set_metrics(None); self.refresh()
+        self.page.set_tracks(None); self.page.set_metrics(None); self.refresh(); self.metrics_changed.emit()
 
     def masks(self, position: int):
         """(array, frames): the mask cache of the model with the most frames of this position, and those frames."""
@@ -303,7 +304,7 @@ class MicrocolonyController(QObject):
         self.metrics = metrics; self.show_metrics(metrics); self.refresh()
 
     def show_metrics(self, metrics):
-        self.page.set_metrics(metrics)
+        self.page.set_metrics(metrics); self.metrics_changed.emit()
         if metrics is None:
             return
         hours = [h for p in metrics.positions for h in metrics.hours[p]]; n = len(metrics.positions)
