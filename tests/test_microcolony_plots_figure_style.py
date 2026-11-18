@@ -65,8 +65,8 @@ def test_the_metric_plots_carry_the_figures_axis_names(measured, key):
     fig = figure(); XP.DRAW[key](fig, measured, cursor_h=27.0); ax = fig.axes[0]
     assert ax.get_ylabel() == NAMES[key] and ax.get_xlabel() == "Time (h)"
     assert red_cursor(ax) == ([27.0] if key != "m_spacing" else [])      # the spacing stops before 27 h here: two positions with one or two microcolonies
-    main = [l for l in ax.lines if l.get_marker() == "o" and len(l.get_xdata()) > 2]
-    assert main and (main[-1].get_color() in (FS.INK, FS.MICROCOLONY_ORANGE))                 # ink (orange for cells in microcolonies), not the old blue
+    main = [l for l in ax.lines if l.get_marker() == "o" and len(l.get_xdata()) > (0 if key == "m_spacing" else 2)]   # the spacing is one dot here
+    assert main and (main[0 if key == "m_spacing" else -1].get_color() in (FS.INK, FS.MICROCOLONY_ORANGE))   # ink (orange for cells in microcolonies), not the old blue
     assert SP.collisions(fig) == []
 
 
