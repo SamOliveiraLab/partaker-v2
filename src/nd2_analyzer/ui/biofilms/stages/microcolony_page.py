@@ -29,7 +29,7 @@ class MicrocolonyPage(QWidget):
     track_requested = Signal()
     window_requested = Signal(object)          # the selected microcolony
     selection_changed = Signal(object)
-    export_requested = Signal(str)             # "film" or "image"
+    export_requested = Signal(str)             # "film", "image" or "numbers"
     compare_requested = Signal()               # manual selection next to automatic detection, on the frame at the cursor
     measure_requested = Signal()               # the metrics of every segmented position
 
@@ -86,7 +86,10 @@ class MicrocolonyPage(QWidget):
             b.setEnabled(False); buttons.addWidget(b, k // 2, k % 2)
         self.compare_button = QPushButton("Manual selection"); self.compare_button.setEnabled(False)
         self.compare_button.setToolTip("Draw outlines around the microcolonies you see on the frame at the cursor, next to what the tool found")
-        self.compare_button.clicked.connect(self.compare_requested.emit); buttons.addWidget(self.compare_button, 2, 0, 1, 2)
+        self.compare_button.clicked.connect(self.compare_requested.emit); buttons.addWidget(self.compare_button, 2, 0)
+        self.numbers_button = QPushButton("Numbers"); self.numbers_button.setEnabled(False)
+        self.numbers_button.setToolTip("Writes the numbers behind every plot of this page as CSV files into a folder you choose")
+        self.numbers_button.clicked.connect(lambda: self.export_requested.emit("numbers")); buttons.addWidget(self.numbers_button, 2, 1)
         left.addLayout(buttons)
         self.film_canvas = PlotCanvas(size=(3.3, 1.25), min_height=115); self.film_canvas.setMaximumHeight(135); left.addWidget(self.film_canvas)
         left_box = QWidget(); left_box.setLayout(left); left_box.setFixedWidth(LEFT_COLUMN_PX); row.addWidget(left_box)
@@ -154,7 +157,7 @@ class MicrocolonyPage(QWidget):
 
     def set_metrics(self, metrics):
         """The metrics of every measured position (None clears their plots)."""
-        self.metrics = metrics; self._render_plots()
+        self.metrics = metrics; self._enable_buttons(); self._render_plots()
 
     def set_tracks(self, tracks, film=None):
         """The followed microcolonies of the recording (None clears the page)."""
@@ -194,6 +197,7 @@ class MicrocolonyPage(QWidget):
         on = self.tracks is not None and self.selected() is not None
         for b in (self.follow_button, self.play_button, self.film_button, self.image_button):
             b.setEnabled(on)
+        self.numbers_button.setEnabled(self.tracks is not None or self.metrics is not None)
 
     def _on_selection(self, _current=None, _previous=None):
         identity = self.selected()

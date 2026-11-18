@@ -20,6 +20,32 @@ LONE, OTHER = "#3c3c3c", "#707070"                     # a cell in no microcolon
 TAG_GREEN = "#39ff39"
 STAIN_GREEN = "#1fbf3f"                                # the matrix stain, as in Figure 4
 PAD_UM = 3.0
+STRIP_TILE_PX = 160            # a tile of the page's film strip is drawn about this many pixels wide
+IMAGE_SHARE = 0.37             # the picture takes this share of the width of the window's figure
+
+
+def step_for(side_px: int, shown_px: float) -> int:
+    """Every how many pixels of a box side_px wide to draw, for a picture shown shown_px wide: about as fine as it is
+    shown (the nearest whole step, so a picture is enlarged at most 1.5 times on screen)."""
+    return max(1, int(round(side_px / max(float(shown_px), 1.0))))
+
+
+def extents(tracks: MicrocolonyTracks, labels_at: Callable[[int], np.ndarray]) -> Dict[int, Dict[int, tuple]]:
+    """identity -> frame -> (y0, y1, x0, x1): the box on the canvas that holds its cells at that frame. Read once for all
+    the frames and kept with the tracks, so picking another microcolony does not read the frames again."""
+    kept = getattr(tracks, "_extents", None)
+    if kept is None:
+        kept = {}
+        for t in tracks.frames:
+            lab = np.asarray(labels_at(t)); lut = np.zeros(int(lab.max()) + 1, np.int32); oy, ox = tracks.offsets[t]
+            for label, identity in tracks.cell_identity.get(t, {}).items():
+                if label < lut.size:
+                    lut[label] = identity
+            for identity, where in enumerate(ndi.find_objects(lut[lab]), 1):
+                if where is not None:
+                    kept.setdefault(identity, {})[t] = (where[0].start + oy, where[0].stop - 1 + oy, where[1].start + ox, where[1].stop - 1 + ox)
+        tracks._extents = kept
+    return kept
 
 
 class MicrocolonyFilm:
@@ -33,10 +59,11 @@ class MicrocolonyFilm:
         self._cells: Dict[int, np.ndarray] = {}
         self.counted_at: Optional[Callable[[int], np.ndarray]] = None      # frame -> the matrix mask of the frame, when it has been measured
         self.show_stain = False; self._counted: Dict[int, np.ndarray] = {}; self._stain_series = None
+        self._small: Dict[tuple, tuple] = {}                               # the coarse pictures of the film strip, kept
 
     def set_stain(self, counted_at: Optional[Callable[[int], np.ndarray]]):
         """Where the matrix stain comes from (the Maturation tab's measure of this position); None when there is none."""
-        self.counted_at = counted_at; self._counted = {}; self._stain_series = None
+        self.counted_at = counted_at; self._counted = {}; self._stain_series = None; self._small = {}
         if counted_at is None:
             self.show_stain = False
 
@@ -75,7 +102,7 @@ class MicrocolonyFilm:
         last = max(last, first)
         self.frames = [t for t in self.tracks.frames if first <= t <= last]
         self.box = self._box()
-        self._cells_series = None; self._stain_series = None
+        self._cells_series = None; self._stain_series = None; self._small = {}
 
     def _layout(self, r: int) -> List[int]:
         above, below = [], []
@@ -128,12 +155,11 @@ class MicrocolonyFilm:
 
     def _box(self):
         """A square on the canvas that holds the followed microcolonies in every frame of the film, with a margin."""
-        fam = set(self.order); y0 = x0 = 10 ** 9; y1 = x1 = 0
-        for t in self.frames:
-            lab = self.cells(t); lut = np.isin(self._identity_of_labels(t, int(lab.max())), list(fam)); ys, xs = np.nonzero(lut[lab])
-            if ys.size:
-                oy, ox = self.tracks.offsets[t]
-                y0, y1, x0, x1 = min(y0, ys.min() + oy), max(y1, ys.max() + oy), min(x0, xs.min() + ox), max(x1, xs.max() + ox)
+        fam = set(self.order); y0 = x0 = 10 ** 9; y1 = x1 = 0; where = extents(self.tracks, self.labels_at); film = set(self.frames)
+        for i in fam:
+            for t, (a0, a1, b0, b1) in where.get(i, {}).items():
+                if t in film:
+                    y0, y1, x0, x1 = min(y0, a0), max(y1, a1), min(x0, b0), max(x1, b1)
         Hc, Wc = self.tracks.canvas_shape
         if y1 <= y0:
             return (0, Hc, 0, Wc)
@@ -160,23 +186,41 @@ class MicrocolonyFilm:
         return int(abs(owners[yi, xi]))
 
     # ------------------------------------------------------------------ drawing
-    def picture(self, t: int):
-        """(rgb of the box, [(soft outline, colour, identity)]) at frame t."""
-        owners, lab = self.owners_image(t); rgb = np.zeros((*lab.shape, 3)); rgb[lab > 0] = to_rgb(LONE); rgb[owners < 0] = to_rgb(OTHER)
-        lines = []; r_px = self.settings.gap_um / 2 / self.pixel_um
-        for r in [int(v) for v in np.unique(owners) if v > 0]:
-            mine = owners == r; rgb[mine] = to_rgb(self.palette.get(r, OTHER))
+    def picture(self, t: int, step: int = 1):
+        """(rgb of the box, [(soft outline, colour, identity, centre in box pixels)]) at frame t. step: every step-th
+        pixel of the box, for a picture that is shown small (the film strip, the window on a full field). The outline of
+        each microcolony is worked out in its own corner of the box, which gives the same picture as the whole box."""
+        step = max(1, int(step)); key = (int(t), step, bool(self.show_stain))
+        if key in self._small:
+            return self._small[key]
+        owners, lab = self.owners_image(t)
+        if step > 1:
+            owners, lab = owners[::step, ::step], lab[::step, ::step]
+        rgb = np.zeros((*lab.shape, 3)); rgb[lab > 0] = to_rgb(LONE); rgb[owners < 0] = to_rgb(OTHER)
+        px = self.pixel_um * step; r_px = self.settings.gap_um / 2 / px; sigma = 0.45 / px; lines = []
+        margin = int(np.ceil(r_px + 4 * sigma)) + 2                       # beyond it the soft outline is exactly zero
+        for r, where in enumerate(ndi.find_objects(np.where(owners > 0, owners, 0).astype(np.int32)), 1):
+            if where is None:
+                continue
+            y0, y1 = max(where[0].start - margin, 0), min(where[0].stop + margin, lab.shape[0])
+            x0, x1 = max(where[1].start - margin, 0), min(where[1].stop + margin, lab.shape[1]); part = (slice(y0, y1), slice(x0, x1))
+            mine = owners[part] == r; colour = np.array(to_rgb(self.palette.get(r, OTHER))); corner = rgb[part]; corner[mine] = colour
             grown = ndi.distance_transform_edt(~mine) <= r_px
-            soft = ndi.gaussian_filter(grown.astype(np.float32), 0.45 / self.pixel_um)
-            shade = np.clip(soft * 1.6, 0, 1)[..., None] * 0.30; back = (lab == 0)[..., None]
-            rgb = np.where(back, rgb * (1 - shade) + np.array(to_rgb(self.palette.get(r, OTHER))) * shade, rgb)
-            lines.append((soft, self.palette.get(r, OTHER), r, ndi.center_of_mass(mine)))
+            near = ndi.gaussian_filter(grown.astype(np.float32), sigma)
+            shade = np.clip(near * 1.6, 0, 1)[..., None] * 0.30; back = (lab[part] == 0)[..., None]
+            rgb[part] = np.where(back, corner * (1 - shade) + colour * shade, corner)
+            soft = np.zeros(lab.shape, np.float32); soft[part] = near; cy, cx = ndi.center_of_mass(mine)
+            lines.append((soft, self.palette.get(r, OTHER), r, ((cy + y0) * step, (cx + x0) * step)))
         if self.show_stain and self.counted_at is not None:               # the cells dimmed, the matrix stain in green over them
             y0, y1, x0, x1 = self.box; oy, ox = self.tracks.offsets[t]; c = self.counted(t); on = np.zeros((y1 - y0, x1 - x0), np.float32)
             fy0, fy1, fx0, fx1 = max(y0 - oy, 0), min(y1 - oy, c.shape[0]), max(x0 - ox, 0), min(x1 - ox, c.shape[1])
             if fy1 > fy0 and fx1 > fx0:
                 on[fy0 + oy - y0:fy1 + oy - y0, fx0 + ox - x0:fx1 + ox - x0] = c[fy0:fy1, fx0:fx1]
-            a = ndi.gaussian_filter(on, 1.5)[..., None] * 0.62; rgb = rgb * 0.6 * (1 - a) + np.array(to_rgb(STAIN_GREEN)) * a
+            a = ndi.gaussian_filter(on[::step, ::step], 1.5 / step)[..., None] * 0.62; rgb = rgb * 0.6 * (1 - a) + np.array(to_rgb(STAIN_GREEN)) * a
+        if step >= 4:                                                     # small: kept, so the strip does not work them out at every cursor move
+            if len(self._small) > 60:
+                self._small.pop(next(iter(self._small)))
+            self._small[key] = (rgb, lines)
         return rgb, lines
 
     def scale_um(self) -> float:
@@ -189,16 +233,20 @@ class MicrocolonyFilm:
         return self._cells_series
 
     @SP.with_house_style
-    def draw(self, fig, t: int):
-        """One frame of the film. Returns (image axes, history axes)."""
+    def draw(self, fig, t: int, finest: bool = False):
+        """One frame of the film. Returns (image axes, history axes). The picture is drawn as fine as the figure shows
+        it; finest: every pixel, for an image that is saved larger than it is shown."""
         import matplotlib.patheffects as pe
-        fig.clear(); hours = self.tracks.hours; now = hours[t]; rgb, lines = self.picture(t); h, w = rgb.shape[:2]
-        aspect = fig.get_figwidth() / fig.get_figheight(); ax = fig.add_axes([0.03, 0.05, 0.37, 0.37 * aspect])
-        ax.imshow(rgb, interpolation="antialiased"); ax.set_xticks([]); ax.set_yticks([])
+        fig.clear(); hours = self.tracks.hours; now = hours[t]; h, w = self.box[1] - self.box[0], self.box[3] - self.box[2]
+        step = 1 if finest else step_for(w, IMAGE_SHARE * fig.get_figwidth() * fig.dpi)
+        rgb, lines = self.picture(t, step)
+        aspect = fig.get_figwidth() / fig.get_figheight(); ax = fig.add_axes([0.03, 0.05, IMAGE_SHARE, IMAGE_SHARE * aspect])
+        ax.imshow(rgb, interpolation="antialiased", extent=(-0.5, w - 0.5, h - 0.5, -0.5)); ax.set_xticks([]); ax.set_yticks([])   # in box pixels
         for s in ax.spines.values():
             s.set_visible(False)
         for soft, colour, r, (cy, cx) in lines:
-            ax.contour(soft, levels=[0.22], colors=[colour], linewidths=1.2)
+            ax.contour(np.arange(soft.shape[1]) * step + (step - 1) / 2, np.arange(soft.shape[0]) * step + (step - 1) / 2, soft,
+                       levels=[0.22], colors=[colour], linewidths=1.2)
             ax.text(cx, cy, str(r), color=TAG_GREEN, fontsize=9.5, fontweight="bold", ha="center", va="center", zorder=6,
                     path_effects=[pe.withStroke(linewidth=2.2, foreground="black")])
         um = self.scale_um(); L = um / self.pixel_um
@@ -277,11 +325,12 @@ def draw_film_strip(fig, film: Optional[MicrocolonyFilm], n: int = 5, now: Optio
     picks = sorted({film.frames[int(round(k))] for k in np.linspace(0, len(film.frames) - 1, min(n, len(film.frames)))})
     near = min(picks, key=lambda t: abs(t - now)) if now is not None else None
     axes = []; w = 0.92 / len(picks); aspect = fig.get_figwidth() / fig.get_figheight(); side = min(w - 0.012, 0.66 / aspect)
+    step = step_for(film.box[1] - film.box[0], STRIP_TILE_PX)
     for k, t in enumerate(picks):
-        rgb, lines = film.picture(t); step = max(1, rgb.shape[0] // 160)
-        ax = fig.add_axes([0.04 + k * w + (w - side) / 2, 0.08, side, side * aspect]); ax.imshow(rgb[::step, ::step], interpolation="antialiased")
+        rgb, lines = film.picture(t, step)
+        ax = fig.add_axes([0.04 + k * w + (w - side) / 2, 0.08, side, side * aspect]); ax.imshow(rgb, interpolation="antialiased")
         for soft, colour, _r, _c in lines:
-            ax.contour(soft[::step, ::step], levels=[0.22], colors=[colour], linewidths=0.7)
+            ax.contour(soft, levels=[0.22], colors=[colour], linewidths=0.7)
         ax.set_xticks([]); ax.set_yticks([])
         for s in ax.spines.values():
             s.set_visible(False)

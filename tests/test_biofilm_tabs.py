@@ -58,3 +58,23 @@ def test_biofilm_mode_shows_segmentation_the_four_stages_and_live_dead(monkeypat
             assert older.isHidden() and win.tab_widget.indexOf(older) == -1
     finally:
         win.close()
+
+
+def test_every_stage_controller_listens_with_the_shape_the_tools_messages_have():
+    """The message bus takes the shape of a message from its first listener, so whichever stage controller is built
+    first must ask for the same names as the Seeding controller does: experiment_loaded(experiment),
+    image_data_loaded(image_data), view_index_changed(index), batch_segmentation_completed(time_range, positions, model)."""
+    import inspect
+    from nd2_analyzer.ui.biofilms.stages.growth_controller import GrowthController
+    from nd2_analyzer.ui.biofilms.stages.microcolony_controller import MicrocolonyController
+    from nd2_analyzer.ui.biofilms.stages.seeding_controller import SeedingController
+
+    def shape(method):
+        return [(name, p.default is inspect.Parameter.empty, p.kind) for name, p in inspect.signature(method).parameters.items() if name != "self"]
+
+    seeding = {"experiment_loaded": SeedingController.on_experiment_loaded, "image_data_loaded": SeedingController.on_image_data_loaded,
+               "view_index_changed": SeedingController.on_view_index_changed, "batch_segmentation_completed": SeedingController.on_segmentation_completed}
+    for controller in (MicrocolonyController, GrowthController):
+        assert {topic for topic, _method in controller.LISTENS} >= {"experiment_loaded", "image_data_loaded", "batch_segmentation_completed"}
+        for topic, method in controller.LISTENS:
+            assert shape(getattr(controller, method)) == shape(seeding[topic]), (controller.__name__, topic)

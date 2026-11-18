@@ -81,3 +81,30 @@ def measure_growth_states(labels_at: Callable[[int, int], np.ndarray], dye_at: O
     except Exception:
         out.th2 = None                                         # too few frames, or a count no growth curve fits
     return out
+
+
+# ---------------------------------------------------------------- with the saved session
+PER_POSITION = ("hours", "cells", "rate", "matrix_hours", "matrix", "single", "inside", "outside", "colony_area")
+
+
+def save_growth_states(gs: GrowthStates, path) -> str:
+    """The growth-states measure as a file of numbers and text (stage_files)."""
+    from dataclasses import asdict
+    from . import stage_files as SF
+    header = {"positions": gs.positions, "frames": gs.frames, "free_dye": gs.free_dye, "th1": gs.th1, "th2": gs.th2, "settings": asdict(gs.settings)}
+    arrays = {f"{name}_{p}": np.asarray(values) for name in PER_POSITION for p, values in getattr(gs, name).items()}
+    return SF.write(path, "growth states", header, arrays)
+
+
+def load_growth_states(path) -> GrowthStates:
+    from . import stage_files as SF
+    h, a = SF.read(path, "growth states"); positions = [int(p) for p in h["positions"]]
+    per = {name: {p: a[f"{name}_{p}"] for p in positions if f"{name}_{p}" in a} for name in PER_POSITION}
+    th1, th2 = h.get("th1"), h.get("th2")
+    if th1 is not None:
+        th1["per_position_h"] = SF.int_keys(th1["per_position_h"])
+    if th2 is not None:
+        th2["range95_h"] = tuple(th2["range95_h"])
+    return GrowthStates(positions=positions, frames={int(p): [int(t) for t in f] for p, f in h["frames"].items()},
+                        free_dye={int(p): float(v) for p, v in h["free_dye"].items()}, th1=th1, th2=th2,
+                        settings=MX.MatrixSettings(**h["settings"]), **per)

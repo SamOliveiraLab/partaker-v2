@@ -16,7 +16,8 @@ from PySide6.QtWidgets import QFileDialog
 from pubsub import pub
 
 from nd2_analyzer.analysis.biofilm_stages import microcolony_plots as MP
-from nd2_analyzer.analysis.biofilm_stages.microcolony_film import FIGURE_IN, MicrocolonyFilm
+from nd2_analyzer.analysis.biofilm_stages import stage_tables as ST
+from nd2_analyzer.analysis.biofilm_stages.microcolony_film import FIGURE_IN, MicrocolonyFilm, extents
 from nd2_analyzer.analysis.biofilm_stages.microcolony_follow import close_gaps, follow_microcolonies, load_tracks, save_tracks
 from nd2_analyzer.analysis.biofilm_stages.microcolony_metrics import load_metrics, measure_metrics, save_metrics
 from nd2_analyzer.data.image_data import ImageData
@@ -81,6 +82,7 @@ class FollowWorker(QThread):
             tracks = follow_microcolonies(labels_at, frames, pixel_um, dt_h, start_hour,
                                           progress=lambda k, n: self.progress.emit(int(100 * k / max(n, 1)), f"{100 * k // max(n, 1)} %"))
             self.drawn = close_gaps(tracks, labels_at, pixel_um)      # for the pictures: short gaps drawn through, the record unchanged
+            extents(self.drawn, labels_at)                            # where each microcolony is at each frame, so the film opens at once
         except Exception as exc:                                   # the page shows the reason in the Microcolonies step
             self.failed.emit(f"{type(exc).__name__}: {exc}"); return
         self.done.emit(tracks)
@@ -107,6 +109,11 @@ class MetricsWorker(QThread):
 
 
 class MicrocolonyController(QObject):
+    # the tool's messages and the methods that hear them; each asks for the names the message carries (as the Seeding
+    # controller does), because the message bus takes the shape of a message from whoever listens first
+    LISTENS = (("experiment_loaded", "on_experiment_loaded"), ("image_data_loaded", "on_new_recording"),
+               ("batch_segmentation_completed", "on_segmented"), ("view_index_changed", "on_view_index_changed"))
+
     def __init__(self, page, recording_info: Callable[[], object], position: Callable[[], int], parent=None):
         super().__init__(parent)
         self.page, self.recording_info, self.position = page, recording_info, position
@@ -121,9 +128,8 @@ class MicrocolonyController(QObject):
         self.compare_window = None
         self.metrics = None; self.metrics_worker: Optional[MetricsWorker] = None; self.every_set_for = None
         page.measure_requested.connect(self.measure)
-        for topic, fn in (("experiment_loaded", self.on_changed), ("image_data_loaded", self.on_new_recording),
-                          ("batch_segmentation_completed", self.on_segmented), ("view_index_changed", self.on_changed)):
-            pub.subscribe(fn, topic)
+        for topic, method in self.LISTENS:
+            pub.subscribe(getattr(self, method), topic)
         app = QCoreApplication.instance()
         if app is not None:
             app.aboutToQuit.connect(self.shutdown)
@@ -137,13 +143,16 @@ class MicrocolonyController(QObject):
         self.set_frame = set_frame; self.refresh()
 
     # ------------------------------------------------------------------ what the tool has
-    def on_changed(self, *_args, **_kw):
+    def on_experiment_loaded(self, experiment):
+        self.refresh()
+
+    def on_view_index_changed(self, index):
         self.refresh()
 
     def on_segmented(self, time_range=None, positions=None, model=None):
         self.refresh()
 
-    def on_new_recording(self, image_data=None):
+    def on_new_recording(self, image_data):
         self.generation += 1; self.tracked = {}; self.drawn = {}; self.metrics = None; self.close_window()
         self.page.set_tracks(None); self.page.set_metrics(None); self.refresh()
 
@@ -217,12 +226,14 @@ class MicrocolonyController(QObject):
         tracks = self.tracked.get(p)
         if p != self.shown_position:
             self.shown_position = p; self.show_tracks(tracks, p)
+            if tracks is not None:
+                page.until_spin.setValue(tracks.hours[tracks.frames[-1]])       # "Follow until" shows where its tracks end
         if tracks is None and not (self.worker is not None and self.worker.isRunning()):
             page.set_step_state("track", "todo"); others = sorted(self.tracked)
-            if others and can:
+            if others:
                 where = (f"Position {others[0]} is tracked: move the P slider to {others[0]} to see it" if len(others) == 1 else
                          f"Positions {', '.join(str(o) for o in others)} are tracked: move the P slider to one of them to see it")
-                page.status.setText(where + ", or click Track to follow this position too.")
+                page.status.setText(where + (", or click Track to follow this position too." if can else "."))
             else:
                 page.status.setText("Click Track to find the microcolonies of this position and follow them." if can else
                                     "Segment at least two frames of this position in the Segmentation tab, then click Track.")
@@ -299,6 +310,20 @@ class MicrocolonyController(QObject):
         self.page.set_step_state("measure", "done", f"{n} position{'' if n == 1 else 's'}, {min(hours):g} to {max(hours):g} h")
         self.page.step_labels["measure"].setToolTip("Positions " + ", ".join(str(p) for p in metrics.positions))
 
+    def save_numbers(self):
+        """The numbers behind the plots as CSV files, into a folder the user chooses: the followed microcolonies of every
+        tracked position and the metrics of every measured position."""
+        tables = {}
+        for p, tracks in sorted(self.tracked.items()):
+            tables.update(ST.microcolony_tables(tracks, p))
+        if self.metrics is not None:
+            tables.update(ST.metric_tables(self.metrics))
+        if not tables:
+            return
+        folder = QFileDialog.getExistingDirectory(self.page, "Folder for the numbers (CSV files)")
+        if folder:
+            written = ST.write_tables(folder, tables); self.page.status.setText(f"Numbers saved: {len(written)} CSV files in {folder}")
+
     # ------------------------------------------------------------------ with the saved session
     def save_state(self, folder) -> list:
         """Writes what the page worked out into the session folder (the followed microcolonies of every tracked position,
@@ -314,7 +339,7 @@ class MicrocolonyController(QObject):
                 written.append(save_tracks(self.drawn[p], out / f"microcolonies_p{int(p)}_drawn.npz"))
         if self.metrics is not None:
             written.append(save_metrics(self.metrics, out / "microcolony_metrics.npz"))
-        about = {"positions": sorted(int(p) for p in self.tracked), "follow_until_h": self.page.until_spin.value(), "every_h": self.page.every_spin.value(),
+        about = {"positions": sorted(int(p) for p in self.tracked), "every_h": self.page.every_spin.value(),
                  "outlines": [{"position": int(p), "frame": int(t), "outlines": lines} for (p, t), lines in sorted(self.outlines.items())]}
         (out / "microcolonies.json").write_text(json.dumps(about, indent=1)); written.append(str(out / "microcolonies.json"))
         return written
@@ -338,8 +363,6 @@ class MicrocolonyController(QObject):
         self.close_window(); self.tracked, self.drawn, self.metrics, self.outlines = tracked, drawn, metrics, outlines
         self.shown_position = None; self.refresh()                      # shows the tracks of the position in the view area
         info = self.recording_info(); dt_h = (info.dt_s or 0.0) / 3600.0 if info is not None else 0.0
-        if about.get("follow_until_h") is not None:
-            self.page.until_spin.setValue(float(about["follow_until_h"]))
         if dt_h and about.get("every_h"):
             self.page.set_every(dt_h, float(about["every_h"]))
         self.show_metrics(metrics)
@@ -391,6 +414,8 @@ class MicrocolonyController(QObject):
         self.compare_window.destroyed.connect(lambda *_a: setattr(self, "compare_window", None)); self.compare_window.show()
 
     def export(self, kind: str):
+        if kind == "numbers":
+            return self.save_numbers()
         film = self.page.film
         if film is None or film.root is None or not film.frames:
             return
@@ -404,5 +429,5 @@ class MicrocolonyController(QObject):
                 from matplotlib.backends.backend_agg import FigureCanvasAgg
                 from matplotlib.figure import Figure
                 tracks = film.tracks; t = min(film.frames, key=lambda f: abs(tracks.hours[f] - self.page.hour))
-                fig = Figure(figsize=FIGURE_IN, dpi=100); FigureCanvasAgg(fig); film.draw(fig, t); fig.savefig(path, dpi=300, facecolor="white")
+                fig = Figure(figsize=FIGURE_IN, dpi=100); FigureCanvasAgg(fig); film.draw(fig, t, finest=True); fig.savefig(path, dpi=300, facecolor="white")
                 self.page.status.setText(f"Image saved: {path}")

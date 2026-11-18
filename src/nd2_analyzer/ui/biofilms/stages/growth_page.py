@@ -96,9 +96,13 @@ class GrowthPage(QWidget):
         self.follow_button.clicked.connect(self._follow)
         self.film_button = QPushButton("Save film"); self.film_button.clicked.connect(lambda: self.export_requested.emit("film"))
         self.image_button = QPushButton("Save image"); self.image_button.clicked.connect(lambda: self.export_requested.emit("image"))
-        for k, b in enumerate((self.follow_button, self.film_button, self.image_button)):
+        self.numbers_button = QPushButton("Numbers")
+        self.numbers_button.setToolTip("Writes the numbers behind every plot of this page as CSV files into a folder you choose")
+        self.numbers_button.clicked.connect(lambda: self.export_requested.emit("numbers"))
+        for k, b in enumerate((self.follow_button, self.film_button, self.image_button, self.numbers_button)):
             b.setEnabled(False)
-        buttons.addWidget(self.follow_button, 0, 0, 1, 2); buttons.addWidget(self.film_button, 1, 0); buttons.addWidget(self.image_button, 1, 1)
+        buttons.addWidget(self.follow_button, 0, 0); buttons.addWidget(self.numbers_button, 0, 1)
+        buttons.addWidget(self.film_button, 1, 0); buttons.addWidget(self.image_button, 1, 1)
         left.addLayout(buttons)
         self.film_canvas = PlotCanvas(size=(3.3, 1.25), min_height=115); self.film_canvas.setMaximumHeight(135); left.addWidget(self.film_canvas)
         left_box = QWidget(); left_box.setLayout(left); left_box.setFixedWidth(LEFT_COLUMN_PX); row.addWidget(left_box)
@@ -172,6 +176,7 @@ class GrowthPage(QWidget):
         on = self.measured is not None and self.selected() is not None
         for b in (self.follow_button, self.film_button, self.image_button):
             b.setEnabled(on and (b is self.follow_button or self.film is not None))
+        self.numbers_button.setEnabled(self.measured is not None)
 
     def _on_selection(self, _current=None, _previous=None):
         position = self.selected()

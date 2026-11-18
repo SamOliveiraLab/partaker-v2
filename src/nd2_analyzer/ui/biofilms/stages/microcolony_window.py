@@ -124,8 +124,10 @@ class MicrocolonyDialog(QDialog):
 
     def save_image(self):
         path, _ = QFileDialog.getSaveFileName(self, "Save Image", f"microcolony_{self.film.root}.png", "PNG (*.png);;PDF (*.pdf)")
-        if path:
+        if path and self.film.frames:
+            self.film.draw(self.figure, self.film.frames[self.step], finest=True)       # every pixel for the file
             self.figure.savefig(path, dpi=300, bbox_inches="tight", facecolor="white"); self.hint.setText(f"Image saved: {path}")
+            self.redraw()                                                               # and the screen's picture again
 
     def closeEvent(self, event):
         self.timer.stop(); super().closeEvent(event)

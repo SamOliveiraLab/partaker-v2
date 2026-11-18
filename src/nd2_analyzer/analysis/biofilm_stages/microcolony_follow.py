@@ -381,13 +381,16 @@ def save_tracks(tracks: MicrocolonyTracks, path) -> str:
               "min_cells": int(tracks.min_cells)}
     arrays = {f"map_{t}": np.frombuffer(packed, np.uint8) for t, packed in tracks.maps.items()}
     arrays.update({f"points_{t}": np.stack([np.asarray(a, np.int64) for a in triple]) for t, triple in tracks.points.items()})
+    kept = getattr(tracks, "_extents", None)                        # the box of every microcolony at every frame (microcolony_film.extents)
+    if kept is not None:
+        arrays["extents"] = np.array([[i, t, *box] for i, frames in kept.items() for t, box in frames.items()], np.int64).reshape(-1, 6)
     return SF.write(path, "followed microcolonies", header, arrays)
 
 
 def load_tracks(path) -> MicrocolonyTracks:
     from . import stage_files as SF
     h, arrays = SF.read(path, "followed microcolonies")
-    return MicrocolonyTracks(
+    tracks = MicrocolonyTracks(
         frames=[int(t) for t in h["frames"]], hours={int(t): float(v) for t, v in h["hours"].items()},
         offsets={int(t): tuple(int(v) for v in o) for t, o in h["offsets"].items()}, canvas_shape=tuple(int(v) for v in h["canvas_shape"]),
         identities=SF.int_keys(h["identities"]), events=h["events"], rows=h["rows"],
@@ -395,3 +398,9 @@ def load_tracks(path) -> MicrocolonyTracks:
         min_cells=int(h["min_cells"]),
         maps={int(k[4:]): v.tobytes() for k, v in arrays.items() if k.startswith("map_")},
         points={int(k[7:]): tuple(v) for k, v in arrays.items() if k.startswith("points_")})
+    if "extents" in arrays:
+        kept: Dict[int, Dict[int, tuple]] = {}
+        for i, t, y0, y1, x0, x1 in arrays["extents"].tolist():
+            kept.setdefault(int(i), {})[int(t)] = (int(y0), int(y1), int(x0), int(x1))
+        tracks._extents = kept
+    return tracks

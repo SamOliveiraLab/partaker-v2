@@ -4,6 +4,9 @@ every segmented position), reads the two dye frames the user gives, runs the gro
 moves the view area's T slider with the cursor, opens the Maturation window on Follow and writes the exports."""
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 import numpy as np
@@ -13,12 +16,13 @@ from pubsub import pub
 
 from nd2_analyzer.analysis.biofilm_stages import growth_plots as GP
 from nd2_analyzer.analysis.biofilm_stages import matrix_stain as MX
+from nd2_analyzer.analysis.biofilm_stages import stage_tables as ST
 from nd2_analyzer.analysis.biofilm_stages.growth_film import FIGURE_IN, GrowthFilm
-from nd2_analyzer.analysis.biofilm_stages.growth_measure import measure_growth_states
+from nd2_analyzer.analysis.biofilm_stages.growth_measure import load_growth_states, measure_growth_states, save_growth_states
 from nd2_analyzer.data.appstate import ApplicationState
 from nd2_analyzer.data.image_data import ImageData
 from .growth_window import GrowthDialog
-from .microcolony_controller import recording_words
+from .microcolony_controller import STATE_DIR, recording_words
 
 WORKER_WAIT_MS = 30000
 
@@ -72,6 +76,9 @@ class GrowthWorker(QThread):
 
 
 class GrowthController(QObject):
+    # the tool's messages and the methods that hear them, with the names each message carries (see MicrocolonyController)
+    LISTENS = (("experiment_loaded", "on_experiment_loaded"), ("image_data_loaded", "on_new_recording"), ("batch_segmentation_completed", "on_segmented"))
+
     def __init__(self, page, recording_info: Callable[[], object], parent=None):
         super().__init__(parent)
         self.page, self.recording_info = page, recording_info
@@ -80,8 +87,8 @@ class GrowthController(QObject):
         self.worker: Optional[GrowthWorker] = None; self.window: Optional[GrowthDialog] = None; self.generation = 0; self.every_set_for = None
         page.dye_requested.connect(self.choose_dye_frames); page.measure_requested.connect(self.measure); page.hour_changed.connect(self.on_hour_changed)
         page.window_requested.connect(self.open_window); page.export_requested.connect(self.export)
-        for topic, fn in (("experiment_loaded", self.on_changed), ("image_data_loaded", self.on_new_recording), ("batch_segmentation_completed", self.on_changed)):
-            pub.subscribe(fn, topic)
+        for topic, method in self.LISTENS:
+            pub.subscribe(getattr(self, method), topic)
         app = QCoreApplication.instance()
         if app is not None:
             app.aboutToQuit.connect(self.shutdown)
@@ -94,10 +101,13 @@ class GrowthController(QObject):
         self.set_frame = set_frame; self.refresh()
 
     # ------------------------------------------------------------------ what the tool has
-    def on_changed(self, *_args, **_kw):
+    def on_experiment_loaded(self, experiment):
         self.refresh()
 
-    def on_new_recording(self, image_data=None):
+    def on_segmented(self, time_range=None, positions=None, model=None):
+        self.refresh()
+
+    def on_new_recording(self, image_data):
         self.generation += 1; self.measured = None; self.reference = None; self.dye_paths = None; self.close_window(); self.page.set_measured(None); self.refresh()
 
     def segmented(self) -> Dict[int, List[int]]:
@@ -227,7 +237,10 @@ class GrowthController(QObject):
         worker = self.sender()
         if worker is None or worker.generation != self.generation:
             return
-        self.measured = measured; self.page.set_measured(measured, self.film())
+        self.measured = measured; self.show_measured(measured); self.refresh()
+
+    def show_measured(self, measured):
+        self.page.set_measured(measured, self.film())
         th1 = f"Th1 {measured.th1['th1_h']:.1f} h" if measured.th1 and measured.th1["th1_h"] is not None else "Th1 not measured"
         th2 = f"Th2 {measured.th2['th2_h']:.1f} h" if measured.th2 else "Th2 not found"
         self.page.set_step_state("measure", "done", f"{th1}, {th2}")
@@ -235,7 +248,43 @@ class GrowthController(QObject):
         dye = (f"  Free dye {np.mean(list(measured.free_dye.values())):,.0f} counts, cut-off {measured.settings.cut_off:,.0f} above it, matrix at least "
                f"{measured.settings.min_width_um:g} µm wide." if measured.free_dye else "")
         self.page.status.setText(f"{n:,} frames of {len(measured.positions)} positions, {first:g} to {last:g} h.{dye}  Every number here is computed by the tool on this recording.")
-        self.refresh()
+
+    # ------------------------------------------------------------------ with the saved session
+    def save_state(self, folder) -> list:
+        """Writes the growth-states measure and the dye file choice into the session folder. Returns the files written;
+        none when nothing was measured."""
+        if self.measured is None:
+            return []
+        out = Path(folder) / STATE_DIR; out.mkdir(parents=True, exist_ok=True)
+        written = [save_growth_states(self.measured, out / "growth_states.npz")]
+        about = {"dye_frames": list(self.dye_paths) if self.dye_paths else None, "every_h": self.page.every_spin.value()}
+        (out / "growth_states.json").write_text(json.dumps(about, indent=1)); written.append(str(out / "growth_states.json"))
+        return written
+
+    def load_state(self, folder) -> bool:
+        """Brings back what save_state wrote. The two dye files are read again from where they were; when they are no
+        longer there the numbers are still shown and the Dye frames step says which files are missing."""
+        src = Path(folder) / STATE_DIR
+        if not (src / "growth_states.npz").exists():
+            return False
+        try:
+            measured = load_growth_states(src / "growth_states.npz")
+            about = json.loads((src / "growth_states.json").read_text()) if (src / "growth_states.json").exists() else {}
+        except (ValueError, KeyError, TypeError, OSError) as exc:
+            self.page.status.setText(f"The growth states saved with this session could not be read ({exc}). Click Measure to measure them again.")
+            return False
+        self.close_window(); self.measured = measured; self.reference = None; self.dye_paths = None; self.refresh()
+        info = self.recording_info(); dt_h = (info.dt_s or 0.0) / 3600.0 if info is not None else 0.0
+        if dt_h and about.get("every_h"):
+            self.page.set_every(dt_h, float(about["every_h"]))
+        paths = about.get("dye_frames")
+        if paths and all(os.path.exists(p) for p in paths):
+            self.set_dye_frames(*paths)
+        elif paths:
+            self.dye_paths = tuple(paths); self.page.set_step_state("dye", "failed", "not found where they were: " + ", ".join(os.path.basename(p) for p in paths))
+            self.page.step_labels["dye"].setToolTip("\n".join(paths))
+        self.show_measured(measured)
+        return True
 
     # ------------------------------------------------------------------ cursor, window, exports
     def on_hour_changed(self, hour: float):
@@ -263,6 +312,13 @@ class GrowthController(QObject):
         self.window.destroyed.connect(lambda *_a: setattr(self, "window", None)); self.window.show()
 
     def export(self, kind: str):
+        if kind == "numbers":
+            if self.measured is not None:
+                folder = QFileDialog.getExistingDirectory(self.page, "Folder for the numbers (CSV files)")
+                if folder:
+                    written = ST.write_tables(folder, ST.growth_tables(self.measured))
+                    self.page.status.setText(f"Numbers saved: {len(written)} CSV files in {folder}")
+            return
         film = self.page.film
         if film is None or not film.frames:
             return

@@ -626,12 +626,12 @@ class App(QMainWindow):
 
                 traceback.print_exc()
 
-            # Save the Seeding page's results next to the experiment
+            # Save the stage pages' results next to the experiment
             try:
                 if hasattr(self, "biofilm_stages_tab"):
                     self.biofilm_stages_tab.save_results(folder_path)
             except Exception as e:
-                print(f"ERROR: Failed to save seeding results: {str(e)}")
+                print(f"ERROR: Failed to save the stage pages' results: {str(e)}")
 
             # Save tracking data
             try:
@@ -763,6 +763,15 @@ class App(QMainWindow):
                         print(f"DEBUG: No tracking data found")
                 except Exception as e:
                     print(f"ERROR: Failed to load tracking data: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
+
+                # Bring back what the Microcolonies and Maturation pages had worked out
+                try:
+                    if hasattr(self, "biofilm_stages_tab"):
+                        self.biofilm_stages_tab.load_results(folder_path)
+                except Exception as e:
+                    print(f"ERROR: Failed to load the stage pages' results: {str(e)}")
                     import traceback
                     traceback.print_exc()
 

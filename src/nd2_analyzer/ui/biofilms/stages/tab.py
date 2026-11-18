@@ -98,10 +98,18 @@ class BiofilmStagesTab(QWidget):
             shown.set_hour(h)
 
     def save_results(self, folder: str):
-        """Write the Seeding page's results next to the experiment when the user saves; nothing when there are none."""
+        """Write the pages' results next to the experiment when the user saves: what the Microcolonies and Maturation
+        pages worked out (File > Load brings it back) and the Seeding page's tables; nothing where there is none."""
+        self.microcolony_controller.save_state(folder); self.growth_controller.save_state(folder)
         if self.controller.results is None:
             return None
         return self.controller.save_results(folder)
+
+    def load_results(self, folder: str) -> dict:
+        """After a session is loaded: bring back what the Microcolonies and Maturation pages had worked out. The growth
+        states come first, so the matrix stain is there for the Microcolonies window."""
+        maturation = self.growth_controller.load_state(folder)
+        return {"microcolonies": self.microcolony_controller.load_state(folder), "maturation": maturation}
 
     def load_study(self, path: str):
         self.study = BiofilmStudy.from_json(path)
