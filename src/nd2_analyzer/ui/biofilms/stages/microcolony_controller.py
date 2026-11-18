@@ -22,11 +22,12 @@ from .microcolony_window import MicrocolonyDialog
 WORKER_WAIT_MS = 30000
 
 
-def frames_to_follow(segmented: list, last: int) -> list:
-    """The unbroken run of segmented frames from the first one, not past `last`."""
+def frames_to_follow(segmented: list, last: int, skip: Optional[Callable[[int], bool]] = None) -> list:
+    """The unbroken run of segmented frames from the first one, not past `last` and not into a frame `skip` names
+    (out of focus): a microcolony cannot be followed through frames that are blurred."""
     run = []
     for t in sorted(int(v) for v in segmented):
-        if t > int(last) or (run and t != run[-1] + 1):
+        if t > int(last) or (run and t != run[-1] + 1) or (skip is not None and skip(t)):
             break
         run.append(t)
     return run
@@ -110,6 +111,14 @@ class MicrocolonyController(QObject):
                 best = (array, frames)
         return best
 
+    def out_of_focus(self) -> Optional[Callable[[int], bool]]:
+        """The experiment's own word on which frames are out of focus (its focus-loss intervals), None when it has none."""
+        from nd2_analyzer.data.appstate import ApplicationState
+        state = ApplicationState.get_instance(); exp = getattr(state, "experiment", None) if state is not None else None
+        if exp is None or not hasattr(exp, "is_focus_loss_frame") or not getattr(exp, "focus_loss_intervals", None):
+            return None
+        return lambda t: bool(exp.is_focus_loss_frame(int(t)))
+
     def labels_at(self, position: int) -> Callable[[int], np.ndarray]:
         array, _frames = self.masks(position)
         return lambda t: np.asarray(array[int(t), int(position), 0])
@@ -129,7 +138,8 @@ class MicrocolonyController(QObject):
         can = bool(dt_h and info.pixel_um and len(frames) >= 2) and not (self.worker is not None and self.worker.isRunning())
         page.set_track_enabled(can)
         if frames and dt_h and p != self.shown_position:
-            page.set_until(hour(frames[0]), hour(frames[-1]), dt_h)
+            good = frames_to_follow(frames, frames[-1], self.out_of_focus()) or frames[:1]      # up to the last frame before focus is lost
+            page.set_until(hour(good[0]), hour(good[-1]), dt_h)
         tracks = self.tracked.get(p)
         if p != self.shown_position:
             self.shown_position = p; self.show_tracks(tracks, p)
@@ -158,7 +168,7 @@ class MicrocolonyController(QObject):
         if not dt_h or not info.pixel_um or len(segmented) < 2:
             return
         last = int(round((self.page.until_spin.value() - float(info.start_hour)) / dt_h))
-        frames = frames_to_follow(segmented, last)
+        frames = frames_to_follow(segmented, last, self.out_of_focus())
         if len(frames) < 2:
             self.page.set_step_state("track", "failed", "fewer than two frames in a row are segmented"); return
         self.worker = FollowWorker(self.labels_at(p), frames, info.pixel_um, dt_h, float(info.start_hour), self)

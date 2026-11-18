@@ -137,6 +137,8 @@ def test_track_follows_the_unbroken_run_of_segmented_frames_up_to_the_chosen_hou
     assert frames_to_follow([0, 1, 2, 4, 5], last=10) == [0, 1, 2]          # frame 3 is missing: the run stops before it
     assert frames_to_follow([3, 4, 5, 6], last=5) == [3, 4, 5]
     assert frames_to_follow([], last=5) == [] and frames_to_follow([7], last=9) == [7]
+    out_of_focus = lambda t: 6 <= t <= 7
+    assert frames_to_follow(list(range(10)), last=9, skip=out_of_focus) == [0, 1, 2, 3, 4, 5]     # the run stops where focus is lost
 
 
 def test_the_biofilm_stages_tab_holds_the_live_microcolonies_page():
