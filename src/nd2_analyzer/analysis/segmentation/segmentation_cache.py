@@ -57,11 +57,18 @@ class SegmentationCache:
             # Store each model's data
             for model_name, (array, index_set) in self.mmap_arrays_idx.items():
                 model_group = mmap_group.create_group(model_name)
-                # Store the array
-                model_group.create_dataset("array", data=array, compression="gzip")
-                # Store the set as a JSON string
-                index_list = [list(idx) for idx in index_set]
+                # Only the frames that were segmented are written, one after the other in the order of the
+                # index list. (Until Nov 2026 the whole array was written: 22 GB of zeros for a recording of
+                # 89 frames x 10 positions x 3 channels at 2044 x 2048, read into memory again at load.)
+                index_list = sorted(list(int(i) for i in idx) for idx in index_set)
+                frame_shape = tuple(array.shape[len(index_list[0]):]) if index_list else tuple(array.shape[-2:])
+                frames = model_group.create_dataset("frames", shape=(len(index_list), *frame_shape), dtype=array.dtype,
+                                                    chunks=(1, *frame_shape) if index_list else None,
+                                                    compression="gzip" if index_list else None)
+                for k, idx in enumerate(index_list):
+                    frames[k] = array[tuple(idx)]
                 model_group.attrs["index_set"] = json.dumps(index_list)
+                model_group.attrs["shape"] = json.dumps([int(v) for v in array.shape])
 
             # Store image_data reference or metadata
             # Note: We don't store the actual image_data, just metadata about it
@@ -90,7 +97,13 @@ class SegmentationCache:
                 mmap_group = f["mmap_arrays"]
                 for model_name in mmap_group:
                     model_group = mmap_group[model_name]
-                    array = model_group["array"][:]
+                    if "array" in model_group:          # a session saved before Nov 2026: the whole array
+                        array = model_group["array"][:]
+                    else:                               # the segmented frames, in the order of the index list
+                        frames = model_group["frames"]
+                        array = np.zeros(tuple(json.loads(model_group.attrs["shape"])), dtype=frames.dtype)
+                        for k, idx in enumerate(json.loads(model_group.attrs.get("index_set", "[]"))):
+                            array[tuple(int(i) for i in idx)] = frames[k]
 
                     # Reconstruct the indices set
                     index_set = set()

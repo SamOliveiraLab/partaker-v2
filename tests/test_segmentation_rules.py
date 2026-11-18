@@ -78,3 +78,47 @@ def test_invalidate_position_forgets_only_that_position(monkeypatch):
     assert len(indices) == 2
     assert cache.invalidate_position(1) == 1
     assert indices == {(0, 0, 0)}
+
+
+# ---------------------------------------------------------------- saving the masks of a session
+def _two_frames_cache(monkeypatch):
+    monkeypatch.setattr(sc.SegmentationModels, "segment_images",
+                        lambda self, images, mode, **kw: [(np.asarray(images[0]) > 0).astype(np.uint16) * 7])
+    raw = np.zeros((40, 5, 1, 64, 64), np.uint16)
+    raw[3, 2, 0, 10:20, 10:20] = 500; raw[9, 4, 0, 30:40, 5:9] = 800
+    cache = sc.SegmentationCache(raw).with_model("omnipose_bact_phase")
+    cache[3, 2, 0]; cache[9, 4, 0]
+    return raw, cache
+
+
+def test_a_saved_session_stores_one_frame_per_segmented_frame(tmp_path, monkeypatch):
+    import h5py
+    _raw, cache = _two_frames_cache(monkeypatch)
+    path = tmp_path / "segmentation_cache.h5"; cache.save(str(path))
+    with h5py.File(path, "r") as f:
+        stored = f["mmap_arrays/omnipose_bact_phase/frames"]
+        assert stored.shape == (2, 64, 64)                       # two of the 200 frames were segmented: two are written
+
+
+def test_saved_masks_come_back_as_they_were(tmp_path, monkeypatch):
+    raw, cache = _two_frames_cache(monkeypatch)
+    path = tmp_path / "segmentation_cache.h5"; cache.save(str(path))
+    back = sc.SegmentationCache.load(str(path), raw)
+    array, indices = back.mmap_arrays_idx["omnipose_bact_phase"]
+    assert indices == {(3, 2, 0), (9, 4, 0)} and array.shape == (40, 5, 1, 64, 64)
+    assert (array[3, 2, 0, 10:20, 10:20] == 7).all() and array[3, 2, 0].sum() == 700
+    assert (array[9, 4, 0, 30:40, 5:9] == 7).all() and array[0, 0, 0].sum() == 0
+    assert back.model_name == "omnipose_bact_phase"
+
+
+def test_a_session_saved_the_old_way_still_loads(tmp_path):
+    import h5py, json
+    full = np.zeros((4, 2, 1, 16, 16), np.uint16); full[1, 0, 0, 2:5, 2:5] = 3
+    path = tmp_path / "old.h5"
+    with h5py.File(path, "w") as f:
+        f.attrs["model_name"] = "omnipose_bact_phase"
+        g = f.create_group("mmap_arrays").create_group("omnipose_bact_phase")
+        g.create_dataset("array", data=full, compression="gzip"); g.attrs["index_set"] = json.dumps([[1, 0, 0]])
+    back = sc.SegmentationCache.load(str(path), full)
+    array, indices = back.mmap_arrays_idx["omnipose_bact_phase"]
+    assert indices == {(1, 0, 0)} and array[1, 0, 0].sum() == 27
