@@ -16,7 +16,8 @@ lasting      a microcolony that is found in at least two frames (and reached 4 c
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import zlib
+from dataclasses import dataclass, field, replace
 from typing import Callable, Dict, List, Optional, Sequence
 
 import numpy as np
@@ -48,7 +49,13 @@ class MicrocolonyTracks:
     rows: List[dict]                                # one row per identity and frame: cells, area_um2, cy_canvas, cx_canvas
     cell_identity: Dict[int, Dict[int, int]]        # frame -> cell label -> identity (0 for a cell in no microcolony)
     min_cells: int = 4
+    maps: Dict[int, bytes] = field(default_factory=dict, repr=False)      # frame -> the identity of every pixel of the canvas, packed
+    points: Dict[int, tuple] = field(default_factory=dict, repr=False)    # frame -> (cell labels, y, x of a pixel inside each cell, frame coordinates)
     _lasting: Optional[set] = field(default=None, repr=False)
+
+    def identity_map(self, frame: int) -> np.ndarray:
+        """The microcolony each pixel of the canvas belongs to at this frame (0 for none): the area of every microcolony."""
+        return np.frombuffer(zlib.decompress(self.maps[int(frame)]), np.uint16).reshape(self.canvas_shape).astype(np.int32)
 
     def lasting(self) -> set:
         """Identities found in at least two frames that reached min_cells."""
@@ -165,7 +172,7 @@ def follow_microcolonies(labels_at: Callable[[int], np.ndarray], frames: Sequenc
         return {k + 1: sl for k, sl in enumerate(ndi.find_objects(image)) if sl is not None}
 
     # ---- pass 2: the bookkeeping
-    ident: Dict[int, dict] = {}; rows: List[dict] = []; events: List[dict] = []; cell_identity: Dict[int, Dict[int, int]] = {}
+    ident: Dict[int, dict] = {}; rows: List[dict] = []; events: List[dict] = []; cell_identity: Dict[int, Dict[int, int]] = {}; maps: Dict[int, bytes] = {}
     I_prev = np.zeros((Hc, Wc), np.int32); last_seen: Dict[int, tuple] = {}; next_id = 1; cells_of_prev: Dict[int, int] = {}
     for k_t, t in enumerate(T):
         Rt = regions(t); fr = FR[t]; I_now = np.zeros((Hc, Wc), np.int32)
@@ -304,7 +311,7 @@ def follow_microcolonies(labels_at: Callable[[int], np.ndarray], frames: Sequenc
                 out_of_view = touches_edge((sl0, m0), t)
                 ident[i].update(end=tl, ended="left the view" if out_of_view else "fell under 4 cells"); last_seen.pop(i)
                 events.append({"time": tl, "hours": hours[tl], "event": ident[i]["ended"], "identity": i})
-        I_prev = I_now
+        I_prev = I_now; maps[t] = pack_map(I_now)
         for u in [u for u in R if u < t]:
             R.pop(u)                                    # earlier frames are not looked at again
         if progress:
@@ -316,4 +323,50 @@ def follow_microcolonies(labels_at: Callable[[int], np.ndarray], frames: Sequenc
             d.update(end=t_end, ended="still there")
     events.sort(key=lambda e: (e["time"], e["event"]))
     return MicrocolonyTracks(frames=T, hours=hours, offsets={t: (int(oy[t]), int(ox[t])) for t in T}, canvas_shape=(int(Hc), int(Wc)),
-                             identities=ident, events=events, rows=rows, cell_identity=cell_identity, min_cells=S.rule.min_cells)
+                             identities=ident, events=events, rows=rows, cell_identity=cell_identity, min_cells=S.rule.min_cells,
+                             maps=maps, points={t: (FR[t].labels, FR[t].y, FR[t].x) for t in T})
+
+
+def pack_map(identity_map: np.ndarray) -> bytes:
+    return zlib.compress(np.ascontiguousarray(identity_map, np.uint16).tobytes(), 1)
+
+
+def close_gaps(tracks: MicrocolonyTracks, labels_at: Callable[[int], np.ndarray], pixel_um: float, max_gap_frames: int = 3,
+               settings: MicrocolonySettings = MicrocolonySettings()) -> MicrocolonyTracks:
+    """The followed microcolonies with their short gaps drawn through, for pictures and for what is measured inside a
+    microcolony. A microcolony that is not found for up to max_gap_frames (it fell under 4 cells) and is found again in
+    the same place keeps its cells in between: the cells on its area before or after the gap that belong to no other
+    microcolony get its identity, and its area is painted around them. Merges, births and ends are not changed; the
+    filled rows are marked gap_closed."""
+    seen: Dict[int, List[int]] = {}
+    for r in tracks.rows:
+        seen.setdefault(r["identity"], []).append(r["time"])
+    order = {t: k for k, t in enumerate(tracks.frames)}; todo: Dict[int, list] = {}
+    for i, ts in seen.items():
+        ts = sorted(set(ts))
+        for tp, tn in zip(ts[:-1], ts[1:]):
+            if 1 <= order[tn] - order[tp] - 1 <= max_gap_frames:
+                for k in range(order[tp] + 1, order[tn]):
+                    todo.setdefault(tracks.frames[k], []).append((int(i), int(tp), int(tn)))
+    r_px = settings.gap_um / 2 / pixel_um; pad = int(round(settings.gap_um / pixel_um))
+    maps = dict(tracks.maps); cell_identity = {t: dict(v) for t, v in tracks.cell_identity.items()}
+    rows = [dict(r, gap_closed=False) for r in tracks.rows]
+    for t in sorted(todo):
+        I = tracks.identity_map(t); oy, ox = tracks.offsets[t]; lab = drop_small_cells(np.asarray(labels_at(t)), pixel_um, settings.min_cell_um2)
+        can = np.zeros(I.shape, np.int32); can[oy:oy + lab.shape[0], ox:ox + lab.shape[1]] = lab
+        labels, ys, xs = tracks.points[t]; cy, cx = ys + oy, xs + ox; cid = np.array([cell_identity[t].get(int(l), 0) for l in labels], np.int64)
+        for i, tp, tn in todo[t]:
+            terr = (tracks.identity_map(tp) == i) | (tracks.identity_map(tn) == i); py, px_ = np.nonzero(terr)
+            sl = (slice(max(py.min() - pad, 0), py.max() + pad + 1), slice(max(px_.min() - pad, 0), px_.max() + pad + 1))
+            near = np.zeros(I.shape, bool); near[sl] = ndi.binary_dilation(terr[sl], iterations=max(pad // 2, 1))
+            take = np.flatnonzero(near[cy, cx] & (cid == 0)) if len(labels) else np.zeros(0, int)
+            if take.size == 0:
+                continue
+            cid[take] = i
+            grown = (ndi.distance_transform_edt(~np.isin(can[sl], labels[take])) <= r_px) & (I[sl] == 0); I[sl][grown] = i
+            gy, gx = np.nonzero(grown)
+            rows.append({"identity": i, "time": t, "hours": tracks.hours[t], "cells": int(take.size), "area_um2": float(grown.sum()) * pixel_um ** 2,
+                         "cy_canvas": float(gy.mean() + sl[0].start), "cx_canvas": float(gx.mean() + sl[1].start), "at_view_edge": False, "gap_closed": True})
+        cell_identity[t] = {int(l): int(v) for l, v in zip(labels, cid)}; maps[t] = pack_map(I)
+    rows.sort(key=lambda r: (r["time"], r["identity"]))
+    return replace(tracks, rows=rows, cell_identity=cell_identity, maps=maps, _lasting=None)

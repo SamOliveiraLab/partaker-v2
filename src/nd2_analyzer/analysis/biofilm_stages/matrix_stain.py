@@ -106,3 +106,36 @@ def inside_outside(counted: np.ndarray, labels: np.ndarray, pixel_um: float, rul
     inside = 100.0 * float(counted[colony].mean()) if colony.any() else float("nan")
     outside = 100.0 * float(counted[~colony].mean()) if (~colony).any() else float("nan")
     return inside, outside, 100.0 * float((counted & colony).sum()) / max(int(counted.sum()), 1), 100.0 * float(colony.mean())
+
+
+FIRST_STAIN_UM2 = 3.0          # a microcolony has matrix stain from the first frame with at least this much inside it
+
+
+def per_microcolony(tracks, counted_at, pixel_um: float) -> list:
+    """Matrix stain inside each followed microcolony, frame by frame. tracks: the followed microcolonies (with their
+    gaps closed, microcolony_follow.close_gaps, when the pictures are); counted_at(frame): the matrix mask of the frame.
+    Rows: time, hours, identity, area_um2, stain_um2, cover (stain / area)."""
+    rows = []; a = pixel_um ** 2
+    for t in tracks.frames:
+        ids_map = tracks.identity_map(t); ids = np.unique(ids_map); ids = ids[ids > 0]
+        if not ids.size:
+            continue
+        oy, ox = tracks.offsets[t]; counted = np.asarray(counted_at(t), bool); on_canvas = np.zeros(ids_map.shape, bool)
+        on_canvas[oy:oy + counted.shape[0], ox:ox + counted.shape[1]] = counted
+        area = ndi.sum(np.ones(ids_map.shape, np.float32), ids_map, ids) * a; stain_ = ndi.sum(on_canvas, ids_map, ids) * a
+        for i, ar, st in zip(ids, area, stain_):
+            rows.append({"time": int(t), "hours": tracks.hours[t], "identity": int(i), "area_um2": float(ar), "stain_um2": float(st), "cover": float(st / ar) if ar else 0.0})
+    return rows
+
+
+def microcolony_stain_summary(rows: list, first_stain_um2: float = FIRST_STAIN_UM2) -> dict:
+    """identity -> first_stain_h (None when it never has matrix stain), most_cover_pct and the hour of it, followed from and to."""
+    out = {}
+    for r in rows:
+        s = out.setdefault(r["identity"], {"first_stain_h": None, "most_cover_pct": 0.0, "most_cover_h": None, "from_h": r["hours"], "to_h": r["hours"]})
+        s["from_h"], s["to_h"] = min(s["from_h"], r["hours"]), max(s["to_h"], r["hours"])
+        if r["stain_um2"] >= first_stain_um2 and (s["first_stain_h"] is None or r["hours"] < s["first_stain_h"]):
+            s["first_stain_h"] = r["hours"]
+        if 100.0 * r["cover"] > s["most_cover_pct"] or s["most_cover_h"] is None:
+            s["most_cover_pct"], s["most_cover_h"] = 100.0 * r["cover"], r["hours"]
+    return out

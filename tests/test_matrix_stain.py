@@ -116,3 +116,76 @@ def test_run2_position2_matrix_inside_and_outside_microcolonies_is_the_one_of_fi
         counted, _single = MX.matrix(MX.stain(green(t), level), pixel_um)
         got = MX.inside_outside(counted, labels(t), pixel_um)
         assert got == pytest.approx((inside, outside, share_inside, area), abs=0.002), t
+
+
+# ---------------------------------------------------------------- matrix stain inside each followed microcolony
+def test_matrix_stain_is_measured_inside_each_followed_microcolony():
+    from nd2_analyzer.analysis.biofilm_stages import microcolony_follow as MF
+    from test_microcolony_rules import blocks
+    frames = [blocks(20)] * 4                                           # two microcolonies of four cells, 2 um apart
+    tracks = MF.follow_microcolonies(lambda t: frames[t], range(4), pixel_um=PX, dt_h=0.5, start_hour=24.0)
+
+    def counted_at(t):                                                  # matrix over the left microcolony from frame 2 on
+        m = np.zeros((120, 200), bool)
+        if t >= 2:
+            m[35:68, 15:68] = True
+        return m
+
+    rows = MX.per_microcolony(tracks, counted_at, PX)
+    left = {r["time"]: r for r in rows if r["identity"] == 1}; right = {r["time"]: r for r in rows if r["identity"] == 2}
+    assert left[0]["stain_um2"] == 0 and left[2]["stain_um2"] > 3.0 and left[2]["cover"] == pytest.approx(1.0) and all(r["stain_um2"] == 0 for r in right.values())
+    assert left[2]["area_um2"] == pytest.approx(left[2]["stain_um2"])                     # the whole microcolony is under the matrix
+    summary = MX.microcolony_stain_summary(rows)
+    assert summary[1]["first_stain_h"] == 25.0 and summary[1]["most_cover_pct"] == pytest.approx(100.0) and summary[2]["first_stain_h"] is None
+
+
+@pytest.fixture(scope="module")
+def run2_matrix(run2):
+    """Position 2: the cell masks, the matrix mask of every frame (kept once computed) and the pixel size."""
+    frames, pixel_um, ref = run2
+    labels_at = lambda t: np.load(P2_LABELS / f"p2_t{t}.npz")["cell_labels"]
+    green = lambda t: MX.correct(np.asarray(frames[t, 2, DYE_CHANNEL]), ref)
+    level, _used = MX.free_dye_level(((green(t), labels_at(t)) for t in range(0, 25, 3)), pixel_um); kept = {}
+
+    def counted_at(t):
+        if t not in kept:
+            kept[t] = MX.matrix(MX.stain(green(t), level), pixel_um)[0]
+        return kept[t]
+
+    return labels_at, counted_at, pixel_um
+
+
+def _stain_of(run2_matrix, drift):
+    from nd2_analyzer.analysis.biofilm_stages import microcolony_follow as MF
+    labels_at, counted_at, pixel_um = run2_matrix
+    tracks = MF.follow_microcolonies(labels_at, range(0, 67), pixel_um=pixel_um, dt_h=0.5, start_hour=24.0, drift=drift)
+    drawn = MF.close_gaps(tracks, labels_at, pixel_um)
+    filled = [r for r in drawn.rows if r["gap_closed"]]
+    return MX.microcolony_stain_summary(MX.per_microcolony(drawn, counted_at, pixel_um)), len(filled), sum(r["cells"] for r in filled)
+
+
+@pytest.mark.slow
+def test_run2_matrix_in_each_microcolony_is_the_one_of_figure4_with_its_drift_table(run2_matrix):
+    """figure4_new/figure4_v3_legend.md, slide 2 (identities of Figure 3, gaps closed): first matrix stain and most covered."""
+    from test_microcolony_rules import FIGURE_DRIFT
+    if not FIGURE_DRIFT.exists():
+        pytest.skip("the drift table of the figure is not on this machine")
+    import csv
+    rows = sorted(csv.DictReader(FIGURE_DRIFT.open()), key=lambda r: int(r["frame"]))
+    s, frames_filled, cells_filled = _stain_of(run2_matrix, {int(r["frame"]) + 1: (int(r["drift_dy_px"]), int(r["drift_dx_px"])) for r in rows})
+    assert (frames_filled, cells_filled) == (38, 137)                                    # the gap closing of Figure 3
+    assert (s[5]["first_stain_h"], round(s[5]["most_cover_pct"], 1), s[5]["most_cover_h"]) == (32.0, 38.1, 52.5)
+    assert (s[17]["first_stain_h"], round(s[17]["most_cover_pct"], 1), s[17]["most_cover_h"]) == (44.5, 18.8, 51.5)
+    assert (s[26]["first_stain_h"], round(s[26]["most_cover_pct"], 1), s[26]["most_cover_h"]) == (49.5, 0.8, 49.5)
+
+
+@pytest.mark.slow
+def test_run2_matrix_in_each_microcolony_from_the_tool_alone(run2_matrix):
+    """With the tool's own drift the first stain of each microcolony is at the same hour. The most covered share differs
+    for microcolonies 5 and 17: one pixel of drift changes which of the large microcolonies merges into which after 53 h
+    (17 merges into 51 at 56.5 h, not into 5 at 53 h), so each is followed longer and over another area."""
+    s, frames_filled, cells_filled = _stain_of(run2_matrix, None)
+    assert (frames_filled, cells_filled) == (38, 137)
+    assert (s[5]["first_stain_h"], round(s[5]["most_cover_pct"], 1), s[5]["most_cover_h"]) == (32.0, 55.1, 55.0)
+    assert (s[17]["first_stain_h"], round(s[17]["most_cover_pct"], 1), s[17]["most_cover_h"]) == (44.5, 16.3, 51.5)
+    assert (s[26]["first_stain_h"], round(s[26]["most_cover_pct"], 1), s[26]["most_cover_h"]) == (49.5, 0.8, 49.5)

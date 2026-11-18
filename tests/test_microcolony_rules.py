@@ -160,3 +160,28 @@ def test_run2_position2_merging_history_is_the_one_of_figure3_with_its_drift_tab
     waits = tracks.hours_before_merging()
     assert len(waits) == 41 and float(np.median(waits)) == 3.5
     assert [tracks.count_at(t) for t in (6, 36, 66)] == [14, 18, 3]
+
+
+# ---------------------------------------------------------------- the area of each followed microcolony, and gaps closed for drawing
+def test_the_follower_keeps_the_area_of_every_microcolony_in_every_frame():
+    from nd2_analyzer.analysis.biofilm_stages import microcolony_follow as MF
+    frames = [blocks(20), blocks(20), blocks(3), blocks(3)]
+    tracks = MF.follow_microcolonies(lambda t: frames[t], range(4), pixel_um=PX, dt_h=0.5, start_hour=24.0)
+    before, after = tracks.identity_map(1), tracks.identity_map(3)
+    assert before.shape == tracks.canvas_shape and set(np.unique(before)) == {0, 1, 2} and set(np.unique(after)) == {0, 1}
+    oy, ox = tracks.offsets[1]
+    assert before[45 + oy, 30 + ox] == 1 and before[45 + oy, 100 + ox] == 2 and before[5 + oy, 5 + ox] == 0     # a cell of each block, and the background
+    assert (after > 0).sum() > (before == 1).sum()                                                            # the merged microcolony holds both blocks
+
+
+def test_a_microcolony_that_drops_under_four_cells_for_a_frame_is_drawn_through_the_gap():
+    from nd2_analyzer.analysis.biofilm_stages import microcolony_follow as MF
+    four, three = row_of_cells([3, 3, 3], y=40, shape=(120, 200)), row_of_cells([3, 3], y=40, shape=(120, 200))
+    frames = [four, four, three, four, four]                                     # one cell is not found in frame 2
+    tracks = MF.follow_microcolonies(lambda t: frames[t], range(5), pixel_um=PX, dt_h=0.5, start_hour=24.0)
+    assert [tracks.count_at(t) for t in range(5)] == [1, 1, 0, 1, 1] and len(tracks.identities) == 1       # seen again: the same microcolony
+    drawn = MF.close_gaps(tracks, lambda t: frames[t], PX)
+    assert [drawn.count_at(t) for t in range(5)] == [1, 1, 1, 1, 1]
+    assert set(drawn.cell_identity[2].values()) == {1} and (drawn.identity_map(2) == 1).any()
+    assert [r for r in drawn.rows if r["time"] == 2][0]["gap_closed"] is True
+    assert tracks.count_at(2) == 0 and len(drawn.merges()) == len(tracks.merges())                         # the followed record is not changed
