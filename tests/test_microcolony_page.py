@@ -331,9 +331,9 @@ def test_a_th1_outside_the_recording_or_a_band_too_narrow_for_its_name_is_left_o
 
 
 def test_the_film_strip_says_which_microcolony_it_shows(page):
-    assert page.film_caption.text() == "microcolony 1 and the 1 that merges into it"
+    assert page.film_caption.text() == "Microcolony 1 and the 1 that merges into it"          # as the Follow window says it
     page.candidates.setCurrentRow(3)                                     # microcolony 2: nothing merges into it
-    assert page.film_caption.text() == "microcolony 2"
+    assert page.film_caption.text() == "Microcolony 2"
     page.set_tracks(None)
     assert page.film_caption.text() == ""
 

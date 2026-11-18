@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (QComboBox, QDoubleSpinBox, QGridLayout, QHBoxLayo
 from nd2_analyzer.analysis.biofilm_stages import growth_plots as GP
 from nd2_analyzer.analysis.biofilm_stages import microcolony_metric_plots as XP
 from nd2_analyzer.analysis.biofilm_stages import microcolony_plots as MP
+from nd2_analyzer.analysis.biofilm_stages import microcolony_film as MFilm
 from nd2_analyzer.analysis.biofilm_stages.microcolony_film import draw_film_strip
 from .seeding_page import LEFT_COLUMN_PX, FactCard, PlotCanvas, StripCanvas, step_words
 
@@ -315,5 +316,4 @@ class MicrocolonyPage(QWidget):
         shown = self.film if self.tracks is not None and self.selected() is not None else None
         self.film_canvas.render(draw_film_strip, shown, 6, now)
         merged = len(shown.order) - 1 if shown is not None and shown.root is not None else 0
-        self.film_caption.setText("" if shown is None or shown.root is None else f"microcolony {shown.root}" +
-                                  (f" and the {merged} that merge{'s' if merged == 1 else ''} into it" if merged else ""))
+        self.film_caption.setText("" if shown is None or shown.root is None else MFilm.heading_words(shown.root, drawn=merged, later=0))   # the words of the Follow window
