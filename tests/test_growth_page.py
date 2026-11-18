@@ -135,3 +135,16 @@ def test_the_window_plays_the_film_of_a_position(film):
     dlg.combo.setCurrentIndex(0)
     assert film.position == 0 and dlg.slider.value() == 4                 # the other position, at the same hour
     dlg.close()
+
+
+def test_measure_takes_every_nth_segmented_frame_and_leaves_out_the_unfocused_ones():
+    from nd2_analyzer.ui.biofilms.stages.growth_controller import frames_to_measure
+    assert frames_to_measure(list(range(10)), step=3) == [0, 3, 6, 9]
+    assert frames_to_measure(list(range(10)), step=1, skip=lambda t: 4 <= t <= 6) == [0, 1, 2, 3, 7, 8, 9]
+    assert frames_to_measure([2, 3, 4, 5, 8], step=2) == [2, 4, 8] and frames_to_measure([], step=3) == []
+
+
+def test_the_dye_channel_is_the_one_the_experiment_calls_matrix_dye():
+    from nd2_analyzer.ui.biofilms.stages.growth_controller import channel_with_role
+    roles = {"0": "phase", "1": "cell_marker", "2": "matrix"}
+    assert channel_with_role(roles, "matrix") == 2 and channel_with_role(roles, "phase") == 0 and channel_with_role({"0": "phase"}, "matrix") is None

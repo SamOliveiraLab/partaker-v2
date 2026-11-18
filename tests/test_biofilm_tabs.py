@@ -39,7 +39,7 @@ def test_the_pages_that_still_read_a_study_file_carry_their_own_open_button():
     from nd2_analyzer.ui.biofilms.stages.tab import BiofilmStagesTab
     main = QTabWidget()
     stages = BiofilmStagesTab(); stages.move_pages_to(main)
-    for k, wanted in ((0, False), (1, False), (2, True), (3, True)):
+    for k, wanted in ((0, False), (1, False), (2, False), (3, True)):       # only Dispersion still reads a study file
         assert (main.widget(k).findChild(QPushButton, "open_study") is not None) is wanted
 
 

@@ -2,8 +2,8 @@
 are tabs of the main bar (move_pages_to), right after Segmentation: biofilm mode is already the biofilm layer, so no
 "Biofilm Stages" tab sits around them. This object keeps their controllers and the shared cursor.
 
-The Seeding and Microcolonies pages are live: each measures the loaded recording through its controller (Track, the film,
-the exports). The Maturation and Dispersion pages still read a study JSON until they are rebuilt the same way."""
+The Seeding, Microcolonies and Maturation pages are live: each measures the loaded recording through its controller
+(Track or Measure, the film, the exports). The Dispersion page still reads a study JSON until it is rebuilt the same way."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -13,7 +13,9 @@ from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QPushButton, QTa
 from nd2_analyzer.analysis.biofilm_stages.study import BiofilmStudy
 from .microcolony_controller import MicrocolonyController
 from .microcolony_page import MicrocolonyPage
-from .pages import DispersionPage, MaturationPage
+from .growth_controller import GrowthController
+from .growth_page import GrowthPage
+from .pages import DispersionPage
 from .seeding_controller import SeedingController
 from .seeding_page import SeedingPage
 
@@ -39,8 +41,10 @@ class BiofilmStagesTab(QWidget):
         self.controller = SeedingController(self.seeding_page, self)
         self.microcolony_page = MicrocolonyPage()
         self.microcolony_controller = MicrocolonyController(self.microcolony_page, self.controller.recording_info, self.controller.position, self)
-        self.live_pages = (self.seeding_page, self.microcolony_page)
-        self.pages = [self.seeding_page, self.microcolony_page, MaturationPage(), DispersionPage()]
+        self.growth_page = GrowthPage()
+        self.growth_controller = GrowthController(self.growth_page, self.controller.recording_info, self)
+        self.live_pages = (self.seeding_page, self.microcolony_page, self.growth_page)
+        self.pages = [self.seeding_page, self.microcolony_page, self.growth_page, DispersionPage()]
         for p in self.pages:
             self.tabs.addTab(p, getattr(p, "name", "Seeding")); p.hour_changed.connect(self._on_hour)
         self.tabs.currentChanged.connect(self._on_tab_shown)
@@ -76,6 +80,7 @@ class BiofilmStagesTab(QWidget):
         the tracking widget (its tracks are used when the Seeding page has not tracked the position itself)."""
         self.controller.connect_main_window(set_frame=set_frame, tracking_widget=tracking_widget)
         self.microcolony_controller.connect_main_window(set_frame=set_frame)
+        self.growth_controller.connect_main_window(set_frame=set_frame)
 
     def follow_frame(self, frame: int):
         """The view area's T slider moved: the cursor follows it, on the Seeding strip now and on the other pages when
@@ -87,8 +92,9 @@ class BiofilmStagesTab(QWidget):
         self.shared_hour = h
         if self.seeding_page.strip.cursor_h is None or abs(self.seeding_page.strip.cursor_h - h) > 1e-9:
             self.seeding_page.set_hour(h)
-        if self.tabs.currentWidget() is self.microcolony_page and abs(self.microcolony_page.hour - h) > 1e-9:
-            self.microcolony_page.set_hour(h)
+        shown = self.tabs.currentWidget()
+        if shown in (self.microcolony_page, self.growth_page) and abs(shown.hour - h) > 1e-9:
+            shown.set_hour(h)
 
     def save_results(self, folder: str):
         """Write the Seeding page's results next to the experiment when the user saves; nothing when there are none."""
