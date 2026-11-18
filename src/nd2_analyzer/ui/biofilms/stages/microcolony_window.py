@@ -62,7 +62,9 @@ class MicrocolonyDialog(QDialog):
         self.step = 0
         if say:
             self.hint.setText(f"Following microcolony {int(root)}.")
-        self.redraw()
+        self._measure_stain()
+        if not getattr(self, "closed", False):
+            self.redraw()
 
     def follow_at(self, x: float, y: float):
         """A point of the picture (its pixels): follow the microcolony there."""
@@ -83,7 +85,33 @@ class MicrocolonyDialog(QDialog):
         self.step = int(v); self.redraw()
 
     def _on_stain(self, on):
-        self.film.show_stain = bool(on) and self.film.counted_at is not None; self.redraw()
+        self.film.show_stain = bool(on) and self.film.counted_at is not None
+        self._measure_stain()
+        if not getattr(self, "closed", False):
+            self.redraw()
+
+    def _measure_stain(self):
+        """The matrix stain of every frame of the film is measured once (seconds on a long film). The window says how
+        far it is and keeps its controls still meanwhile."""
+        if not self.film.show_stain or self.film.stain_ready() or not self.film.frames:
+            return
+        from PySide6.QtWidgets import QApplication
+        waiting = (self.slider, self.combo, self.play_button, self.stain_box, self.save_film_button, self.save_button)
+        was = self.hint.text(); playing = self.timer.isActive(); self.timer.stop()
+        for w in waiting:
+            w.setEnabled(False)
+        try:
+            for k, n in self.film.measure_stain():
+                if getattr(self, "closed", False):                      # the window was closed meanwhile: stop, the film keeps what it has
+                    self.film.show_stain = False; return
+                self.hint.setText(f"Measuring the matrix stain in this microcolony: frame {k} of {n}"); QApplication.processEvents()
+        finally:
+            if not getattr(self, "closed", False):
+                for w in waiting:
+                    w.setEnabled(True)
+                self.hint.setText(was)
+                if playing:
+                    self.timer.start()
 
     def _on_play(self, on):
         self.play_button.setText("Pause" if on else "Play")
@@ -130,4 +158,4 @@ class MicrocolonyDialog(QDialog):
             self.redraw()                                                               # and the screen's picture again
 
     def closeEvent(self, event):
-        self.timer.stop(); super().closeEvent(event)
+        self.closed = True; self.timer.stop(); super().closeEvent(event)

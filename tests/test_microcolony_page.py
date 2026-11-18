@@ -210,3 +210,50 @@ def test_the_window_has_a_matrix_stain_box_that_needs_the_stain(toy, film):
     dlg.stain_box.setChecked(True)
     assert film.show_stain
     dlg.close()
+
+
+def test_ticking_matrix_stain_measures_the_film_frame_by_frame_and_says_how_far_it_is(toy, film):
+    """The stain of every frame of the film has to be measured once (seconds on a long film): the window says which
+    frame it is at and keeps its controls still meanwhile, instead of standing frozen."""
+    from nd2_analyzer.ui.biofilms.stages.microcolony_window import HINT, MicrocolonyDialog
+    tracks, _ = toy
+    film.set_root(1); film.set_stain(left_block_stain)
+    assert not film.stain_ready()
+    dlg = MicrocolonyDialog(film, MP.entries(tracks), root=1)
+    said = []; plain = dlg.hint.setText; enabled = []
+    dlg.hint.setText = lambda words: (said.append(words), enabled.append(dlg.slider.isEnabled()), plain(words))[-1]
+    dlg.stain_box.click()
+    assert said[:2] == ["Measuring the matrix stain in this microcolony: frame 1 of 6", "Measuring the matrix stain in this microcolony: frame 2 of 6"]
+    assert said[5].endswith("frame 6 of 6") and said[-1] == HINT and enabled[:6] == [False] * 6      # the slider waits while it measures
+    assert film.show_stain and film.stain_ready() and dlg.slider.isEnabled() and dlg.stain_box.isEnabled()
+    said.clear(); dlg.stain_box.click(); dlg.stain_box.click()                                       # off and on again: nothing to measure
+    assert not [w for w in said if w.startswith("Measuring")]
+    dlg.follow(2)                                                                                     # another microcolony, the box still ticked
+    assert [w for w in said if w.startswith("Measuring")][-1].endswith("frame 2 of 2") and film.stain_ready()
+    dlg.close()
+
+
+def test_the_stain_series_can_be_measured_step_by_step(film):
+    film.set_root(1); film.set_stain(left_block_stain)
+    steps = list(film.measure_stain())
+    assert steps == [(1, 6), (2, 6), (3, 6), (4, 6), (5, 6), (6, 6)] and film.stain_ready()
+    hours, cover = film.stain_series()
+    assert hours.tolist() == [24.0, 24.5, 25.0, 25.5, 26.0, 26.5] and (cover[:3] == 0).all() and (cover[3:] > 20).all()
+    assert list(film.measure_stain()) == []                                                           # already measured
+
+
+def test_closing_the_window_while_the_stain_is_measured_stops_the_measure_quietly(toy, film):
+    from nd2_analyzer.ui.biofilms.stages.microcolony_window import MicrocolonyDialog
+    tracks, _ = toy
+    film.set_root(1); seen = []
+
+    def stain_then_close(t):
+        seen.append(t)
+        if len(seen) == 2:
+            dlg.close()                                    # the user closes the window during the second frame
+        return left_block_stain(t)
+
+    film.set_stain(stain_then_close)
+    dlg = MicrocolonyDialog(film, MP.entries(tracks), root=1)
+    dlg.stain_box.click()                                  # must not raise
+    assert len(seen) == 2 and not film.stain_ready()

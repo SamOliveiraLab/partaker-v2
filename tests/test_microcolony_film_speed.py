@@ -123,3 +123,15 @@ def test_a_saved_image_is_drawn_with_every_pixel(tracks, tmp_path, monkeypatch):
     monkeypatch.setattr(QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (str(tmp_path / "m.png"), "PNG (*.png)")))
     dlg.save_image()
     assert on_screen > 1 and asked[-2:] == [1, on_screen] and (tmp_path / "m.png").exists()   # every pixel for the file, then the screen again
+
+
+def test_a_crowded_merging_history_names_only_the_bars_that_have_room():
+    """A microcolony that many others merged into has more bars than names fit: the names of those that are still
+    themselves now are kept, each only if it clears the one above; a small family names every bar."""
+    rows = {i: i for i in range(40)}                       # 40 bars, one row each, 5 px a row; a name needs 12 px
+    alive = {0, 1, 2, 5, 6, 20, 39}
+    assert F.names_to_draw(rows, alive, row_px=5.0, name_px=12.0) == [0, 5, 20, 39]
+    assert F.names_to_draw(rows, alive, row_px=5.0, name_px=12.0, always=6) == [0, 6, 20, 39]      # the followed one keeps its name
+    few = {i: i for i in range(7)}
+    assert F.names_to_draw(few, {0, 3}, row_px=30.0, name_px=12.0) == [0, 1, 2, 3, 4, 5, 6]         # room for all: all are named
+    assert F.bar_width(7) == 6 and F.bar_width(16) == 6 and F.bar_width(67) == pytest.approx(6 * 16 / 67) and F.bar_width(500) == 1.2

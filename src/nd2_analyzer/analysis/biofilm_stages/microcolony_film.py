@@ -24,6 +24,27 @@ STRIP_TILE_PX = 160            # a tile of the page's film strip is drawn about 
 IMAGE_SHARE = 0.37             # the picture takes this share of the width of the window's figure
 
 
+FULL_BARS = 16                 # up to this many bars the merging history draws them 6 points thick
+
+
+def bar_width(n_bars: int) -> float:
+    """The thickness of a bar of the merging history, thinner when there are many."""
+    return 6.0 if n_bars <= FULL_BARS else max(1.2, 6.0 * FULL_BARS / n_bars)
+
+
+def names_to_draw(rows: Dict[int, int], alive, row_px: float, name_px: float, always: Optional[int] = None) -> List[int]:
+    """The bars of the merging history that get their name written, top to bottom. With room for every name (a row at
+    least as tall as a name) all are named. In a crowded history only the microcolonies that are still themselves now
+    (alive) are, each only if it clears the names already kept; `always` (the followed one) keeps its name."""
+    if row_px >= name_px:
+        return sorted(rows, key=rows.get)
+    need = name_px / row_px; kept = [always] if always is not None and always in rows else []
+    for i in sorted((i for i in rows if i in alive and i != always), key=rows.get):
+        if all(abs(rows[i] - rows[k]) >= need for k in kept):
+            kept.append(i)
+    return sorted(kept, key=rows.get)
+
+
 def step_for(side_px: int, shown_px: float) -> int:
     """Every how many pixels of a box side_px wide to draw, for a picture shown shown_px wide: about as fine as it is
     shown (the nearest whole step, so a picture is enlarged at most 1.5 times on screen)."""
@@ -74,15 +95,28 @@ class MicrocolonyFilm:
             self._counted[t] = np.asarray(self.counted_at(t), bool)
         return self._counted[t]
 
+    def stain_ready(self) -> bool:
+        """The matrix stain of every frame of this film is measured (stain_series answers at once)."""
+        return self._stain_series is not None
+
+    def measure_stain(self):
+        """Measures the matrix stain inside the followed microcolony frame by frame, giving (frames done, frames in
+        all) after each one, so a window can say how far it is. Nothing to do when it is measured already."""
+        if self._stain_series is not None or self.counted_at is None:
+            return
+        cover = []
+        for k, t in enumerate(self.frames, 1):
+            ids = self.tracks.identity_map(t); mine = np.isin(ids, [i for i in self.order if self.owner(i, t) == self.root]); oy, ox = self.tracks.offsets[t]
+            c = self.counted(t); on = np.zeros(ids.shape, bool); on[oy:oy + c.shape[0], ox:ox + c.shape[1]] = c
+            cover.append(100.0 * float((on & mine).sum()) / max(int(mine.sum()), 1))
+            if k == len(self.frames):
+                self._stain_series = (np.array([self.tracks.hours[f] for f in self.frames]), np.array(cover))
+            yield k, len(self.frames)
+
     def stain_series(self):
         """(hours, % of the followed microcolony's area that is matrix stain) over the frames of the film."""
-        if self._stain_series is None:
-            cover = []
-            for t in self.frames:
-                ids = self.tracks.identity_map(t); mine = np.isin(ids, [i for i in self.order if self.owner(i, t) == self.root]); oy, ox = self.tracks.offsets[t]
-                c = self.counted(t); on = np.zeros(ids.shape, bool); on[oy:oy + c.shape[0], ox:ox + c.shape[1]] = c
-                cover.append(100.0 * float((on & mine).sum()) / max(int(mine.sum()), 1))
-            self._stain_series = (np.array([self.tracks.hours[t] for t in self.frames]), np.array(cover))
+        for _step in self.measure_stain():
+            pass
         return self._stain_series
 
     # ------------------------------------------------------------------ which microcolony
@@ -268,15 +302,19 @@ class MicrocolonyFilm:
         fig.text(0.03, 0.955, f"{title}   frame {t}   {now:g} h", fontsize=10.5, fontweight="bold", color=SP.INK, va="center")
         # the merging history, drawn up to now
         ax2 = fig.add_axes([0.50, 0.47, 0.46, 0.34]); SP.open_frame(ax2); first_h, last_h = hours[self.frames[0]], hours[self.frames[-1]]
-        ident = self.tracks.identities; pad = max((last_h - first_h) * 0.06, 0.5)
+        ident = self.tracks.identities; pad = max((last_h - first_h) * 0.06, 0.5); thick = bar_width(len(self.order))
+        merged_by_now = lambda i: i in self.into and self.into[i][0] in self.row and hours[self.into[i][1]] <= now
+        alive = {i for i in self.order if hours[ident[i]["birth"]] <= now and not merged_by_now(i)}
+        named = set(names_to_draw(self.row, alive, 0.34 * fig.get_figheight() * fig.dpi / max(len(self.order), 1), 9 * fig.dpi / 72 * 1.25, always=self.root))
         for i in self.order:
             b0 = hours[ident[i]["birth"]]; joined = i in self.into and self.into[i][0] in self.row
             end = hours[self.into[i][1]] if joined else last_h + pad
             if b0 <= now:
-                ax2.plot([b0, min(end, now)], [self.row[i], self.row[i]], color=self.palette[i], lw=6, solid_capstyle="butt", zorder=3)
-                ax2.text(b0 - pad * 0.15, self.row[i], str(i), ha="right", va="center", fontsize=9, color=SP.INK)
+                ax2.plot([b0, min(end, now)], [self.row[i], self.row[i]], color=self.palette[i], lw=thick, solid_capstyle="butt", zorder=3)
+                if i in named:
+                    ax2.text(b0 - pad * 0.15, self.row[i], str(i), ha="right", va="center", fontsize=9, color=SP.INK)
                 if joined and end <= now:
-                    ax2.plot([end, end], [self.row[i], self.row[self.into[i][0]]], color=SP.INK, lw=1.4, zorder=2)
+                    ax2.plot([end, end], [self.row[i], self.row[self.into[i][0]]], color=SP.INK, lw=1.4 if thick == 6.0 else 0.7, zorder=2)
         ax2.axvline(now, color="#9a9a9a", lw=1.2, zorder=1); ax2.set_ylim(len(self.order) - 0.4, -0.6); ax2.set_yticks([]); ax2.spines["left"].set_visible(False)
         ax2.set_xlim(first_h - pad, last_h + pad); ax2.tick_params(labelbottom=False)
         n_now = self.microcolonies_now(t)
