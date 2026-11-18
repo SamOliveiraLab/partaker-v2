@@ -9,6 +9,7 @@ import numpy as np
 from matplotlib.colors import to_rgb
 from scipy import ndimage as ndi
 
+from . import figure_style as FS
 from . import seeding_plots as SP
 from .microcolony_follow import MicrocolonyTracks
 from .microcolony_plots import FOLLOWED, merged_into, subtree
@@ -341,8 +342,8 @@ class MicrocolonyFilm:
                     ax2.text(b0 - pad * 0.15, self.row[i], str(i), ha="right", va="center", fontsize=9, color=SP.INK)
                 if joined and end <= now:
                     ax2.plot([end, end], [self.row[i], self.row[self.into[i][0]]], color=SP.INK, lw=1.4 if thick == 6.0 else 0.7, zorder=2)
-        ax2.axvline(now, color="#9a9a9a", lw=1.2, zorder=1); ax2.set_ylim(len(self.order) - 0.4, -0.6); ax2.set_yticks([]); ax2.spines["left"].set_visible(False)
-        ax2.set_xlim(first_h - pad, last_h + pad); ax2.tick_params(labelbottom=False)
+        ax2.axvline(now, color=FS.CURSOR_RED, lw=1.2, zorder=6); ax2.set_ylim(len(self.order) - 0.4, -0.6); ax2.set_yticks([]); ax2.spines["left"].set_visible(False)
+        ax2.set_xlim(first_h - pad, last_h + pad); ax2.set_xticks(FS.time_ticks(first_h, last_h)); ax2.tick_params(labelbottom=False)
         n_now = self.microcolonies_now(t)
         fig.text(0.50, 0.955, "merging history", fontsize=10.5, fontweight="bold", color=SP.INK, va="center")
         fig.text(0.50, 0.885, f"{SP_words(n_now)} now; each bar ends where it merges", fontsize=9, color="#444444", va="center")
@@ -350,11 +351,12 @@ class MicrocolonyFilm:
         ax3 = fig.add_axes([0.50, 0.15, 0.46, 0.21]); SP.open_frame(ax3)
         if self.show_stain and self.counted_at is not None:
             hs, cover = self.stain_series(); k = hs <= now; ax3.plot(hs[k], cover[k], color=STAIN_GREEN, lw=2)
-            ax3.set_ylim(0, max(float(cover.max()), 1.0) * 1.12); ax3.set_ylabel("matrix stain\ninside it (%)")
+            ax3.set_ylim(0, max(float(cover.max()), 1.0) * 1.12); ax3.set_ylabel("Area covered (%)", fontweight="bold")     # Figure 4 d's name for the stain cover
         else:
             hs, ns = self.cells_series(); k = hs <= now; ax3.plot(hs[k], ns[k], color=FOLLOWED, lw=2)
-            ax3.set_ylim(0, max(int(ns.max()), 1) * 1.12); ax3.set_ylabel("cells in it")
-        ax3.axvline(now, color="#9a9a9a", lw=1.2, zorder=1); ax3.set_xlim(first_h - pad, last_h + pad); ax3.set_xlabel("time after inoculation (h)")
+            ax3.set_ylim(0, max(int(ns.max()), 1) * 1.12); ax3.set_ylabel("Cells", fontweight="bold")
+        ax3.axvline(now, color=FS.CURSOR_RED, lw=1.2, zorder=6); ax3.set_xlim(first_h - pad, last_h + pad); ax3.set_xticks(FS.time_ticks(first_h, last_h))
+        ax3.set_xlabel("Time (h)", fontweight="bold")
         return ax, ax2
 
     # ------------------------------------------------------------------ export

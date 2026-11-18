@@ -10,6 +10,7 @@ import numpy as np
 from matplotlib.colors import to_rgb
 
 from . import growth_plots as GP
+from . import figure_style as FS
 from . import matrix_stain as MX
 from . import seeding_plots as SP
 from .growth_measure import GrowthStates
@@ -82,8 +83,9 @@ class GrowthFilm:
         ax2 = fig.add_axes([0.52, 0.52, 0.44, 0.30]); SP.open_frame(ax2)
         for name, a, b in GP.states(gs):
             ax2.axvspan(a, b, color=GP.STATE_SHADE[name], lw=0, zorder=0)
-        ax2.plot(hours[seen], gs.cells[p][seen], color=SP.INK, lw=2); ax2.axvline(now, color="#9a9a9a", lw=1.2, zorder=1)
-        ax2.set_xlim(hours[0] - pad, hours[-1] + pad); ax2.set_ylim(0, max(int(gs.cells[p].max()), 1) * 1.12); ax2.set_ylabel("cells"); ax2.tick_params(labelbottom=False)
+        ax2.plot(hours[seen], gs.cells[p][seen], color=FS.INK, lw=1.6)
+        FS.time_axis(ax2, float(hours[0]), float(hours[-1]), show=False); FS.cursor(ax2, now)             # as the plots of the page: Figure 5's names, the red cursor
+        FS.count_axis(ax2, max(int(gs.cells[p].max()), 1) * 1.12, "Cells per frame", bins=3)
         fig.text(0.52, 0.955, "number of cells", fontsize=10.5, fontweight="bold", color=SP.INK, va="center")
         fig.text(0.52, 0.885, f"{int(gs.cells[p][k]):,} cells now, {gs.rate[p][k]:.0f} more per hour", fontsize=9, color="#444444", va="center")
         ax3 = fig.add_axes([0.52, 0.15, 0.44, 0.24]); SP.open_frame(ax3)
@@ -92,8 +94,7 @@ class GrowthFilm:
         if p in gs.matrix and len(gs.matrix[p]):
             mh = gs.matrix_hours[p]; shown = mh <= now + 1e-9
             ax3.plot(mh[shown], gs.matrix[p][shown], color=GP.MATRIX_GREEN, lw=2); ax3.set_ylim(0, max(float(gs.matrix[p].max()), 1.0) * 1.12)
-        ax3.axvline(now, color="#9a9a9a", lw=1.2, zorder=1); ax3.set_xlim(hours[0] - pad, hours[-1] + pad)
-        ax3.set_xlabel("time after inoculation (h)"); ax3.set_ylabel("matrix stain\n(% of frame)")
+        FS.time_axis(ax3, float(hours[0]), float(hours[-1])); FS.cursor(ax3, now); ax3.set_ylabel("Matrix stain\n(% of frame)", fontweight="bold")
         return ax
 
     def save_gif(self, path: str, progress: Optional[Callable[[int, int], bool]] = None, ms: int = 250):
