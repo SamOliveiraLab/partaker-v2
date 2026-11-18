@@ -41,14 +41,10 @@ def _positions(metrics: MicrocolonyMetrics) -> str:
     n = len(metrics.positions); return f"{n} position{'' if n == 1 else 's'}"
 
 
-def _axes(fig, metrics: MicrocolonyMetrics, key: str, note: str, left: float = 0.16, right: float = 0.95):
+def _axes(fig, metrics: MicrocolonyMetrics, key: str, note: str, left: float = FS.CARD_LEFT, right: float = FS.CARD_RIGHT):
     """The panel as Figure 3 draws its metrics: the title, what the page adds under it (the value at the cursor, which
     microcolonies are counted), the plot, and room under it for the legend."""
-    fig.clear(); ax = fig.add_axes([left, 0.20, right - left, 0.575]); SP.open_frame(ax)
-    fig.text(left, 0.945, TITLE[key], fontsize=12, fontweight="bold", color=SP.INK, va="center")
-    fig.text(left, 0.885, note, fontsize=9.5, color="#555555", va="center")
-    fig.text(left, 0.832, rule_note(metrics.settings), fontsize=8.5, color="#777777", va="center")
-    return ax
+    return FS.card(fig, TITLE[key], note, rule_note(metrics.settings), left=left, right=right)
 
 
 def _nearest(hours: np.ndarray, cursor_h: Optional[float]) -> Optional[int]:
@@ -109,7 +105,7 @@ def draw_in(fig, metrics: MicrocolonyMetrics, cursor_h: Optional[float] = None):
     if rings.any():
         ax.plot(hours[rings], chance[rings], "o", ms=7, mfc="white", mec=FS.G1, mew=1.6, zorder=4)
     ax.set_ylim(0, 105); ax.set_ylabel("Cells (%)", fontweight="bold"); _time_axis(ax, hours, cursor_h)
-    FS.legend_under(fig, 0.16, [[("dots", FS.INK, "measured")] + ([("ring", FS.G1, "random placement")] if rings.any() else [])], y=0.045)
+    FS.legend_under(fig, FS.CARD_LEFT, [[("dots", FS.INK, "measured")] + ([("ring", FS.G1, "random placement")] if rings.any() else [])])
     return ax
 
 
@@ -122,7 +118,7 @@ def draw_density(fig, metrics: MicrocolonyMetrics, cursor_h: Optional[float] = N
     _band(ax, hours, single, sd_single, colour=FS.G1, k=k); _band(ax, hours, inside, sd_in, colour=ORANGE, k=k)
     both = np.r_[(inside + sd_in)[np.isfinite(inside)], (single + sd_single)[np.isfinite(single)], 1e-9]
     ax.set_ylim(0, float(both.max()) * 1.12); ax.set_ylabel("Cells per 100 µm²", fontweight="bold"); _time_axis(ax, hours, cursor_h)
-    FS.legend_under(fig, 0.16, [[("dots", ORANGE, "in microcolonies"), ("dots", FS.G1, "single cells")]], y=0.045)
+    FS.legend_under(fig, FS.CARD_LEFT, [[("dots", ORANGE, "in microcolonies"), ("dots", FS.G1, "single cells")]])
     return ax
 
 
@@ -167,7 +163,7 @@ def draw_radial(fig, metrics: MicrocolonyMetrics, cursor_h: Optional[float] = No
                       extent=(hours[0] - step / 2, hours[-1] + step / 2, float(edges[0]), float(edges[top])), interpolation="nearest")
     ax.set_xticks(FS.time_ticks(float(hours[0]), float(hours[-1]))); ax.set_xlabel("Time (h)", fontweight="bold"); FS.cursor(ax, cursor_h)
     ax.set_ylabel("Distance from centre (µm)", fontweight="bold")
-    bar_axes = fig.add_axes([0.83, 0.20, 0.025, 0.575]); bar = fig.colorbar(image, cax=bar_axes); bar.outline.set_linewidth(0.6)
+    bar_axes = fig.add_axes([0.83, FS.AXES_BOTTOM, 0.025, FS.AXES_TOP - FS.AXES_BOTTOM]); bar = fig.colorbar(image, cax=bar_axes); bar.outline.set_linewidth(0.6)
     bar.set_label("Cells per 100 µm²", fontweight="bold")
     return ax
 

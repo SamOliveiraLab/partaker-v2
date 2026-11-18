@@ -128,12 +128,9 @@ def draw_strip(ax, span: Tuple[float, float], cursor_h: float, th1_h: Optional[f
 
 
 # ---------------------------------------------------------------------------------------------- plots
-def _axes(fig, title: str, note: str = "", left: float = 0.15):
-    fig.clear(); ax = fig.add_axes([left, 0.15, 0.95 - left, 0.62]); SP.open_frame(ax)
-    fig.text(left, 0.93, title, fontsize=12, fontweight="bold", color=SP.INK, va="center")
-    if note:
-        fig.text(left, 0.865, note, fontsize=9.5, color="#555555", va="center")
-    return ax
+def _axes(fig, title: str, note: str = "", left: float = FS.CARD_LEFT):
+    """The card every plot of the pages shares (figure_style.card): title, note, the same box for the axes."""
+    return FS.card(fig, title, note, left=left)
 
 
 def _time_axis(ax, tracks: MicrocolonyTracks, cursor_h: Optional[float]):

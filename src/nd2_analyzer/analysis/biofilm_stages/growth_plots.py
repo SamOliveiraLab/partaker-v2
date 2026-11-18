@@ -118,11 +118,11 @@ def draw_strip(ax, gs: Optional[GrowthStates], span: Tuple[float, float], cursor
 # ---------------------------------------------------------------------------------------------- the plots
 # Drawn as the panels of the figures are (make_figure5_s2.py d, make_figure5_s1.py b, make_figure4_v3.py d), with the
 # tool's own numbers; limits and label places come from the data. The cursor of the page is a red line.
-LEFT, RIGHT = 0.17, 0.955
+LEFT, RIGHT = FS.CARD_LEFT, FS.CARD_RIGHT
 
 
 def _missing(fig, key: str):
-    fig.clear(); FS.title(fig, LEFT, dict(FIGURES)[key]); ax = fig.add_axes([LEFT, 0.24, RIGHT - LEFT, 0.56]); ax.axis("off")
+    ax = FS.card(fig, dict(FIGURES)[key]); ax.axis("off")
     ax.text(0.5, 0.5, NO_DYE, ha="center", va="center", transform=ax.transAxes, color=SP.EMPTY_GREY)
     return ax
 
@@ -146,7 +146,7 @@ def draw_cells(fig, gs: GrowthStates, cursor_h: Optional[float] = None, selected
     if th2 is not None and not th2["reached"]:                        # room for the prediction, but not for a range without end
         high = th2["range95_h"][1]; x_end = min(max(th2["th2_h"], high if np.isfinite(high) else th2["th2_h"]), first + 2.5 * (last - first))
         x_end = max(x_end, last)
-    top = fig.add_axes([LEFT, 0.525, RIGHT - LEFT, 0.285]); low = fig.add_axes([LEFT, 0.25, RIGHT - LEFT, 0.225])
+    top = fig.add_axes([LEFT, FS.AXES_BOTTOM + 0.275, RIGHT - LEFT, FS.AXES_TOP - FS.AXES_BOTTOM - 0.275]); low = fig.add_axes([LEFT, FS.AXES_BOTTOM, RIGHT - LEFT, 0.225])
     for ax in (top, low):
         SP.open_frame(ax)
     FS.time_axis(top, first, x_end, show=False); FS.time_axis(low, first, x_end); lo, hi = top.get_xlim()
@@ -202,13 +202,13 @@ def draw_cells(fig, gs: GrowthStates, cursor_h: Optional[float] = None, selected
     if th2 is not None:
         a, b = th2["range95_h"]
         rows.append([("range", FS.INK, f"Th2 and its 95 % range ({a:.0f} to {b:.0f} h)")] if np.isfinite(a) and np.isfinite(b) else [("big dot", FS.INK, "Th2")])
-    FS.legend_under(fig, LEFT, rows, y=0.088)
+    FS.legend_under(fig, LEFT, rows)
     return top
 
 
-def _percent_axes(fig, key: str, label: str, top: float = 0.865):
-    """One panel under the title; top: where it ends (lower when a threshold is named above it)."""
-    fig.clear(); FS.title(fig, LEFT, dict(FIGURES)[key]); ax = fig.add_axes([LEFT, 0.215, RIGHT - LEFT, top - 0.215]); SP.open_frame(ax)
+def _percent_axes(fig, key: str, label: str):
+    """One panel in the card every plot shares."""
+    ax = FS.card(fig, dict(FIGURES)[key])
     ax.set_ylim(0, 100); ax.set_yticks([0, 50, 100]); ax.set_ylabel(label, fontweight="bold")
     return ax
 
@@ -220,7 +220,7 @@ def draw_matrix(fig, gs: GrowthStates, cursor_h: Optional[float] = None, selecte
     if not has_matrix(gs):
         return _missing(fig, "matrix")
     hours, mean, sd = gs.mean_of("matrix"); th1 = gs.th1["th1_h"] if gs.th1 else None; many = len(gs.positions) > 1
-    ax = _percent_axes(fig, "matrix", "Percentage", top=0.80); first, last = float(hours[0]), float(hours[-1]); FS.time_axis(ax, first, last); lo, hi = ax.get_xlim()
+    ax = _percent_axes(fig, "matrix", "Percentage"); first, last = float(hours[0]), float(hours[-1]); FS.time_axis(ax, first, last); lo, hi = ax.get_xlim()
     states = [("I", lo, th1), ("II", th1, hi)] if th1 is not None and lo < th1 < hi else []
     FS.bands(ax, states); rows = []
     share = (shared or {}).get("cells_in_pct")
@@ -235,7 +235,7 @@ def draw_matrix(fig, gs: GrowthStates, cursor_h: Optional[float] = None, selecte
     FS.band_names(ax, states, y=0.45)
     if states:
         ax.plot([th1], [float(np.interp(th1, hours, mean))], "o", ms=7.5, mfc="white", mec=FS.INK, mew=1.5, zorder=6, clip_on=False)   # Th1 on the stain line
-    FS.threshold(fig, ax, th1, "Th1"); FS.cursor(ax, cursor_h); FS.legend_under(fig, LEFT, [rows], y=0.055)
+    FS.threshold(fig, ax, th1, "Th1"); FS.cursor(ax, cursor_h); FS.legend_under(fig, LEFT, [rows])
     return ax
 
 
@@ -251,20 +251,20 @@ def draw_inside(fig, gs: GrowthStates, cursor_h: Optional[float] = None, selecte
             FS.ribbon(ax, hours, values, spread, colour, 0.16)
         FS.dots(ax, hours, values, colour, width=1.7)
     FS.cursor(ax, cursor_h)
-    FS.legend_under(fig, LEFT, [[("line", FS.MATRIX_GREEN, "matrix stain inside microcolonies"), ("line", FS.OUTSIDE_GREY, "outside")]], y=0.055)
+    FS.legend_under(fig, LEFT, [[("line", FS.MATRIX_GREEN, "matrix stain inside microcolonies"), ("line", FS.OUTSIDE_GREY, "outside")]])
     return ax
 
 
 @SP.with_house_style
 def draw_positions(fig, gs: GrowthStates, cursor_h: Optional[float] = None, selected: Optional[int] = None, shared: Optional[dict] = None):
     """The count of every position, the selected one in black."""
-    fig.clear(); FS.title(fig, LEFT, "Number of cells, every position"); ax = fig.add_axes([LEFT, 0.215, RIGHT - LEFT, 0.65]); SP.open_frame(ax)
+    ax = FS.card(fig, "Number of cells, every position")
     first = min(float(gs.hours[p][0]) for p in gs.positions); last = max(float(gs.hours[p][-1]) for p in gs.positions); FS.time_axis(ax, first, last)
     for p in gs.positions:
         picked = p == selected; ax.plot(gs.hours[p], gs.cells[p], color=FS.INK if picked else FS.G2, lw=2.0 if picked else 1.2, zorder=4 if picked else 3)
     FS.count_axis(ax, max(float(max(gs.cells[p].max() for p in gs.positions)), 1.0) * 1.12, "Cells per frame"); FS.cursor(ax, cursor_h)
     rows = ([("line", FS.INK, f"position {selected}")] if selected in gs.positions else []) + [("line", FS.G2, "the other positions" if selected in gs.positions else "every position")]
-    FS.legend_under(fig, LEFT, [rows], y=0.055)
+    FS.legend_under(fig, LEFT, [rows])
     return ax
 
 

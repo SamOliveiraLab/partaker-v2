@@ -16,12 +16,31 @@ STATE_SHADE = {"I": "#e3e9ef", "II": "#c9d5e0", "III": "#aebfd0"}          # cal
 MICROCOLONY_ORANGE, MATRIX_GREEN, PREDICTED_GREY, OUTSIDE_GREY = "#E08A00", "#1fbf3f", "#7a7a7a", "#8a8a8a"
 CURSOR_RED = "#cc3311"                                                      # the cursor of the page's strip
 DASH = (0, (3, 2))
-TITLE_Y, ABOVE_Y = 0.955, 0.045                                             # the title; a threshold's name sits ABOVE_Y over the axes
+# One layout for every plot card of the pages, so any two plots side by side line up: the title line, two note lines
+# (what the page adds: the value at the cursor, a rule; or the names of the thresholds), one box for the axes, one band
+# under it for the legend (two rows).
+CARD_LEFT, CARD_RIGHT = 0.17, 0.955
+TITLE_Y, NOTE_Y, NOTE2_Y = 0.955, 0.898, 0.843
+AXES_BOTTOM, AXES_TOP = 0.235, 0.79
+LEGEND_Y, LEGEND_ROW = 0.085, 0.056                                             # the title; a threshold's name sits ABOVE_Y over the axes
 STEPS_H = (0.25, 0.5, 1, 2, 3, 6, 12, 24, 48, 96, 168)
 
 
 def title(fig, left: float, text: str):
     return fig.text(left, TITLE_Y, text, fontsize=12, fontweight="bold", color=INK, va="center")
+
+
+def card(fig, title_text: str, note: str = "", note2: str = "", left: float = CARD_LEFT, right: float = CARD_RIGHT):
+    """A plot card: the title, up to two note lines, and the axes in the box every card shares. Returns the axes."""
+    fig.clear(); title(fig, left, title_text)
+    if note:
+        fig.text(left, NOTE_Y, note, fontsize=9.5, color="#555555", va="center")
+    if note2:
+        fig.text(left, NOTE2_Y, note2, fontsize=8.5, color="#777777", va="center")
+    ax = fig.add_axes([left, AXES_BOTTOM, right - left, AXES_TOP - AXES_BOTTOM])
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    return ax
 
 
 def time_ticks(first_h: float, last_h: float, most: int = 8) -> np.ndarray:
@@ -74,7 +93,7 @@ def threshold(fig, ax, x: Optional[float], name: str, others: Sequence = ()):
     for a in (ax, *others):
         a.axvline(x, color=INK, lw=1.0, ls=DASH, zorder=1)
     box = ax.get_position()
-    return fig.text(box.x0 + (x - lo) / (hi - lo) * box.width, box.y1 + ABOVE_Y, name, fontsize=9.5, fontweight="bold", color=INK, ha="center", va="center")
+    return fig.text(box.x0 + (x - lo) / (hi - lo) * box.width, NOTE2_Y, name, fontsize=9.5, fontweight="bold", color=INK, ha="center", va="center")
 
 
 def cursor(ax, cursor_h: Optional[float]):
@@ -97,7 +116,7 @@ def dots(ax, hours, mean, colour, joined: bool = True, size: float = 4.0, width:
     return ax.plot(hours[ok], mean[ok], marker="o", ms=size, color=colour, lw=width, ls="-" if joined else "none", zorder=4)[0]
 
 
-def legend_under(fig, left: float, rows: List[List[Tuple[str, str, str]]], y: float = 0.07, row_height: float = 0.056):
+def legend_under(fig, left: float, rows: List[List[Tuple[str, str, str]]], y: float = LEGEND_Y, row_height: float = LEGEND_ROW):
     """The legend under the plot, as in the figures: rows of (kind, colour, words). Kinds: "dots" (dots on a line),
     "dot" (dots alone), "line", "dashed", "range" (a thick line with a large dot), "big dot", "ring"."""
     drawn = []

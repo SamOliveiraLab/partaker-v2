@@ -174,3 +174,32 @@ def test_the_maturation_tab_takes_the_cells_in_microcolonies_from_the_microcolon
     assert hours.tolist() == [24.0, 25.5, 27.0] and mean == pytest.approx(np.full(3, (100 * 9 / 11 + 50) / 2))
     tab.microcolony_controller.on_new_recording(None)
     assert tab.growth_page.shared is None
+
+
+# ---------------------------------------------------------------- one layout for every plot card
+def test_every_plot_of_both_pages_sits_in_the_same_card():
+    """Any two plots side by side line up: the same title line, the same box for the axes (so "Time (h)" sits at one
+    height), the same band for the legend."""
+    from nd2_analyzer.analysis.biofilm_stages import figure_style as FS
+    from nd2_analyzer.analysis.biofilm_stages import microcolony_follow as MF, microcolony_metric_plots as XP, microcolony_metrics as MM, microcolony_plots as MP
+    from test_microcolony_metrics import frame
+    from test_microcolony_rules import PX, blocks
+    frames = [blocks(20), blocks(20), blocks(3), blocks(3), blocks(3), blocks(3)]
+    tracks = MF.follow_microcolonies(lambda t: frames[t], range(6), pixel_um=PX, dt_h=0.5, start_hour=24.0)
+    metrics = MM.measure_metrics(lambda p, t: frame(with_last_of_b=(p == 0)), {0: list(range(0, 21, 3)), 1: list(range(0, 21, 3))}, 0.1,
+                                 hour_of=lambda t: 24.0 + 0.5 * t, random_hours=(24.0, 27.0), placements=2)
+    figures = [drawn(key, grown()) for key in GP.DRAW]
+    for key in MP.DRAW:
+        fig = Figure(figsize=GP.FIGURE_SIZE_IN, dpi=100); FigureCanvasAgg(fig); MP.DRAW[key](fig, tracks, 25.0, 1); figures.append(fig)
+    for key in XP.DRAW:
+        fig = Figure(figsize=GP.FIGURE_SIZE_IN, dpi=100); FigureCanvasAgg(fig); XP.DRAW[key](fig, metrics, 27.0); figures.append(fig)
+    for fig in figures:
+        name = fig.texts[0].get_text(); boxes = [ax.get_position() for ax in fig.axes if ax.axison and ax.get_position().width > 0.1]
+        assert fig.texts[0].get_position()[1] == pytest.approx(FS.TITLE_Y), name
+        if not boxes:
+            continue                                               # a card that only says why it has no plot
+        assert min(b.y0 for b in boxes) == pytest.approx(FS.AXES_BOTTOM) and max(b.y1 for b in boxes) == pytest.approx(FS.AXES_TOP), name
+        below = [t.get_position()[1] for t in fig.texts if t.get_position()[1] < FS.AXES_BOTTOM]
+        assert all(any(abs(y - (FS.LEGEND_Y - k * FS.LEGEND_ROW)) < 1e-9 for k in range(2)) for y in below), name      # legends only in the legend band
+        between = [t.get_position()[1] for t in fig.texts[1:] if t.get_position()[1] > FS.AXES_TOP]
+        assert all(any(abs(y - v) < 1e-9 for v in (FS.NOTE_Y, FS.NOTE2_Y)) for y in between), name                      # notes and threshold names on the two note lines
