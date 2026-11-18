@@ -51,6 +51,27 @@ def test_stain_is_smoothed_and_counted_from_the_free_dye_level():
     assert MX.stain(corrected, level=2000.0) == pytest.approx(np.full((60, 60), 500.0), abs=1e-2)
 
 
+def test_matrix_inside_and_outside_microcolonies():
+    labels = np.zeros((200, 200), np.int32)
+    for i, x in enumerate((20, 43, 66, 89)):                 # four cells 0.3 um apart: one microcolony
+        labels[40:50, x:x + 20] = i + 1
+    labels[150:160, 150:170] = 5                             # a cell alone: not a microcolony
+    counted = np.zeros((200, 200), bool); counted[30:60, 10:65] = True; counted[140:170, 140:180] = True
+    inside, outside, share_inside, area = MX.inside_outside(counted, labels, PX)
+    colony = MX.microcolony_area(labels, PX)
+    assert colony[45, 30] and colony[45, 41] and not colony[155, 160] and not colony[100, 100]      # the cells and the gaps between them
+    assert area == pytest.approx(100.0 * colony.mean())
+    assert inside == pytest.approx(100.0 * (counted & colony).sum() / colony.sum())
+    assert outside == pytest.approx(100.0 * (counted & ~colony).sum() / (~colony).sum())
+    assert share_inside == pytest.approx(100.0 * (counted & colony).sum() / counted.sum()) and 0 < share_inside < 100
+
+
+def test_no_microcolony_means_no_inside():
+    labels = np.zeros((100, 100), np.int32); labels[40:50, 40:60] = 1
+    inside, outside, share_inside, area = MX.inside_outside(np.ones((100, 100), bool), labels, PX)
+    assert np.isnan(inside) and outside == 100.0 and share_inside == 0.0 and area == 0.0
+
+
 # ---------------------------------------------------------------- run 2, from the raw dye channel and the tool's own masks
 RUN2 = Path.home() / "Workspace/Datasets/ecoli-run2-june30-2026"
 MAIN, BEFORE, AFTER = RUN2 / "mcherry-tl-t24-t72-07-01-2026.nd2", RUN2 / "extra_3_24h/mcherry-tl-t5-b4-dye06-30-2027.nd2", RUN2 / "extra_3_24h/mcherry-tl-t5-06-30-2028.nd2"
@@ -82,3 +103,16 @@ def test_run2_position2_matrix_stain_is_the_one_of_figure4(run2):
         assert MX.share(counted) == pytest.approx(matrix_pct, abs=0.002), t
         if t == 0:
             assert MX.share(single) == pytest.approx(0.972, abs=0.002)                                      # single stained cells at 24 h
+
+
+@pytest.mark.slow
+def test_run2_position2_matrix_inside_and_outside_microcolonies_is_the_one_of_figure4(run2):
+    """figure4_new/cache/inside_frames.csv, position 2: (frame, % of the frame in microcolonies, % stained inside, % stained outside, % of the stain that is inside)."""
+    frames, pixel_um, ref = run2
+    green = lambda t: MX.correct(np.asarray(frames[t, 2, DYE_CHANNEL]), ref)
+    labels = lambda t: np.load(P2_LABELS / f"p2_t{t}.npz")["cell_labels"]
+    level, _used = MX.free_dye_level(((green(t), labels(t)) for t in range(0, 25, 3)), pixel_um)
+    for t, area, inside, outside, share_inside in ((36, 57.886, 3.873, 1.779, 74.952), (48, 65.539, 14.913, 7.790, 78.454), (66, 74.824, 44.793, 33.615, 79.840)):
+        counted, _single = MX.matrix(MX.stain(green(t), level), pixel_um)
+        got = MX.inside_outside(counted, labels(t), pixel_um)
+        assert got == pytest.approx((inside, outside, share_inside, area), abs=0.002), t

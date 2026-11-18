@@ -89,3 +89,20 @@ def matrix(stain_image: np.ndarray, pixel_um: float, settings: MatrixSettings = 
 def share(mask: np.ndarray) -> float:
     """Percent of the frame."""
     return 100.0 * float(np.asarray(mask).mean())
+
+
+def microcolony_area(labels: np.ndarray, pixel_um: float, rule=None) -> np.ndarray:
+    """The area of the microcolonies of a frame: the linked groups of 4 or more cells, each cell grown by half the gap."""
+    from .microcolony_rules import MicrocolonySettings, drop_small_cells, linked_groups
+    rule = rule or MicrocolonySettings()
+    groups = linked_groups(drop_small_cells(labels, pixel_um, rule.min_cell_um2), pixel_um, rule.gap_um)
+    return (groups.sizes[groups.group_map] >= rule.min_cells) & (groups.group_map > 0)
+
+
+def inside_outside(counted: np.ndarray, labels: np.ndarray, pixel_um: float, rule=None) -> Tuple[float, float, float, float]:
+    """(% of the microcolony area that is matrix, % of the rest of the frame that is matrix, % of the matrix that lies in
+    microcolonies, % of the frame that is microcolony)."""
+    colony = microcolony_area(labels, pixel_um, rule); counted = np.asarray(counted, bool)
+    inside = 100.0 * float(counted[colony].mean()) if colony.any() else float("nan")
+    outside = 100.0 * float(counted[~colony].mean()) if (~colony).any() else float("nan")
+    return inside, outside, 100.0 * float((counted & colony).sum()) / max(int(counted.sum()), 1), 100.0 * float(colony.mean())
