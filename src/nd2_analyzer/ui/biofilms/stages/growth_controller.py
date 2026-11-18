@@ -76,6 +76,7 @@ class GrowthWorker(QThread):
 
 
 class GrowthController(QObject):
+    measured_changed = Signal()                # a measure arrived, was loaded or was cleared: the Microcolonies strip takes its Th1
     # the tool's messages and the methods that hear them, with the names each message carries (see MicrocolonyController)
     LISTENS = (("experiment_loaded", "on_experiment_loaded"), ("image_data_loaded", "on_new_recording"), ("batch_segmentation_completed", "on_segmented"))
 
@@ -109,6 +110,7 @@ class GrowthController(QObject):
 
     def on_new_recording(self, image_data):
         self.generation += 1; self.measured = None; self.reference = None; self.dye_paths = None; self.close_window(); self.page.set_measured(None); self.refresh()
+        self.measured_changed.emit()
 
     def segmented(self) -> Dict[int, List[int]]:
         """position -> its segmented frames, from the mask cache of the model with the most frames."""
@@ -248,14 +250,18 @@ class GrowthController(QObject):
         dye = (f"  Free dye {np.mean(list(measured.free_dye.values())):,.0f} counts, cut-off {measured.settings.cut_off:,.0f} above it, matrix at least "
                f"{measured.settings.min_width_um:g} µm wide." if measured.free_dye else "")
         self.page.status.setText(f"{n:,} frames of {len(measured.positions)} positions, {first:g} to {last:g} h.{dye}  Every number here is computed by the tool on this recording.")
+        self.measured_changed.emit()
 
     # ------------------------------------------------------------------ with the saved session
     def save_state(self, folder) -> list:
         """Writes the growth-states measure and the dye file choice into the session folder. Returns the files written;
         none when nothing was measured."""
+        out = Path(folder) / STATE_DIR
+        for old in (out / "growth_states.npz", out / "growth_states.json"):       # of an earlier save to this folder
+            old.unlink(missing_ok=True)
         if self.measured is None:
             return []
-        out = Path(folder) / STATE_DIR; out.mkdir(parents=True, exist_ok=True)
+        out.mkdir(parents=True, exist_ok=True)
         written = [save_growth_states(self.measured, out / "growth_states.npz")]
         about = {"dye_frames": list(self.dye_paths) if self.dye_paths else None, "every_h": self.page.every_spin.value()}
         (out / "growth_states.json").write_text(json.dumps(about, indent=1)); written.append(str(out / "growth_states.json"))

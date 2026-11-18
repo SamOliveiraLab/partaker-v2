@@ -257,3 +257,98 @@ def test_closing_the_window_while_the_stain_is_measured_stops_the_measure_quietl
     dlg = MicrocolonyDialog(film, MP.entries(tracks), root=1)
     dlg.stain_box.click()                                  # must not raise
     assert len(seen) == 2 and not film.stain_ready()
+
+
+# ---------------------------------------------------------------- clicks, and the stain measure, made safe (18 Nov, about 03:30)
+def test_a_click_between_the_cells_of_a_microcolony_or_just_beside_it_counts(film):
+    film.set_root(1); y0, _y1, x0, _x1 = film.box; oy, ox = film.tracks.offsets[0]
+    at = lambda x, y: film.identity_at(0, x + ox - x0, y + oy - y0)          # frame coordinates
+    assert at(41, 51) == 1                 # the background between the four cells of the left block
+    assert at(14, 45) == 1                 # 4 px (0.4 um) left of its area: within one cell width
+    assert at(11, 45) is None              # 7 px away: too far
+    assert at(68, 45) == 1 and at(78, 45) == 2                                # in the gap between the two, the nearer one
+
+
+def test_a_click_in_the_picture_while_the_stain_is_measured_is_ignored(toy, film):
+    from types import SimpleNamespace
+    from nd2_analyzer.ui.biofilms.stages.microcolony_window import MicrocolonyDialog
+    tracks, _ = toy
+    film.set_root(1); seen = []; y0, _y1, x0, _x1 = film.box; oy, ox = film.tracks.offsets[0]
+
+    def stain_with_a_click(t):
+        seen.append(t)
+        if len(seen) == 2:                                                 # the user clicks on microcolony 2 during the second frame
+            dlg._on_click(SimpleNamespace(inaxes=dlg.ax_img, xdata=100 + ox - x0, ydata=45 + oy - y0))
+        return left_block_stain(t)
+
+    film.set_stain(stain_with_a_click)
+    dlg = MicrocolonyDialog(film, MP.entries(tracks), root=1)
+    dlg.stain_box.click()
+    assert film.root == 1 and film.stain_ready() and len(seen) == 6
+    dlg.close()
+
+
+def test_following_another_microcolony_while_the_stain_is_measured_measures_that_one(toy, film):
+    """Whatever changes the followed microcolony during the measure, the curve shown is the curve of the microcolony shown."""
+    from nd2_analyzer.analysis.biofilm_stages.microcolony_film import MicrocolonyFilm
+    from nd2_analyzer.ui.biofilms.stages.microcolony_window import MicrocolonyDialog
+    tracks, frames = toy
+    film.set_root(1); seen = []
+
+    def stain_then_follow(t):
+        seen.append(t)
+        if len(seen) == 2:
+            dlg.follow(2)                                                  # microcolony 2 is itself for frames 0 and 1
+        return left_block_stain(t)
+
+    film.set_stain(stain_then_follow)
+    dlg = MicrocolonyDialog(film, MP.entries(tracks), root=1)
+    dlg.stain_box.click()
+    clean = MicrocolonyFilm(tracks, lambda t: frames[t], PX); clean.set_root(2); clean.set_stain(left_block_stain)
+    assert film.root == 2 and film.stain_ready()
+    assert [a.tolist() for a in film.stain_series()] == [a.tolist() for a in clean.stain_series()]
+    dlg.close()
+
+
+# ---------------------------------------------------------------- what the sketch of 17 Nov showed and the page lacked
+def test_the_strip_shows_microcolony_formation_and_maturation_once_th1_is_known(page):
+    words = lambda: [t.get_text() for t in page.strip.ax.texts]
+    assert "microcolony formation" not in words()                       # no Th1 yet: a plain band
+    page.set_th1(25.5)
+    assert words()[:3] == ["microcolony formation", "maturation", "Th1 25.5 h"] and SP.collisions(page.strip.figure) == []
+    page.strip.set_hour(25.5); assert SP.collisions(page.strip.figure) == []        # the cursor on Th1 itself
+    page.set_th1(None)
+    assert "maturation" not in words()
+
+
+def test_a_th1_outside_the_recording_or_a_band_too_narrow_for_its_name_is_left_out(page):
+    page.set_th1(99.0)
+    assert "maturation" not in [t.get_text() for t in page.strip.ax.texts]
+    page.set_th1(24.1)                                                   # 0.1 h of 2.5: no room for "microcolony formation"
+    words = [t.get_text() for t in page.strip.ax.texts]
+    assert "microcolony formation" not in words and "maturation" in words and "Th1 24.1 h" in words
+    assert SP.collisions(page.strip.figure) == []
+
+
+def test_the_film_strip_says_which_microcolony_it_shows(page):
+    assert page.film_caption.text() == "microcolony 1 and the 1 that merges into it"
+    page.candidates.setCurrentRow(3)                                     # microcolony 2: nothing merges into it
+    assert page.film_caption.text() == "microcolony 2"
+    page.set_tracks(None)
+    assert page.film_caption.text() == ""
+
+
+def test_the_microcolonies_strip_takes_th1_from_the_maturation_measure():
+    """One Th1 in the tool: the mean of the measured positions, the one the Maturation strip shows."""
+    from test_growth_measure import recording
+    from nd2_analyzer.analysis.biofilm_stages import growth_measure as GM, matrix_stain as MX
+    from nd2_analyzer.ui.biofilms.stages.tab import BiofilmStagesTab
+    labels, dye = recording()
+    ref = MX.DyeReference(zero=np.zeros((240, 240), np.float32), flat=np.ones((240, 240), np.float32))
+    growth = GM.measure_growth_states(labels, dye, {0: list(range(8)), 1: list(range(8))}, pixel_um=0.1, hour_of=lambda t: 24.0 + 1.5 * t, reference=ref, resamples=20)
+    tab = BiofilmStagesTab(); tab.microcolony_page.set_recording("toy", (24.0, 34.5))
+    assert tab.microcolony_page.strip.th1_h is None
+    tab.growth_controller.measured = growth; tab.growth_controller.show_measured(growth)
+    assert tab.microcolony_page.strip.th1_h == 30.75 and "Th1 30.8 h" in [t.get_text() for t in tab.microcolony_page.strip.ax.texts]
+    tab.growth_controller.on_new_recording(None)
+    assert tab.microcolony_page.strip.th1_h is None

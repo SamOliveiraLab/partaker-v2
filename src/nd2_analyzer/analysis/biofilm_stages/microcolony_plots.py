@@ -87,6 +87,33 @@ def cards(tracks: MicrocolonyTracks) -> List[Tuple[str, str, bool]]:
             (f"{int(count[-1])} left at {last_h:g} h", "after merging", True)]
 
 
+# ---------------------------------------------------------------------------------------------- the strip
+STAGE_SHADE = ("#e3e9ef", "#c9d5e0")           # microcolony formation, maturation: the blue-grey steps of the Maturation strip
+
+
+def draw_strip(ax, span: Tuple[float, float], cursor_h: float, th1_h: Optional[float] = None):
+    """The recording's hours with the cursor. Once Th1 is known (the Maturation tab measured it) and lies inside the
+    recording: microcolony formation up to Th1 and maturation after it, as the Maturation strip shows states I and II."""
+    lo, hi = float(span[0]), float(span[1]); x0, x1 = SP.pad_span((lo, hi), 0.03); ax.set_xlim(x0, x1); ax.set_ylim(0, 1); ax.set_yticks([])
+    for s in ("top", "right", "left"):
+        ax.spines[s].set_visible(False)
+    ticks = SP.hour_ticks((lo, hi)); ax.set_xticks(ticks); ax.set_xticklabels([f"{t:g} h" for t in ticks], fontsize=8.5)
+    split = th1_h is not None and lo < float(th1_h) < hi
+    if not split:
+        ax.axvspan(lo, hi, ymin=0.30, ymax=0.72, color="#f0f0f0", lw=0)
+    else:
+        th1 = float(th1_h); width_in = ax.get_position().width * ax.figure.get_figwidth()
+        for name, a, b, shade in (("microcolony formation", lo, th1, STAGE_SHADE[0]), ("maturation", th1, hi, STAGE_SHADE[1])):
+            ax.axvspan(a, b, ymin=0.30, ymax=0.72, color=shade, lw=0)
+            if (b - a) / (x1 - x0) * width_in > len(name) * 9 * SP.IN_PER_PT_CHAR + 0.3:      # the name only where the band has room for it
+                ax.text((a + b) / 2, 0.51, name, ha="center", va="center", fontsize=9, color=SP.INK)
+        ax.axvline(th1, ymin=0.26, ymax=0.76, color=SP.INK, lw=1.1, ls=(0, (4, 2)))
+        ax.text(th1, 0.90, f"Th1 {th1:.1f} h", ha="center", va="center", fontsize=8.5, fontweight="bold", color=SP.INK)
+    ax.axvline(cursor_h, color=SP.RED, lw=2.0)
+    left_free = not split or (float(th1_h) - lo) > 0.22 * (hi - lo)
+    ax.text(lo if left_free else (lo + hi) / 2, 0.90, f"{cursor_h:g} h", ha="left" if left_free else "center", va="center", fontsize=8.5, fontweight="bold", color=SP.RED)
+
+
 # ---------------------------------------------------------------------------------------------- plots
 def _axes(fig, title: str, note: str = "", left: float = 0.15):
     fig.clear(); ax = fig.add_axes([left, 0.15, 0.95 - left, 0.62]); SP.open_frame(ax)

@@ -176,3 +176,17 @@ def test_the_page_says_which_position_is_tracked_when_another_one_is_shown(track
     fresh.position = lambda: 0; fresh.refresh()                                     # the P slider moved to 0
     assert fresh.page.tracks is fresh.tracked[0]
     assert fresh.page.until_spin.maximum() == 27.5 and fresh.page.until_spin.value() == 26.5      # "Follow until" shows where its tracks end
+
+
+def test_a_save_with_nothing_worked_out_removes_the_results_of_an_earlier_save(tracks, growth, tmp_path):
+    """Else a later Load would show the old results on whatever masks are in the folder now."""
+    from nd2_analyzer.ui.biofilms.stages.growth_controller import GrowthController
+    from nd2_analyzer.ui.biofilms.stages.growth_page import GrowthPage
+    info = SimpleNamespace(name="toy", n_frames=8, dt_s=5400.0, pixel_um=0.1, start_hour=24.0, channel_roles={}, channel_labels={})
+    c = microcolony_controller(); c.tracked[0] = tracks; c.drawn[0] = tracks; c.save_state(tmp_path)
+    g = GrowthController(GrowthPage(), lambda: info); g.measured = growth; g.save_state(tmp_path)
+    (tmp_path / "biofilm_stages" / "a_file_of_hers.txt").write_text("kept")
+    assert len(list((tmp_path / "biofilm_stages").iterdir())) == 6
+    assert microcolony_controller().save_state(tmp_path) == [] and GrowthController(GrowthPage(), lambda: info).save_state(tmp_path) == []
+    assert [f.name for f in (tmp_path / "biofilm_stages").iterdir()] == ["a_file_of_hers.txt"]      # only the tool's own files go
+    assert microcolony_controller().load_state(tmp_path) is False

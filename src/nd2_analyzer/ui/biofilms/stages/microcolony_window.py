@@ -21,7 +21,7 @@ class MicrocolonyDialog(QDialog):
 
     def __init__(self, film: MicrocolonyFilm, sections: list, root: Optional[int] = None, parent=None):
         super().__init__(parent)
-        self.film = film; self.step = 0; self.ax_img = None
+        self.film = film; self.step = 0; self.ax_img = None; self.measuring = False; self.closed = False
         self.setWindowTitle("Microcolonies"); self.setAttribute(Qt.WA_DeleteOnClose); self.setMinimumWidth(1000); self.setMinimumHeight(700)
         layout = QVBoxLayout(self); top = QHBoxLayout()
         top.addWidget(QLabel("Microcolony:")); self.combo = QComboBox(); self.combo.setMinimumWidth(340)
@@ -93,19 +93,24 @@ class MicrocolonyDialog(QDialog):
     def _measure_stain(self):
         """The matrix stain of every frame of the film is measured once (seconds on a long film). The window says how
         far it is and keeps its controls still meanwhile."""
-        if not self.film.show_stain or self.film.stain_ready() or not self.film.frames:
+        if self.measuring or not self.film.show_stain or self.film.stain_ready() or not self.film.frames or self.film.counted_at is None:
             return
         from PySide6.QtWidgets import QApplication
         waiting = (self.slider, self.combo, self.play_button, self.stain_box, self.save_film_button, self.save_button)
-        was = self.hint.text(); playing = self.timer.isActive(); self.timer.stop()
+        was = self.hint.text(); playing = self.timer.isActive(); self.timer.stop(); self.measuring = True
         for w in waiting:
             w.setEnabled(False)
         try:
-            for k, n in self.film.measure_stain():
-                if getattr(self, "closed", False):                      # the window was closed meanwhile: stop, the film keeps what it has
-                    self.film.show_stain = False; return
-                self.hint.setText(f"Measuring the matrix stain in this microcolony: frame {k} of {n}"); QApplication.processEvents()
+            while self.film.show_stain and not self.film.stain_ready() and self.film.frames:
+                followed = (self.film.root, list(self.film.frames))
+                for k, n in self.film.measure_stain():
+                    if getattr(self, "closed", False):                  # the window was closed meanwhile: stop, the film keeps what it has
+                        self.film.show_stain = False; return
+                    self.hint.setText(f"Measuring the matrix stain in this microcolony: frame {k} of {n}"); QApplication.processEvents()
+                if (self.film.root, list(self.film.frames)) == followed:
+                    break                                               # measured (or it cannot be): do not go round again
         finally:
+            self.measuring = False
             if not getattr(self, "closed", False):
                 for w in waiting:
                     w.setEnabled(True)
@@ -122,6 +127,8 @@ class MicrocolonyDialog(QDialog):
             self.slider.setValue((self.step + 1) % len(self.film.frames))
 
     def _on_click(self, event):
+        if self.measuring:
+            return                                                      # the picture waits while the stain is measured, as the other controls do
         if self.ax_img is not None and event.inaxes is self.ax_img and event.xdata is not None:
             self.follow_at(float(event.xdata), float(event.ydata))
 

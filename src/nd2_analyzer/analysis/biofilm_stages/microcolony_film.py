@@ -20,6 +20,7 @@ LONE, OTHER = "#3c3c3c", "#707070"                     # a cell in no microcolon
 TAG_GREEN = "#39ff39"
 STAIN_GREEN = "#1fbf3f"                                # the matrix stain, as in Figure 4
 PAD_UM = 3.0
+REACH_UM = 0.5                 # a click this near a microcolony (about one cell width) is a click on it
 STRIP_TILE_PX = 160            # a tile of the page's film strip is drawn about this many pixels wide
 IMAGE_SHARE = 0.37             # the picture takes this share of the width of the window's figure
 
@@ -104,14 +105,20 @@ class MicrocolonyFilm:
         all) after each one, so a window can say how far it is. Nothing to do when it is measured already."""
         if self._stain_series is not None or self.counted_at is None:
             return
-        cover = []
-        for k, t in enumerate(self.frames, 1):
-            ids = self.tracks.identity_map(t); mine = np.isin(ids, [i for i in self.order if self.owner(i, t) == self.root]); oy, ox = self.tracks.offsets[t]
-            c = self.counted(t); on = np.zeros(ids.shape, bool); on[oy:oy + c.shape[0], ox:ox + c.shape[1]] = c
+        root, frames, source = self.root, list(self.frames), self.counted_at; cover = []
+        changed = lambda: self.root != root or self.frames != frames or self.counted_at is not source or self._stain_series is not None
+        for k, t in enumerate(frames, 1):
+            if changed():
+                return                          # another microcolony is followed now: this measure is not its curve
+            c = self.counted(t)
+            if changed():
+                return
+            ids = self.tracks.identity_map(t); mine = np.isin(ids, [i for i in self.order if self.owner(i, t) == root]); oy, ox = self.tracks.offsets[t]
+            on = np.zeros(ids.shape, bool); on[oy:oy + c.shape[0], ox:ox + c.shape[1]] = c
             cover.append(100.0 * float((on & mine).sum()) / max(int(mine.sum()), 1))
-            if k == len(self.frames):
-                self._stain_series = (np.array([self.tracks.hours[f] for f in self.frames]), np.array(cover))
-            yield k, len(self.frames)
+            if k == len(frames):
+                self._stain_series = (np.array([self.tracks.hours[f] for f in frames]), np.array(cover))
+            yield k, len(frames)
 
     def stain_series(self):
         """(hours, % of the followed microcolony's area that is matrix stain) over the frames of the film."""
@@ -213,11 +220,22 @@ class MicrocolonyFilm:
         return lut[lab], lab
 
     def identity_at(self, t: int, x: float, y: float) -> Optional[int]:
-        """The lasting microcolony under a point of the picture (box pixels), None on the background or a lone cell."""
-        owners, _lab = self.owners_image(t); xi, yi = int(round(x)), int(round(y))
-        if not (0 <= yi < owners.shape[0] and 0 <= xi < owners.shape[1]) or owners[yi, xi] == 0:
+        """The lasting microcolony at a point of the picture (box pixels): the one whose area holds the point (its cells
+        and the gaps between them), else the nearest within REACH_UM; None further away. For a microcolony of the
+        followed family that has merged by frame t, the one it merged into."""
+        ids = self.tracks.identity_map(t); height, width = ids.shape; reach = int(round(REACH_UM / self.pixel_um))
+        yc, xc = int(round(y)) + self.box[0], int(round(x)) + self.box[2]
+        y0, y1, x0, x1 = max(yc - reach, 0), min(yc + reach + 1, height), max(xc - reach, 0), min(xc + reach + 1, width)
+        if y1 <= y0 or x1 <= x0:
             return None
-        return int(abs(owners[yi, xi]))
+        near = ids[y0:y1, x0:x1]; fam = set(self.order); ys, xs = np.nonzero(np.isin(near, list(fam | set(self.lasting))))
+        if not ys.size:
+            return None
+        far = (ys + y0 - yc) ** 2 + (xs + x0 - xc) ** 2; k = int(np.argmin(far))
+        if far[k] > reach ** 2:
+            return None
+        i = int(near[ys[k], xs[k]])
+        return int(self.owner(i, t)) if i in fam else i
 
     # ------------------------------------------------------------------ drawing
     def picture(self, t: int, step: int = 1):

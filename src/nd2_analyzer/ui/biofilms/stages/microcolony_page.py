@@ -17,6 +17,22 @@ from nd2_analyzer.analysis.biofilm_stages import microcolony_plots as MP
 from nd2_analyzer.analysis.biofilm_stages.microcolony_film import draw_film_strip
 from .seeding_page import LEFT_COLUMN_PX, FactCard, PlotCanvas, StripCanvas, step_words
 
+class MicrocolonyStrip(StripCanvas):
+    """The strip with microcolony formation and maturation split at Th1, once the Maturation tab has measured it."""
+
+    def __init__(self, parent=None):
+        self.th1_h = None
+        super().__init__(parent)
+
+    def set_th1(self, th1_h):
+        self.th1_h = None if th1_h is None else float(th1_h); self.redraw()
+
+    def redraw(self):
+        if self.span is None:
+            return super().redraw()
+        self.ax.clear(); self.ax.axis("on"); MP.draw_strip(self.ax, self.span, self.cursor_h, self.th1_h); self.draw_idle()
+
+
 STEPS = ("load", "segment", "track", "measure")
 STEP_NAMES = {"load": "Raw Frames", "segment": "Segmented Frames", "track": "Microcolonies", "measure": "All positions"}
 PLAY_TICK_MS = 250             # Play on the strip: one frame of the recording every quarter of a second
@@ -63,7 +79,7 @@ class MicrocolonyPage(QWidget):
 
     def _build_strip_row(self) -> QHBoxLayout:
         row = QHBoxLayout(); row.setSpacing(8)
-        self.strip = StripCanvas(); self.strip.hour_changed.connect(self._on_strip); row.addWidget(self.strip, 1)
+        self.strip = MicrocolonyStrip(); self.strip.hour_changed.connect(self._on_strip); row.addWidget(self.strip, 1)
         self.strip_play_button = QPushButton("Play"); self.strip_play_button.setEnabled(False)
         self.strip_play_button.setToolTip("Moves the cursor through the followed frames; the view area and the plots follow")
         self.strip_play_button.clicked.connect(self._toggle_play); row.addWidget(self.strip_play_button, 0, Qt.AlignVCenter)
@@ -92,6 +108,7 @@ class MicrocolonyPage(QWidget):
         self.numbers_button.clicked.connect(lambda: self.export_requested.emit("numbers")); buttons.addWidget(self.numbers_button, 2, 1)
         left.addLayout(buttons)
         self.film_canvas = PlotCanvas(size=(3.3, 1.25), min_height=115); self.film_canvas.setMaximumHeight(135); left.addWidget(self.film_canvas)
+        self.film_caption = QLabel(""); self.film_caption.setAlignment(Qt.AlignCenter); left.addWidget(self.film_caption)   # which microcolony the strip shows
         left_box = QWidget(); left_box.setLayout(left); left_box.setFixedWidth(LEFT_COLUMN_PX); row.addWidget(left_box)
         right = QVBoxLayout(); right.setSpacing(6)
         grid = QGridLayout(); grid.setSpacing(6); self.cards = []
@@ -154,6 +171,10 @@ class MicrocolonyPage(QWidget):
         """The frame step of the recording is the smallest choice and the size of one click."""
         self.every_spin.blockSignals(True); self.every_spin.setMinimum(step_h); self.every_spin.setSingleStep(step_h)
         self.every_spin.setValue(step_h if value_h is None else value_h); self.every_spin.blockSignals(False)
+
+    def set_th1(self, th1_h):
+        """Th1 of the recording (the Maturation tab's measure), or None: the strip then shows the two stages."""
+        self.strip.set_th1(th1_h)
 
     def set_metrics(self, metrics):
         """The metrics of every measured position (None clears their plots)."""
@@ -263,4 +284,8 @@ class MicrocolonyPage(QWidget):
         now = None
         if self.tracks is not None:
             now = min(self.tracks.frames, key=lambda t: abs(self.tracks.hours[t] - self.hour))
-        self.film_canvas.render(draw_film_strip, self.film if self.tracks is not None and self.selected() is not None else None, 5, now)
+        shown = self.film if self.tracks is not None and self.selected() is not None else None
+        self.film_canvas.render(draw_film_strip, shown, 5, now)
+        merged = len(shown.order) - 1 if shown is not None and shown.root is not None else 0
+        self.film_caption.setText("" if shown is None or shown.root is None else f"microcolony {shown.root}" +
+                                  (f" and the {merged} that merge{'s' if merged == 1 else ''} into it" if merged else ""))

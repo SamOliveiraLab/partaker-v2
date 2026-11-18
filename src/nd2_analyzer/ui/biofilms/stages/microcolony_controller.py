@@ -328,11 +328,12 @@ class MicrocolonyController(QObject):
     def save_state(self, folder) -> list:
         """Writes what the page worked out into the session folder (the followed microcolonies of every tracked position,
         the all-positions metrics, the outlines drawn by hand). Returns the files written; none when there is nothing."""
+        out = Path(folder) / STATE_DIR; written = []
+        for old in list(out.glob("microcolonies_p*.npz")) + [out / "microcolony_metrics.npz", out / "microcolonies.json"]:
+            old.unlink(missing_ok=True)             # of an earlier save to this folder: a later Load must not show them on other masks
         if not self.tracked and self.metrics is None and not self.outlines:
             return []
-        out = Path(folder) / STATE_DIR; out.mkdir(parents=True, exist_ok=True); written = []
-        for old in list(out.glob("microcolonies_p*.npz")) + [out / "microcolony_metrics.npz"]:      # of an earlier save to this folder
-            old.unlink(missing_ok=True)
+        out.mkdir(parents=True, exist_ok=True)
         for p, tracks in sorted(self.tracked.items()):
             written.append(save_tracks(tracks, out / f"microcolonies_p{int(p)}.npz"))
             if self.drawn.get(p) is not None:
