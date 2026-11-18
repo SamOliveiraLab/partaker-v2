@@ -50,3 +50,14 @@ def test_progress_is_told_frame_by_frame():
     labels, dye = recording(); seen = []
     GM.measure_growth_states(labels, None, {0: [0, 1, 2]}, pixel_um=PX, hour_of=lambda t: 24.0 + t, reference=None, progress=lambda k, n: seen.append((k, n)))
     assert seen == [(1, 3), (2, 3), (3, 3)]
+
+
+def test_the_matrix_stain_can_stop_before_the_cells_do():
+    """After a loss of focus the dye image is no longer on the same scale, so the matrix stain is measured only on the
+    frames it is given; the cells are counted on all of them."""
+    labels, dye = recording()
+    ref = MX.DyeReference(zero=np.zeros((240, 240), np.float32), flat=np.ones((240, 240), np.float32))
+    out = GM.measure_growth_states(labels, dye, {0: list(range(8))}, pixel_um=PX, hour_of=lambda t: 24.0 + 1.5 * t, reference=ref, matrix_frames={0: [0, 1, 2, 3, 4, 5]})
+    assert out.cells[0].size == 8 and out.matrix[0].size == 6 and out.matrix_hours[0].tolist() == [24.0, 25.5, 27.0, 28.5, 30.0, 31.5]
+    hours, mean, _sd = out.mean_of("matrix")
+    assert hours.tolist() == [24.0, 25.5, 27.0, 28.5, 30.0, 31.5] and out.th1["per_position_h"] == {0: 30.0}

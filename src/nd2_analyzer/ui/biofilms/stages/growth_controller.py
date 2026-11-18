@@ -24,11 +24,12 @@ WORKER_WAIT_MS = 30000
 
 
 def frames_to_measure(segmented: list, step: int = 1, skip: Optional[Callable[[int], bool]] = None) -> list:
-    """Every step-th frame counted from the first segmented one, without the frames `skip` names (out of focus)."""
+    """Every step-th frame counted from the first segmented one, and the last one (a growth curve needs the end of the
+    recording), without the frames `skip` names (out of focus)."""
     frames = sorted(int(t) for t in segmented)
     if not frames:
         return []
-    return [t for t in frames if (t - frames[0]) % max(int(step), 1) == 0 and not (skip is not None and skip(t))]
+    return [t for t in frames if ((t - frames[0]) % max(int(step), 1) == 0 or t == frames[-1]) and not (skip is not None and skip(t))]
 
 
 def channel_with_role(channel_roles: dict, role: str) -> Optional[int]:
@@ -45,9 +46,10 @@ class GrowthWorker(QThread):
     done = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, labels_at, frames, pixel_um, hour_of, reference, dye_channel, recording_path, fallback_dye_at, parent=None):
+    def __init__(self, labels_at, frames, pixel_um, hour_of, reference, dye_channel, recording_path, fallback_dye_at, matrix_frames=None, parent=None):
         super().__init__(parent)
         self.args = (labels_at, frames, float(pixel_um), hour_of, reference, dye_channel, recording_path, fallback_dye_at); self.generation = 0
+        self.matrix_frames = matrix_frames
 
     def run(self):
         labels_at, frames, pixel_um, hour_of, reference, channel, path, fallback = self.args; handle = None; dye_at = None
@@ -59,7 +61,8 @@ class GrowthWorker(QThread):
                     dye_at = (lambda p, t: np.asarray(data[t, p, channel])) if data.ndim == 5 else None
                 dye_at = dye_at or fallback
             out = measure_growth_states(labels_at, dye_at, frames, pixel_um, hour_of, reference if dye_at is not None else None,
-                                        progress=lambda k, n: self.progress.emit(int(100 * k / max(n, 1)), f"{100 * k // max(n, 1)} %"))
+                                        progress=lambda k, n: self.progress.emit(int(100 * k / max(n, 1)), f"{100 * k // max(n, 1)} %"),
+                                        matrix_frames=self.matrix_frames)
         except Exception as exc:                                   # the page shows the reason in the Growth States step
             self.failed.emit(f"{type(exc).__name__}: {exc}"); return
         finally:
@@ -186,13 +189,16 @@ class GrowthController(QObject):
         step = max(1, int(round(self.page.every_spin.value() / dt_h)))
         frames = {p: frames_to_measure(f, step, skip) for p, f in per.items() if len(f) >= 2}
         frames = {p: f for p, f in frames.items() if len(f) >= 2}
+        # the matrix stain is measured up to the first frame that is out of focus: after it the dye image is on another scale
+        lost = [t for f in per.values() for t in f if skip is not None and skip(t)]
+        matrix_frames = {p: [t for t in f if t < min(lost)] for p, f in frames.items()} if lost else None
         if not frames:
             self.page.set_step_state("measure", "failed", "no position has two segmented frames to measure"); return
         channel = channel_with_role(info.channel_roles, "matrix"); image_data = ImageData.get_instance()
         files = image_data.image_filename; path = files[0] if isinstance(files, (list, tuple)) and files else files
         labels_at = lambda p, t: np.asarray(array[int(t), int(p), 0])
         self.worker = GrowthWorker(labels_at, frames, info.pixel_um, self.hour_of(info), self.reference, channel, path,
-                                   self.raw_at(channel) if channel is not None else None, self)
+                                   self.raw_at(channel) if channel is not None else None, matrix_frames, self)
         self.worker.generation = self.generation
         self.worker.progress.connect(lambda pct, words: self.page.set_step_state("measure", "running", words))
         self.worker.done.connect(self.on_measured); self.worker.failed.connect(lambda why: (self.page.set_step_state("measure", "failed", why), self.refresh()))

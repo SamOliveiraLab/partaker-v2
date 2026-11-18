@@ -140,7 +140,8 @@ def _cursor(ax, cursor_h: Optional[float]):
 def _key(fig, left: float, items):
     x = left
     for colour, style, words in items:
-        fig.add_artist(__import__("matplotlib").lines.Line2D([x, x + 0.045], [0.80, 0.80], transform=fig.transFigure, color=colour, lw=2, **style))
+        xs = [x + 0.0225] if "marker" in style else [x, x + 0.045]                 # a marker is one point, a line two
+        fig.add_artist(__import__("matplotlib").lines.Line2D(xs, [0.80] * len(xs), transform=fig.transFigure, color=colour, lw=2, **style))
         t = fig.text(x + 0.055, 0.80, words, fontsize=9, color="#333333", va="center"); fig.canvas.draw()
         x += 0.055 + t.get_window_extent(fig.canvas.get_renderer()).width / fig.bbox.width + 0.03
 

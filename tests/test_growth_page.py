@@ -142,6 +142,8 @@ def test_measure_takes_every_nth_segmented_frame_and_leaves_out_the_unfocused_on
     assert frames_to_measure(list(range(10)), step=3) == [0, 3, 6, 9]
     assert frames_to_measure(list(range(10)), step=1, skip=lambda t: 4 <= t <= 6) == [0, 1, 2, 3, 7, 8, 9]
     assert frames_to_measure([2, 3, 4, 5, 8], step=2) == [2, 4, 8] and frames_to_measure([], step=3) == []
+    assert frames_to_measure(list(range(11)), step=3) == [0, 3, 6, 9, 10]            # the last frame of the recording is always measured
+    assert frames_to_measure(list(range(11)), step=3, skip=lambda t: t == 10) == [0, 3, 6, 9]
 
 
 def test_the_dye_channel_is_the_one_the_experiment_calls_matrix_dye():
