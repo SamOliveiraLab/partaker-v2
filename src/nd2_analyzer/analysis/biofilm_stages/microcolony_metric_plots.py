@@ -12,6 +12,7 @@ import numpy as np
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.lines import Line2D
 
+from . import figure_style as FS
 from . import seeding_plots as SP
 from .microcolony_metrics import MicrocolonyMetrics
 from .microcolony_rules import MicrocolonySettings
@@ -41,20 +42,13 @@ def _positions(metrics: MicrocolonyMetrics) -> str:
 
 
 def _axes(fig, metrics: MicrocolonyMetrics, key: str, note: str, left: float = 0.16, right: float = 0.95):
-    fig.clear(); ax = fig.add_axes([left, 0.15, right - left, 0.56]); SP.open_frame(ax)
-    fig.text(left, 0.93, TITLE[key], fontsize=12, fontweight="bold", color=SP.INK, va="center")
-    fig.text(left, 0.87, note, fontsize=9.5, color="#555555", va="center")
-    fig.text(left, 0.82, rule_note(metrics.settings), fontsize=8.5, color="#777777", va="center")
+    """The panel as Figure 3 draws its metrics: the title, what the page adds under it (the value at the cursor, which
+    microcolonies are counted), the plot, and room under it for the legend."""
+    fig.clear(); ax = fig.add_axes([left, 0.20, right - left, 0.575]); SP.open_frame(ax)
+    fig.text(left, 0.945, TITLE[key], fontsize=12, fontweight="bold", color=SP.INK, va="center")
+    fig.text(left, 0.885, note, fontsize=9.5, color="#555555", va="center")
+    fig.text(left, 0.832, rule_note(metrics.settings), fontsize=8.5, color="#777777", va="center")
     return ax
-
-
-def _key(fig, left: float, items):
-    x = left
-    for colour, style, words in items:
-        xs = [x + 0.0225] if "marker" in style else [x, x + 0.045]
-        fig.add_artist(Line2D(xs, [0.765] * len(xs), transform=fig.transFigure, color=colour, lw=2, **style))
-        t = fig.text(x + 0.055, 0.765, words, fontsize=9, color="#333333", va="center"); fig.canvas.draw()
-        x += 0.055 + t.get_window_extent(fig.canvas.get_renderer()).width / fig.bbox.width + 0.03
 
 
 def _nearest(hours: np.ndarray, cursor_h: Optional[float]) -> Optional[int]:
@@ -62,16 +56,14 @@ def _nearest(hours: np.ndarray, cursor_h: Optional[float]) -> Optional[int]:
 
 
 def _time_axis(ax, hours: np.ndarray, cursor_h: Optional[float]):
-    first, last = float(hours[0]), float(hours[-1]); pad = (last - first) * 0.03 or 0.5
-    if cursor_h is not None and first <= cursor_h <= last:
-        ax.axvline(cursor_h, color="#9a9a9a", lw=1.2, zorder=1)
-    ax.set_xlim(first - pad, last + pad); ax.set_xlabel("time after inoculation (h)")
+    FS.time_axis(ax, float(hours[0]), float(hours[-1])); FS.cursor(ax, cursor_h)
 
 
-def _band(ax, hours, mean, sd, colour=SP.BLUE, k: Optional[int] = None, low=None, high=None):
+def _band(ax, hours, mean, sd, colour=FS.INK, k: Optional[int] = None, low=None, high=None):
+    """Mean of the positions as dots on a line, their spread as a ribbon (as the bands of Figure 3)."""
     ok = np.isfinite(mean)
     ax.fill_between(hours[ok], (mean - sd if low is None else low)[ok], (mean + sd if high is None else high)[ok], color=colour, alpha=0.15, lw=0, zorder=2)
-    ax.plot(hours[ok], mean[ok], color=colour, lw=2, zorder=3)
+    ax.plot(hours[ok], mean[ok], color=colour, lw=1.5, marker="o", ms=3.5, zorder=3)
     if k is not None and np.isfinite(mean[k]):
         ax.plot([hours[k]], [mean[k]], "o", ms=7, mfc="white", mec=colour, mew=2, zorder=5)
 
@@ -82,13 +74,13 @@ def _simple(fig, metrics: MicrocolonyMetrics, key: str, what: str, cursor_h: Opt
     note = f"mean and s.d. of {_positions(metrics)}" if k is None else words(float(mean[k]), float(hours[k]))
     ax = _axes(fig, metrics, key, note); _band(ax, hours, mean, sd, k=k)
     highest = float(np.nanmax(np.r_[(mean + sd)[np.isfinite(mean)], 1e-9]))
-    ax.set_ylim(0, top if top is not None else highest * 1.12); ax.set_ylabel(ylabel); _time_axis(ax, hours, cursor_h)
+    ax.set_ylim(0, top if top is not None else highest * 1.12); ax.set_ylabel(ylabel, fontweight="bold"); _time_axis(ax, hours, cursor_h)
     return ax
 
 
 @SP.with_house_style
 def draw_count(fig, metrics: MicrocolonyMetrics, cursor_h: Optional[float] = None):
-    return _simple(fig, metrics, "m_count", "microcolonies", cursor_h, lambda v, h: f"{v:.1f} at {h:g} h, mean of {_positions(metrics)}", "microcolonies")
+    return _simple(fig, metrics, "m_count", "microcolonies", cursor_h, lambda v, h: f"{v:.1f} at {h:g} h, mean of {_positions(metrics)}", "Microcolonies")
 
 
 @SP.with_house_style
@@ -103,7 +95,7 @@ def draw_per(fig, metrics: MicrocolonyMetrics, cursor_h: Optional[float] = None)
     lo, hi = (float(seen.min()), float(seen.max())) if seen.size else (1.0, 10.0)
     ax.set_yscale("log"); ax.set_ylim(10 ** np.floor(np.log10(max(lo, 1.0))), 10 ** np.ceil(np.log10(max(hi, 10.0)) + 1e-9))
     ticks = [t for t in (1, 10, 100, 1000, 10000) if ax.get_ylim()[0] <= t <= ax.get_ylim()[1]]
-    ax.set_yticks(ticks, [f"{t:,}" for t in ticks]); ax.minorticks_off(); ax.set_ylabel("cells per microcolony"); _time_axis(ax, hours, cursor_h)
+    ax.set_yticks(ticks, [f"{t:,}" for t in ticks]); ax.minorticks_off(); ax.set_ylabel("Cells", fontweight="bold"); _time_axis(ax, hours, cursor_h)
     return ax
 
 
@@ -115,9 +107,9 @@ def draw_in(fig, metrics: MicrocolonyMetrics, cursor_h: Optional[float] = None):
     ax = _axes(fig, metrics, "m_in", note); _band(ax, hours, mean, sd, k=k)
     rings = np.isfinite(chance)
     if rings.any():
-        ax.plot(hours[rings], chance[rings], "o", ms=7, mfc="white", mec=SP.GREY, mew=1.6, zorder=4)
-        _key(fig, 0.16, [(SP.BLUE, {}, "measured"), (SP.GREY, dict(marker="o", ms=7, mfc="white", mew=1.6, ls=""), "the same cells placed at random")])
-    ax.set_ylim(0, 105); ax.set_ylabel("cells in microcolonies (%)"); _time_axis(ax, hours, cursor_h)
+        ax.plot(hours[rings], chance[rings], "o", ms=7, mfc="white", mec=FS.G1, mew=1.6, zorder=4)
+    ax.set_ylim(0, 105); ax.set_ylabel("Cells (%)", fontweight="bold"); _time_axis(ax, hours, cursor_h)
+    FS.legend_under(fig, 0.16, [[("dots", FS.INK, "measured")] + ([("ring", FS.G1, "random placement")] if rings.any() else [])], y=0.045)
     return ax
 
 
@@ -127,10 +119,10 @@ def draw_density(fig, metrics: MicrocolonyMetrics, cursor_h: Optional[float] = N
     said = lambda v: "none" if not np.isfinite(v) else f"{v:.1f}"
     note = f"mean and s.d. of {_positions(metrics)}" if k is None else f"{said(inside[k])} in microcolonies, {said(single[k])} for single cells, at {hours[k]:g} h"
     ax = _axes(fig, metrics, "m_density", note)
-    _band(ax, hours, single, sd_single, colour=SP.GREY, k=k); _band(ax, hours, inside, sd_in, colour=ORANGE, k=k)
+    _band(ax, hours, single, sd_single, colour=FS.G1, k=k); _band(ax, hours, inside, sd_in, colour=ORANGE, k=k)
     both = np.r_[(inside + sd_in)[np.isfinite(inside)], (single + sd_single)[np.isfinite(single)], 1e-9]
-    ax.set_ylim(0, float(both.max()) * 1.12); ax.set_ylabel("cells within 3 µm, per 100 µm²"); _time_axis(ax, hours, cursor_h)
-    _key(fig, 0.16, [(ORANGE, {}, "cells in microcolonies"), (SP.GREY, {}, "single cells")])
+    ax.set_ylim(0, float(both.max()) * 1.12); ax.set_ylabel("Cells per 100 µm²", fontweight="bold"); _time_axis(ax, hours, cursor_h)
+    FS.legend_under(fig, 0.16, [[("dots", ORANGE, "in microcolonies"), ("dots", FS.G1, "single cells")]], y=0.045)
     return ax
 
 
@@ -139,25 +131,25 @@ def draw_spacing(fig, metrics: MicrocolonyMetrics, cursor_h: Optional[float] = N
     hours, have = metrics.have("spacing_um")
     words = lambda v, h: (f"{v:.1f} µm at {h:g} h, mean of {int(have[int(np.argmin(np.abs(hours - h)))])} of {_positions(metrics)}"
                           if np.isfinite(v) else f"fewer than two microcolonies at {h:g} h")
-    return _simple(fig, metrics, "m_spacing", "spacing_um", cursor_h, words, "to the nearest microcolony (µm)")
+    return _simple(fig, metrics, "m_spacing", "spacing_um", cursor_h, words, "Nearest neighbour (µm)")
 
 
 @SP.with_house_style
 def draw_alignment(fig, metrics: MicrocolonyMetrics, cursor_h: Optional[float] = None):
     words = lambda v, h: f"{v:.2f} at {h:g} h (1: parallel to the neighbours, 0: no order)" if np.isfinite(v) else f"no microcolony at {h:g} h"
-    return _simple(fig, metrics, "m_alignment", "alignment", cursor_h, words, "alignment with neighbours", top=1.0)
+    return _simple(fig, metrics, "m_alignment", "alignment", cursor_h, words, "Alignment with neighbours", top=1.0)
 
 
 @SP.with_house_style
 def draw_largest(fig, metrics: MicrocolonyMetrics, cursor_h: Optional[float] = None):
     words = lambda v, h: f"{v:.1f} % at {h:g} h, mean of {_positions(metrics)}" if np.isfinite(v) else f"no microcolony at {h:g} h"
-    return _simple(fig, metrics, "m_largest", "largest_share_pct", cursor_h, words, "cells in the largest microcolony\n(% of the cells in microcolonies)", top=105)
+    return _simple(fig, metrics, "m_largest", "largest_share_pct", cursor_h, words, "Share of microcolony cells (%)", top=105)
 
 
 @SP.with_house_style
 def draw_area(fig, metrics: MicrocolonyMetrics, cursor_h: Optional[float] = None):
     words = lambda v, h: f"{v:.1f} % of the frame at {h:g} h, mean of {_positions(metrics)}"
-    return _simple(fig, metrics, "m_area", "area_pct", cursor_h, words, "surface covered by microcolonies (%)", top=100)
+    return _simple(fig, metrics, "m_area", "area_pct", cursor_h, words, "Surface covered (%)", top=100)
 
 
 @SP.with_house_style
@@ -173,11 +165,10 @@ def draw_radial(fig, metrics: MicrocolonyMetrics, cursor_h: Optional[float] = No
     lo, hi = float(np.nanmin(density)), float(np.nanmax(density))
     image = ax.imshow(np.ma.masked_invalid(density[:, :top]).T, origin="lower", aspect="auto", cmap=HEAT, vmin=np.floor(lo), vmax=max(np.ceil(hi), np.floor(lo) + 1),
                       extent=(hours[0] - step / 2, hours[-1] + step / 2, float(edges[0]), float(edges[top])), interpolation="nearest")
-    if cursor_h is not None and hours[0] <= cursor_h <= hours[-1]:
-        ax.axvline(cursor_h, color="#555555", lw=1.2)
-    ax.set_xlabel("time after inoculation (h)"); ax.set_ylabel("distance from the microcolony's centre (µm)")
-    bar_axes = fig.add_axes([0.83, 0.15, 0.025, 0.56]); bar = fig.colorbar(image, cax=bar_axes); bar.outline.set_linewidth(0.6)
-    bar.set_label("cells per 100 µm²")
+    ax.set_xticks(FS.time_ticks(float(hours[0]), float(hours[-1]))); ax.set_xlabel("Time (h)", fontweight="bold"); FS.cursor(ax, cursor_h)
+    ax.set_ylabel("Distance from centre (µm)", fontweight="bold")
+    bar_axes = fig.add_axes([0.83, 0.20, 0.025, 0.575]); bar = fig.colorbar(image, cax=bar_axes); bar.outline.set_linewidth(0.6)
+    bar.set_label("Cells per 100 µm²", fontweight="bold")
     return ax
 
 

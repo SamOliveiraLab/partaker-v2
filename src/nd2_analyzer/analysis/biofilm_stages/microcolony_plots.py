@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
+from . import figure_style as FS
 from . import seeding_plots as SP
 from .microcolony_follow import MicrocolonyTracks
 
@@ -136,20 +137,18 @@ def _axes(fig, title: str, note: str = "", left: float = 0.15):
 
 
 def _time_axis(ax, tracks: MicrocolonyTracks, cursor_h: Optional[float]):
-    first_h, last_h = tracks.hours[tracks.frames[0]], tracks.hours[tracks.frames[-1]]
-    if cursor_h is not None and first_h <= cursor_h <= last_h:
-        ax.axvline(cursor_h, color="#9a9a9a", lw=1.2, zorder=1)
-    pad = (last_h - first_h) * 0.03 or 0.5; ax.set_xlim(first_h - pad, last_h + pad); ax.set_xlabel("time after inoculation (h)")
+    """Time (h) with round ticks from the first frame and the page's red cursor, as the panels of Figure 3."""
+    FS.time_axis(ax, tracks.hours[tracks.frames[0]], tracks.hours[tracks.frames[-1]]); FS.cursor(ax, cursor_h)
 
 
 @SP.with_house_style
 def draw_count(fig, tracks: MicrocolonyTracks, cursor_h: Optional[float] = None, selected: Optional[int] = None):
     hours, count = count_series(tracks); k = int(np.argmin(np.abs(hours - cursor_h))) if cursor_h is not None else None
     ax = _axes(fig, "Number of microcolonies", f"{int(count[k])} at {hours[k]:g} h" if k is not None else "")
-    ax.plot(hours, count, color=SP.BLUE, lw=2)
+    ax.plot(hours, count, color=FS.INK, lw=1.6)
     if k is not None:
-        ax.plot([hours[k]], [count[k]], "o", ms=7, mfc="white", mec=SP.BLUE, mew=2, zorder=5)
-    ax.set_ylim(0, max(int(count.max()), 1) * 1.12); ax.set_ylabel("microcolonies"); _time_axis(ax, tracks, cursor_h)
+        ax.plot([hours[k]], [count[k]], "o", ms=7, mfc="white", mec=FS.INK, mew=1.8, zorder=5)
+    ax.set_ylim(0, max(int(count.max()), 1) * 1.12); ax.set_ylabel("Microcolonies", fontweight="bold"); _time_axis(ax, tracks, cursor_h)
     return ax
 
 
@@ -157,10 +156,10 @@ def draw_count(fig, tracks: MicrocolonyTracks, cursor_h: Optional[float] = None,
 def draw_cells(fig, tracks: MicrocolonyTracks, cursor_h: Optional[float] = None, selected: Optional[int] = None):
     hours, pct = cells_series(tracks); k = int(np.argmin(np.abs(hours - cursor_h))) if cursor_h is not None else None
     ax = _axes(fig, "Cells in microcolonies", f"{pct[k]:.0f} % at {hours[k]:g} h" if k is not None else "")
-    ax.plot(hours, pct, color=SP.BLUE, lw=2)
+    ax.plot(hours, pct, color=FS.INK, lw=1.6)
     if k is not None:
-        ax.plot([hours[k]], [pct[k]], "o", ms=7, mfc="white", mec=SP.BLUE, mew=2, zorder=5)
-    ax.set_ylim(0, 105); ax.set_ylabel("cells in microcolonies (%)"); _time_axis(ax, tracks, cursor_h)
+        ax.plot([hours[k]], [pct[k]], "o", ms=7, mfc="white", mec=FS.INK, mew=1.8, zorder=5)
+    ax.set_ylim(0, 105); ax.set_yticks([0, 50, 100]); ax.set_ylabel("Cells (%)", fontweight="bold"); _time_axis(ax, tracks, cursor_h)
     return ax
 
 
@@ -207,8 +206,8 @@ def draw_events(fig, tracks: MicrocolonyTracks, cursor_h: Optional[float] = None
     hours = [e["hours"] for e in tracks.merges()]; first_h, last_h = tracks.hours[tracks.frames[0]], tracks.hours[tracks.frames[-1]]
     edges = np.arange(first_h, last_h + bin_h, bin_h); n, _ = np.histogram(hours, edges)
     ax = _axes(fig, "Merging events", f"{words(len(hours), 'merge', 'merges')}, counted every {bin_h:g} h")
-    ax.bar(edges[:-1] + bin_h / 2, n, width=bin_h * 0.86, color=SP.BLUE, edgecolor="none")
-    ax.set_ylim(0, max(int(n.max()) if len(n) else 0, 1) * 1.15); ax.set_ylabel("merges"); _time_axis(ax, tracks, cursor_h)
+    ax.bar(edges[:-1] + bin_h / 2, n, width=bin_h * 0.86, color=FS.G1, edgecolor="none")
+    ax.set_ylim(0, max(int(n.max()) if len(n) else 0, 1) * 1.15); ax.set_ylabel(f"Merges per {bin_h:g} h", fontweight="bold"); _time_axis(ax, tracks, cursor_h)
     return ax
 
 
@@ -219,8 +218,8 @@ def draw_waits(fig, tracks: MicrocolonyTracks, cursor_h: Optional[float] = None,
     if not len(waits):
         ax.axis("off"); ax.text(0.5, 0.5, "no microcolony formed and merged in these frames", ha="center", va="center", transform=ax.transAxes, color=SP.EMPTY_GREY); return ax
     edges = np.arange(0, waits.max() + 2.0, 2.0); n, _ = np.histogram(waits, edges)
-    ax.bar(edges[:-1] + 1.0, n, width=1.72, color=SP.BLUE, edgecolor="none"); ax.axvline(float(np.median(waits)), color=SP.INK, lw=1.2, ls=(0, (4, 2)))
-    ax.set_ylim(0, int(n.max()) * 1.15); ax.set_ylabel("microcolonies"); ax.set_xlabel("time from forming to merging (h)")
+    ax.bar(edges[:-1] + 1.0, n, width=1.72, color=FS.G1, edgecolor="none"); ax.axvline(float(np.median(waits)), color=FS.INK, lw=1.0, ls=FS.DASH)
+    ax.set_ylim(0, int(n.max()) * 1.15); ax.set_ylabel("Microcolonies", fontweight="bold"); ax.set_xlabel("Time before merging (h)", fontweight="bold")
     return ax
 
 
