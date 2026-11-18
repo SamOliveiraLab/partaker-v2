@@ -30,6 +30,19 @@ RING_MIN_CELLS = 15            # a ring of the density map needs this many cells
 HEAT = LinearSegmentedColormap.from_list("microcolony", ["#fff3e0", "#fbd9a8", ORANGE, "#7a3d00"])
 
 
+SPACING_MIN = 5                # the spacing between microcolonies is shown while every position has this many
+
+
+def spacing_until(metrics: MicrocolonyMetrics) -> float:
+    """The last hour at which every position has SPACING_MIN or more microcolonies, before the first hour at which one
+    has fewer (Figure 3 i stops there, "while several microcolonies exist": 39 h on run 2). Later the nearest
+    neighbour is the gap between two or three large microcolonies, not a spacing."""
+    hours, rows = metrics._shared(metrics.values["microcolonies"]); few = np.flatnonzero((rows < SPACING_MIN).any(0))
+    if not few.size:
+        return float(hours[-1])
+    return float(hours[max(int(few[0]) - 1, 0)])
+
+
 def rule_note(settings: MicrocolonySettings = MicrocolonySettings()) -> str:
     return f"groups of {settings.min_cells} or more linked cells in each frame, not followed in time"
 
@@ -64,10 +77,17 @@ def _band(ax, hours, mean, sd, colour=FS.INK, k: Optional[int] = None, low=None,
         ax.plot([hours[k]], [mean[k]], "o", ms=7, mfc="white", mec=colour, mew=2, zorder=5)
 
 
-def _simple(fig, metrics: MicrocolonyMetrics, key: str, what: str, cursor_h: Optional[float], words, ylabel: str, top: Optional[float] = None):
-    """One curve with its spread. words(value, hour) -> the note at the cursor."""
-    hours, mean, sd = metrics.mean_of(what); k = _nearest(hours, cursor_h)
+def _simple(fig, metrics: MicrocolonyMetrics, key: str, what: str, cursor_h: Optional[float], words, ylabel: str, top: Optional[float] = None,
+            until: Optional[float] = None, after: str = ""):
+    """One curve with its spread. words(value, hour) -> the note at the cursor. until: the curve is shown to that hour
+    only; `after` is the note when the cursor is past it."""
+    hours, mean, sd = metrics.mean_of(what)
+    if until is not None:
+        keep = hours <= until + 1e-9; hours, mean, sd = hours[keep], mean[keep], sd[keep]
+    k = _nearest(hours, cursor_h)
     note = f"mean and s.d. of {_positions(metrics)}" if k is None else words(float(mean[k]), float(hours[k]))
+    if until is not None and cursor_h is not None and cursor_h > until + 1e-9:
+        note = after
     ax = _axes(fig, metrics, key, note); _band(ax, hours, mean, sd, k=k)
     highest = float(np.nanmax(np.r_[(mean + sd)[np.isfinite(mean)], 1e-9]))
     ax.set_ylim(0, top if top is not None else highest * 1.12); ax.set_ylabel(ylabel, fontweight="bold"); _time_axis(ax, hours, cursor_h)
@@ -89,7 +109,7 @@ def draw_per(fig, metrics: MicrocolonyMetrics, cursor_h: Optional[float] = None)
     low, high = mean / 10 ** sd_log, mean * 10 ** sd_log; _band(ax, hours, mean, sd_log, k=k, low=low, high=high)
     seen = np.r_[low[np.isfinite(low)], high[np.isfinite(high)]]
     lo, hi = (float(seen.min()), float(seen.max())) if seen.size else (1.0, 10.0)
-    ax.set_yscale("log"); ax.set_ylim(10 ** np.floor(np.log10(max(lo, 1.0))), 10 ** np.ceil(np.log10(max(hi, 10.0)) + 1e-9))
+    ax.set_yscale("log"); ax.set_ylim(max(lo, 1.0) / 2.5, max(hi, 10.0) * 2.5)                    # the decades the data needs, as Figure 3 f (4 to 3,000 on run 2)
     ticks = [t for t in (1, 10, 100, 1000, 10000) if ax.get_ylim()[0] <= t <= ax.get_ylim()[1]]
     ax.set_yticks(ticks, [f"{t:,}" for t in ticks]); ax.minorticks_off(); ax.set_ylabel("Cells", fontweight="bold"); _time_axis(ax, hours, cursor_h)
     return ax
@@ -127,7 +147,9 @@ def draw_spacing(fig, metrics: MicrocolonyMetrics, cursor_h: Optional[float] = N
     hours, have = metrics.have("spacing_um")
     words = lambda v, h: (f"{v:.1f} µm at {h:g} h, mean of {int(have[int(np.argmin(np.abs(hours - h)))])} of {_positions(metrics)}"
                           if np.isfinite(v) else f"fewer than two microcolonies at {h:g} h")
-    return _simple(fig, metrics, "m_spacing", "spacing_um", cursor_h, words, "Nearest neighbour (µm)")
+    until = spacing_until(metrics)
+    return _simple(fig, metrics, "m_spacing", "spacing_um", cursor_h, words, "Nearest neighbour (µm)", until=until,
+                   after=f"shown to {until:g} h: after it a position has fewer than {SPACING_MIN} microcolonies")
 
 
 @SP.with_house_style
@@ -157,14 +179,18 @@ def draw_radial(fig, metrics: MicrocolonyMetrics, cursor_h: Optional[float] = No
         ax.text(0.5, 0.5, f"fewer than {min_cells} cells at every distance", ha="center", va="center", transform=ax.transAxes, color=SP.EMPTY_GREY)
         return ax
     ax = _axes(fig, metrics, "m_radial", f"cells within 3 µm, per 100 µm², {_positions(metrics)} together", right=0.80)
-    step = float(np.median(np.diff(hours))) if len(hours) > 1 else 1.0; top = int(np.flatnonzero(filled.any(0)).max()) + 1
-    lo, hi = float(np.nanmin(density)), float(np.nanmax(density))
-    image = ax.imshow(np.ma.masked_invalid(density[:, :top]).T, origin="lower", aspect="auto", cmap=HEAT, vmin=np.floor(lo), vmax=max(np.ceil(hi), np.floor(lo) + 1),
-                      extent=(hours[0] - step / 2, hours[-1] + step / 2, float(edges[0]), float(edges[top])), interpolation="nearest")
+    top = int(np.flatnonzero(filled.any(0)).max()) + 1; lo, hi = float(np.nanmin(density)), float(np.nanmax(density))
+    low = 5.0 * np.floor(lo / 5.0); high = max(5.0 * np.ceil(hi / 5.0), low + 5.0)                 # round ends, so the colour scale reads 10, 20, 30
+    between = (hours[:-1] + hours[1:]) / 2 if len(hours) > 1 else np.array([])                     # each column at its own hour, also when hours are missing
+    half = float(np.median(np.diff(hours))) / 2 if len(hours) > 1 else 0.5
+    columns = np.r_[hours[0] - half, between, hours[-1] + half]
+    image = ax.pcolormesh(columns, edges[:top + 1], np.ma.masked_invalid(density[:, :top]).T, cmap=HEAT, vmin=low, vmax=high, shading="flat")
+    ax.set_xlim(columns[0], columns[-1]); ax.set_ylim(float(edges[0]), float(edges[top]))
     ax.set_xticks(FS.time_ticks(float(hours[0]), float(hours[-1]))); ax.set_xlabel("Time (h)", fontweight="bold"); FS.cursor(ax, cursor_h); ax._time_axis = True
     ax.set_ylabel("Distance from centre (µm)", fontweight="bold")
     bar_axes = fig.add_axes([0.83, FS.AXES_BOTTOM, 0.025, FS.AXES_TOP - FS.AXES_BOTTOM]); bar = fig.colorbar(image, cax=bar_axes); bar.outline.set_linewidth(0.6)
     bar.set_label("Cells per 100 µm²", fontweight="bold")
+    tens = [v for v in np.arange(10.0 * np.ceil(low / 10.0), high + 1e-9, 10.0)]; bar.set_ticks(tens if tens else [low, high])
     return ax
 
 

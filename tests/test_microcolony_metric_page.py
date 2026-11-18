@@ -45,7 +45,7 @@ def test_every_metric_plot_draws_with_no_element_on_another(measured, key):
 
 def test_the_density_map_draws_with_no_element_on_another(measured):
     fig = figure(); XP.draw_radial(fig, measured, cursor_h=27.0, min_cells=1)           # the made-up frame has 14 cells in its one ring
-    assert SP.collisions(fig) == [] and len(fig.axes) == 2 and fig.axes[0].images
+    assert SP.collisions(fig) == [] and len(fig.axes) == 2 and fig.axes[0].collections           # the map, each column at its own hour
 
 
 def test_a_metric_plot_says_its_number_at_the_measured_hour_nearest_the_cursor(measured):

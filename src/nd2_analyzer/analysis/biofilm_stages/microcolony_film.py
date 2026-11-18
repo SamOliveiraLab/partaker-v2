@@ -47,6 +47,14 @@ def names_to_draw(rows: Dict[int, int], alive, row_px: float, name_px: float, al
     return sorted(kept, key=rows.get)
 
 
+def heading_words(root: int, drawn: int, later: int) -> str:
+    """The heading of the film: the followed microcolony and how many others the picture shows merging into it at this
+    moment (the bars drawn in the merging history), with those that come later named apart."""
+    if not drawn:
+        return f"Microcolony {root}" + (f" ({later} merge{'s' if later == 1 else ''} into it later)" if later else "")
+    return f"Microcolony {root} and the {drawn} that merge{'s' if drawn == 1 else ''} into it" + (f" ({later} more later)" if later else "")
+
+
 def step_for(side_px: int, shown_px: float) -> int:
     """Every how many pixels of a box side_px wide to draw, for a picture shown shown_px wide: about as fine as it is
     shown (the nearest whole step, so a picture is enlarged at most 1.5 times on screen)."""
@@ -310,23 +318,15 @@ class MicrocolonyFilm:
                        levels=[0.22], colors=[colour], linewidths=1.2)
             ax.text(cx, cy, str(r), color=TAG_GREEN, fontsize=9.5, fontweight="bold", ha="center", va="center", zorder=6,
                     path_effects=[pe.withStroke(linewidth=2.2, foreground="black")])
-        um = self.scale_um(); L = um / self.pixel_um
-        ax.add_patch(__import__("matplotlib").patches.Rectangle((w * 0.03, h * 0.86), L + w * 0.06, h * 0.11, fc="black", ec="none", zorder=4))
-        ax.plot([w * 0.06, w * 0.06 + L], [h * 0.945, h * 0.945], color="white", lw=2.5, solid_capstyle="butt", zorder=5)
-        ax.text(w * 0.06 + L / 2, h * 0.93, f"{um:g} µm", color="white", fontsize=9, ha="center", va="bottom", zorder=5)
+        um = self.scale_um(); L = um / self.pixel_um; edge = [pe.withStroke(linewidth=2.6, foreground="black")]
+        # the scale bar as Figure 3 d: a white bar and white words on the picture itself, no box over the cells
+        ax.plot([w * 0.05, w * 0.05 + L], [h * 0.955, h * 0.955], color="white", lw=2.5, solid_capstyle="butt", zorder=5, path_effects=edge)
+        ax.text(w * 0.05 + L / 2, h * 0.94, f"{um:g} µm", color="white", fontsize=9, ha="center", va="bottom", zorder=5, path_effects=edge)
         ax.set_xlim(0, w); ax.set_ylim(h, 0)
-        # the small whole-field picture, top left: where the box is
-        Hc, Wc = self.tracks.canvas_shape; step = max(1, int(round(max(Hc, Wc) / 256)))
-        mini = (self._on_canvas(t, (0, Hc, 0, Wc))[::step, ::step] > 0).astype(float); mw = 0.22; mh = mw * mini.shape[0] / mini.shape[1]
-        mi = ax.inset_axes([0.015, 1 - 0.015 - mh, mw, mh]); mi.set_zorder(7)
-        mi.imshow(mini, cmap="gray", vmin=0, vmax=1, interpolation="antialiased"); mi.set_xticks([]); mi.set_yticks([])
-        for s in mi.spines.values():
-            s.set_color("#bdbdbd"); s.set_linewidth(0.9)
-        y0, y1, x0, x1 = self.box
-        mi.add_patch(__import__("matplotlib").patches.Rectangle((x0 / step, y0 / step), (x1 - x0) / step - 1, (y1 - y0) / step - 1, fc="none", ec="#f2c14e", lw=1.2))
-        n_merge = len(self.order) - 1
-        title = f"microcolony {self.root}" + (f" and the {n_merge} that merge into it" if n_merge else "")
-        fig.text(0.03, 0.955, f"{title}   frame {t}   {now:g} h", fontsize=10.5, fontweight="bold", color=SP.INK, va="center")
+        started = [i for i in self.order if hours[self.tracks.identities[i]["birth"]] <= now]     # the bars the merging history draws now
+        drawn = len([i for i in started if i != self.root])
+        fig.text(0.03, 0.955, f"{heading_words(self.root, drawn, len(self.order) - 1 - drawn)}   frame {t}   {now:g} h", fontsize=10.5, fontweight="bold",
+                 color=SP.INK, va="center")
         # the merging history, drawn up to now
         ax2 = fig.add_axes([0.50, 0.47, 0.46, 0.34]); SP.open_frame(ax2); first_h, last_h = hours[self.frames[0]], hours[self.frames[-1]]
         ident = self.tracks.identities; pad = max((last_h - first_h) * 0.06, 0.5); thick = bar_width(len(self.order))
@@ -345,7 +345,7 @@ class MicrocolonyFilm:
         ax2.axvline(now, color=FS.CURSOR_RED, lw=1.2, zorder=6); ax2.set_ylim(len(self.order) - 0.4, -0.6); ax2.set_yticks([]); ax2.spines["left"].set_visible(False)
         ax2.set_xlim(first_h - pad, last_h + pad); ax2.set_xticks(FS.time_ticks(first_h, last_h)); ax2.tick_params(labelbottom=False)
         n_now = self.microcolonies_now(t)
-        fig.text(0.50, 0.955, "merging history", fontsize=10.5, fontweight="bold", color=SP.INK, va="center")
+        fig.text(0.50, 0.955, f"Merging history ({len(started)} microcolon{'y' if len(started) == 1 else 'ies'})", fontsize=10.5, fontweight="bold", color=SP.INK, va="center")
         fig.text(0.50, 0.885, f"{SP_words(n_now)} now; each bar ends where it merges", fontsize=9, color="#444444", va="center")
         # the cells it holds
         ax3 = fig.add_axes([0.50, 0.15, 0.46, 0.21]); SP.open_frame(ax3)
@@ -357,6 +357,17 @@ class MicrocolonyFilm:
             ax3.set_ylim(0, max(int(ns.max()), 1) * 1.12); ax3.set_ylabel("Cells", fontweight="bold")
         ax3.axvline(now, color=FS.CURSOR_RED, lw=1.2, zorder=6); ax3.set_xlim(first_h - pad, last_h + pad); ax3.set_xticks(FS.time_ticks(first_h, last_h))
         ax3.set_xlabel("Time (h)", fontweight="bold")
+        # the field of view: a small picture of its own beside the film (not over it), the film's box in yellow
+        Hc, Wc = self.tracks.canvas_shape; coarse = max(1, int(round(max(Hc, Wc) / 256)))
+        mini = (self._on_canvas(t, (0, Hc, 0, Wc))[::coarse, ::coarse] > 0).astype(float); image = ax.get_position()
+        mw = 0.065; mh = mw * aspect * mini.shape[0] / mini.shape[1]
+        field = fig.add_axes([image.x1 + 0.012, image.y1 - mh - 0.06, mw, mh])
+        field.imshow(mini, cmap="gray", vmin=0, vmax=1, interpolation="antialiased"); field.set_xticks([]); field.set_yticks([])
+        field.set_title("field of view", fontsize=8, color=FS.G1, pad=3, fontweight="normal")
+        for side in field.spines.values():
+            side.set_color("#bdbdbd"); side.set_linewidth(0.9)
+        y0, y1, x0, x1 = self.box
+        field.add_patch(__import__("matplotlib").patches.Rectangle((x0 / coarse, y0 / coarse), (x1 - x0) / coarse - 1, (y1 - y0) / coarse - 1, fc="none", ec="#f2c14e", lw=1.2))
         return ax, ax2
 
     # ------------------------------------------------------------------ export

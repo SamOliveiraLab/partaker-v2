@@ -63,7 +63,8 @@ NAMES = {"m_count": "Microcolonies", "m_per": "Cells", "m_in": "Cells (%)", "m_d
 @pytest.mark.parametrize("key", list(NAMES))
 def test_the_metric_plots_carry_the_figures_axis_names(measured, key):
     fig = figure(); XP.DRAW[key](fig, measured, cursor_h=27.0); ax = fig.axes[0]
-    assert ax.get_ylabel() == NAMES[key] and ax.get_xlabel() == "Time (h)" and red_cursor(ax) == [27.0]
+    assert ax.get_ylabel() == NAMES[key] and ax.get_xlabel() == "Time (h)"
+    assert red_cursor(ax) == ([27.0] if key != "m_spacing" else [])      # the spacing stops before 27 h here: two positions with one or two microcolonies
     main = [l for l in ax.lines if l.get_marker() == "o" and len(l.get_xdata()) > 2]
     assert main and (main[-1].get_color() in (FS.INK, FS.MICROCOLONY_ORANGE))                 # ink (orange for cells in microcolonies), not the old blue
     assert SP.collisions(fig) == []
@@ -80,3 +81,44 @@ def test_the_density_map_carries_the_figures_names(measured):
     fig = figure(); XP.draw_radial(fig, measured, cursor_h=27.0, min_cells=1)
     assert fig.axes[0].get_ylabel() == "Distance from centre (µm)" and fig.axes[0].get_xlabel() == "Time (h)" and fig.axes[1].get_ylabel() == "Cells per 100 µm²"
     assert SP.collisions(fig) == []
+
+
+# ---------------------------------------------------------------- after the coordinator's comparison with the figures (18 Nov, 06:00)
+def made_up(microcolonies, per_microcolony=None, spacing=None):
+    """A measure of two positions at four hours, built by hand."""
+    import numpy as np
+    hours = np.array([24.0, 25.5, 27.0, 28.5]); n = len(hours)
+    values = {name: {p: np.full(n, 10.0) for p in (0, 1)} for name in MM.SERIES}
+    values["microcolonies"] = {p: np.array(v, float) for p, v in microcolonies.items()}
+    if per_microcolony is not None:
+        values["cells_per_microcolony"] = {p: np.array(per_microcolony, float) for p in (0, 1)}
+    if spacing is not None:
+        values["spacing_um"] = {p: np.array(spacing, float) for p in (0, 1)}
+    rings = len(np.arange(0, 42, 2.0)) - 1
+    return MM.MicrocolonyMetrics(positions=[0, 1], frames={0: [0, 3, 6, 9], 1: [0, 3, 6, 9]}, hours={0: hours, 1: hours}, values=values,
+                                 ring_sum={p: np.full((n, rings), 600.0) for p in (0, 1)}, ring_n={p: np.full((n, rings), 30, int) for p in (0, 1)})
+
+
+def test_the_spacing_stops_where_a_position_has_too_few_microcolonies_as_figure_3_i():
+    """Figure 3 i stops at 39 h, "while several microcolonies exist": on run 2 that is the last hour at which every
+    position has 5 or more. A nearest neighbour among two or three large microcolonies is not a spacing."""
+    m = made_up({0: [6, 6, 6, 6], 1: [6, 5, 4, 6]})
+    assert XP.spacing_until(m) == 25.5                                               # 27 h is the first hour with a position under 5; it does not come back
+    fig = figure(); XP.draw_spacing(fig, m, cursor_h=28.5); ax = fig.axes[0]
+    line = [l for l in ax.lines if l.get_marker() == "o" and len(l.get_xdata()) > 1][0]
+    assert list(line.get_xdata()) == [24.0, 25.5] and ax.get_xlim()[1] < 27.0
+    said = [t.get_text() for t in fig.texts]
+    assert said[1] == "shown to 25.5 h: after it a position has fewer than 5 microcolonies" and SP.collisions(fig) == []
+    assert XP.spacing_until(made_up({0: [6, 6, 6, 6], 1: [6, 6, 6, 6]})) == 28.5
+
+
+def test_cells_per_microcolony_runs_over_the_decades_the_data_needs_as_figure_3_f():
+    m = made_up({0: [6] * 4, 1: [6] * 4}, per_microcolony=[14, 25, 330, 400])
+    fig = figure(); XP.draw_per(fig, m, cursor_h=24.0); ax = fig.axes[0]
+    assert [t.get_text() for t in ax.get_yticklabels()] == ["10", "100", "1,000"] and 3 <= ax.get_ylim()[0] <= 10 and 1000 <= ax.get_ylim()[1] <= 3000
+
+
+def test_the_density_map_has_round_colour_ticks():
+    m = made_up({0: [6] * 4, 1: [6] * 4}); m.ring_sum[0][:, 3] = 240.0; m.ring_sum[1][:, 3] = 240.0; m.ring_sum[0][:, 5] = 870.0; m.ring_sum[1][:, 5] = 870.0   # densities 8, 20, 29
+    fig = figure(); XP.draw_radial(fig, m, cursor_h=24.0); bar = fig.axes[1]
+    assert list(bar.get_yticks()) == [10.0, 20.0, 30.0] and bar.get_ylim() == (5.0, 30.0)

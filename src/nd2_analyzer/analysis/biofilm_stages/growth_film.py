@@ -88,23 +88,25 @@ class GrowthFilm:
         ax.plot([w * 0.06, w * 0.06 + L], [h * 0.945, h * 0.945], color="white", lw=2.5, solid_capstyle="butt", zorder=5)
         ax.text(w * 0.06 + L / 2, h * 0.93, f"{um:g} µm", color="white", fontsize=9, ha="center", va="bottom", zorder=5); ax.set_xlim(0, w); ax.set_ylim(h, 0)
         state = next((name for name, a, b in GP.states(gs) if a <= now <= b), "")
-        fig.text(0.03, 0.955, f"position {p}   frame {t}   {now:g} h" + (f"   state {state}" if state else ""), fontsize=10.5, fontweight="bold", color=SP.INK, va="center")
-        pad = max((hours[-1] - hours[0]) * 0.04, 0.5); seen = hours <= now + 1e-9
-        ax2 = fig.add_axes([0.52, 0.52, 0.44, 0.30]); SP.open_frame(ax2)
-        for name, a, b in GP.states(gs):
-            ax2.axvspan(a, b, color=GP.STATE_SHADE[name], lw=0, zorder=0)
-        ax2.plot(hours[seen], gs.cells[p][seen], color=FS.INK, lw=1.6)
+        fig.text(0.03, 0.955, f"Position {p}   frame {t}   {now:g} h" + (f"   state {state}" if state else ""), fontsize=10.5, fontweight="bold", color=SP.INK, va="center")
+        pad = max((hours[-1] - hours[0]) * 0.04, 0.5); seen = hours <= now + 1e-9; states = GP.states(gs)
+        ax2 = fig.add_axes([0.52, 0.50, 0.44, 0.29]); SP.open_frame(ax2)       # as the plots of the page: states named, Th1 named, dots on the line
+        FS.bands(ax2, states); FS.dots(ax2, hours[seen], gs.cells[p][seen], FS.INK, joined=True, size=3.5, width=1.4)
         FS.time_axis(ax2, float(hours[0]), float(hours[-1]), show=False); FS.cursor(ax2, now)             # as the plots of the page: Figure 5's names, the red cursor
         FS.count_axis(ax2, max(int(gs.cells[p].max()), 1) * 1.12, "Cells per frame", bins=3)
-        fig.text(0.52, 0.955, "number of cells", fontsize=10.5, fontweight="bold", color=SP.INK, va="center")
-        fig.text(0.52, 0.885, f"{int(gs.cells[p][k]):,} cells now, {gs.rate[p][k]:.0f} more per hour", fontsize=9, color="#444444", va="center")
-        ax3 = fig.add_axes([0.52, 0.15, 0.44, 0.24]); SP.open_frame(ax3)
-        for name, a, b in GP.states(gs):
-            ax3.axvspan(a, b, color=GP.STATE_SHADE[name], lw=0, zorder=0)
+        FS.band_names(ax2, states, y=0.84, size=11)
+        fig.text(0.52, 0.955, "Number of cells", fontsize=10.5, fontweight="bold", color=SP.INK, va="center")
+        fig.text(0.52, 0.898, f"{int(gs.cells[p][k]):,} cells now, {gs.rate[p][k]:.0f} more per hour", fontsize=9, color="#444444", va="center")
+        ax3 = fig.add_axes([0.52, 0.15, 0.44, 0.24]); SP.open_frame(ax3); FS.bands(ax3, states)
         if p in gs.matrix and len(gs.matrix[p]):
             mh = gs.matrix_hours[p]; shown = mh <= now + 1e-9
-            ax3.plot(mh[shown], gs.matrix[p][shown], color=GP.MATRIX_GREEN, lw=2); ax3.set_ylim(0, max(float(gs.matrix[p].max()), 1.0) * 1.12)
+            FS.dots(ax3, mh[shown], gs.matrix[p][shown], GP.MATRIX_GREEN, joined=True, size=3.5, width=1.4); ax3.set_ylim(0, max(float(gs.matrix[p].max()), 1.0) * 1.12)
         FS.time_axis(ax3, float(hours[0]), float(hours[-1])); FS.cursor(ax3, now); ax3.set_ylabel("Matrix stain\n(% of frame)", fontweight="bold")
+        if states:                                                             # Th1 on both plots, named over the upper one
+            th1 = states[0][2]; lo, hi = ax2.get_xlim(); box = ax2.get_position()
+            for axis in (ax2, ax3):
+                axis.axvline(th1, color=FS.INK, lw=1.0, ls=FS.DASH, zorder=1)
+            fig.text(box.x0 + (th1 - lo) / (hi - lo) * box.width, box.y1 + 0.045, "Th1", fontsize=9.5, fontweight="bold", color=FS.INK, ha="center", va="center")
         return ax
 
     def save_gif(self, path: str, progress: Optional[Callable[[int, int], bool]] = None, ms: int = 250):
