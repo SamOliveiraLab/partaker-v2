@@ -6,7 +6,9 @@ Track, moves the view area's T slider when the cursor moves, opens the Microcolo
 exports. Nothing is read from any saved table."""
 from __future__ import annotations
 
-from typing import Callable, Dict, Optional
+import json
+from pathlib import Path
+from typing import Callable, Dict, List, Optional
 
 import numpy as np
 from PySide6.QtCore import QCoreApplication, QObject, QThread, Signal
@@ -15,11 +17,15 @@ from pubsub import pub
 
 from nd2_analyzer.analysis.biofilm_stages import microcolony_plots as MP
 from nd2_analyzer.analysis.biofilm_stages.microcolony_film import FIGURE_IN, MicrocolonyFilm
-from nd2_analyzer.analysis.biofilm_stages.microcolony_follow import close_gaps, follow_microcolonies
+from nd2_analyzer.analysis.biofilm_stages.microcolony_follow import close_gaps, follow_microcolonies, load_tracks, save_tracks
+from nd2_analyzer.analysis.biofilm_stages.microcolony_metrics import load_metrics, measure_metrics, save_metrics
 from nd2_analyzer.data.image_data import ImageData
 from .microcolony_window import MicrocolonyDialog
 
 WORKER_WAIT_MS = 30000
+STATE_DIR = "biofilm_stages"   # in a saved session: what the stage pages worked out
+MEASURE_EVERY_H = 1.5          # the step of the all-positions metrics when the page opens (the step Figure 3 used)
+RANDOM_EVERY_H, RANDOM_FOR_H = 3.0, 9.0      # the cells are also placed at random every 3 h of the first 9 h: later the surface is too full
 
 
 def frames_to_follow(segmented: list, last: int, skip: Optional[Callable[[int], bool]] = None) -> list:
@@ -31,6 +37,23 @@ def frames_to_follow(segmented: list, last: int, skip: Optional[Callable[[int], 
             break
         run.append(t)
     return run
+
+
+def frames_for_metrics(segmented: Dict[int, list], step: int, last: int, skip: Optional[Callable[[int], bool]] = None) -> Dict[int, list]:
+    """position -> every step-th of its segmented frames counted from the first, not past `last` and without the frames
+    `skip` names (out of focus). A position with fewer than two such frames gives no curve and is left out."""
+    out = {}
+    for p, frames in segmented.items():
+        frames = sorted(int(t) for t in frames)
+        keep = [t for t in frames if (t - frames[0]) % max(int(step), 1) == 0 and t <= int(last) and not (skip is not None and skip(t))]
+        if len(keep) >= 2:
+            out[int(p)] = keep
+    return out
+
+
+def random_hours(start_hour: float) -> tuple:
+    """The hours at which the cells are also placed at random."""
+    return tuple(float(start_hour) + k * RANDOM_EVERY_H for k in range(int(RANDOM_FOR_H / RANDOM_EVERY_H) + 1))
 
 
 def recording_words(info, position: int) -> str:
@@ -63,6 +86,26 @@ class FollowWorker(QThread):
         self.done.emit(tracks)
 
 
+class MetricsWorker(QThread):
+    """Measures the metrics of every position off the window's thread and reports progress."""
+    progress = Signal(int, str)
+    done = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, labels_at, frames, pixel_um, hour_of, random_at=(), parent=None):
+        super().__init__(parent)
+        self.args = (labels_at, dict(frames), float(pixel_um), hour_of, tuple(random_at)); self.generation = 0
+
+    def run(self):
+        labels_at, frames, pixel_um, hour_of, random_at = self.args
+        try:
+            out = measure_metrics(labels_at, frames, pixel_um, hour_of, random_hours=random_at,
+                                  progress=lambda k, n: self.progress.emit(int(100 * k / max(n, 1)), f"{100 * k // max(n, 1)} %"))
+        except Exception as exc:                                   # the page shows the reason in the All positions step
+            self.failed.emit(f"{type(exc).__name__}: {exc}"); return
+        self.done.emit(out)
+
+
 class MicrocolonyController(QObject):
     def __init__(self, page, recording_info: Callable[[], object], position: Callable[[], int], parent=None):
         super().__init__(parent)
@@ -76,6 +119,8 @@ class MicrocolonyController(QObject):
         self.stain_source: Optional[Callable[[int], Optional[Callable[[int], np.ndarray]]]] = None   # position -> (frame -> matrix mask), from the Maturation tab
         self.drawn: Dict[int, object] = {}                         # position -> the followed microcolonies with their gaps closed, for the pictures
         self.compare_window = None
+        self.metrics = None; self.metrics_worker: Optional[MetricsWorker] = None; self.every_set_for = None
+        page.measure_requested.connect(self.measure)
         for topic, fn in (("experiment_loaded", self.on_changed), ("image_data_loaded", self.on_new_recording),
                           ("batch_segmentation_completed", self.on_segmented), ("view_index_changed", self.on_changed)):
             pub.subscribe(fn, topic)
@@ -84,8 +129,9 @@ class MicrocolonyController(QObject):
             app.aboutToQuit.connect(self.shutdown)
 
     def shutdown(self):
-        if self.worker is not None and self.worker.isRunning():
-            self.worker.requestInterruption(); self.worker.wait(WORKER_WAIT_MS)
+        for worker in (self.worker, self.metrics_worker):
+            if worker is not None and worker.isRunning():
+                worker.requestInterruption(); worker.wait(WORKER_WAIT_MS)
 
     def connect_main_window(self, set_frame: Optional[Callable[[int], None]] = None):
         self.set_frame = set_frame; self.refresh()
@@ -98,7 +144,8 @@ class MicrocolonyController(QObject):
         self.refresh()
 
     def on_new_recording(self, image_data=None):
-        self.generation += 1; self.tracked = {}; self.drawn = {}; self.close_window(); self.page.set_tracks(None); self.refresh()
+        self.generation += 1; self.tracked = {}; self.drawn = {}; self.metrics = None; self.close_window()
+        self.page.set_tracks(None); self.page.set_metrics(None); self.refresh()
 
     def masks(self, position: int):
         """(array, frames): the mask cache of the model with the most frames of this position, and those frames."""
@@ -113,6 +160,23 @@ class MicrocolonyController(QObject):
             if len(frames) > len(best[1]):
                 best = (array, frames)
         return best
+
+    def all_masks(self):
+        """(array, position -> its segmented frames) of the mask cache of the model with the most frames."""
+        image_data = ImageData.get_instance(); cache = getattr(image_data, "segmentation_cache", None) if image_data is not None else None
+        chosen = (None, {})
+        for _model, entry in (getattr(cache, "mmap_arrays_idx", {}) or {}).items():
+            try:
+                array, indices = entry
+            except (TypeError, ValueError):
+                continue
+            per: Dict[int, List[int]] = {}
+            for i in indices:
+                if len(i) >= 2:
+                    per.setdefault(int(i[1]), []).append(int(i[0]))
+            if sum(len(v) for v in per.values()) > sum(len(v) for v in chosen[1].values()):
+                chosen = (array, {p: sorted(set(v)) for p, v in per.items()})
+        return chosen
 
     def out_of_focus(self) -> Optional[Callable[[int], bool]]:
         """The experiment's own word on which frames are out of focus (its focus-loss intervals), None when it has none."""
@@ -129,8 +193,8 @@ class MicrocolonyController(QObject):
     def refresh(self):
         info = self.recording_info(); page = self.page
         if info is None:
-            page.set_recording("", None); page.set_track_enabled(False)
-            for step in ("load", "segment", "track"):
+            page.set_recording("", None); page.set_track_enabled(False); page.set_measure_enabled(False)
+            for step in ("load", "segment", "track", "measure"):
                 page.set_step_state(step, "todo")
             return
         p = self.position(); _array, frames = self.masks(p); dt_h = (info.dt_s or 0.0) / 3600.0
@@ -140,6 +204,13 @@ class MicrocolonyController(QObject):
         page.set_step_state("segment", "done" if frames else "todo", f"{len(frames):,}, position {p}" if frames else "")
         can = bool(dt_h and info.pixel_um and len(frames) >= 2) and not (self.worker is not None and self.worker.isRunning())
         page.set_track_enabled(can)
+        measuring = self.metrics_worker is not None and self.metrics_worker.isRunning()
+        several = [f for f in self.all_masks()[1].values() if len(f) >= 2]
+        page.set_measure_enabled(bool(dt_h and info.pixel_um and several) and not measuring)
+        if dt_h and self.every_set_for != self.generation:
+            self.every_set_for = self.generation; page.set_every(dt_h, max(dt_h, round(MEASURE_EVERY_H / dt_h) * dt_h))
+        if self.metrics is None and not measuring:
+            page.set_step_state("measure", "todo")
         if frames and dt_h and p != self.shown_position:
             good = frames_to_follow(frames, frames[-1], self.out_of_focus()) or frames[:1]      # up to the last frame before focus is lost
             page.set_until(hour(good[0]), hour(good[-1]), dt_h)
@@ -147,9 +218,14 @@ class MicrocolonyController(QObject):
         if p != self.shown_position:
             self.shown_position = p; self.show_tracks(tracks, p)
         if tracks is None and not (self.worker is not None and self.worker.isRunning()):
-            page.set_step_state("track", "todo")
-            page.status.setText("Click Track to find the microcolonies of this position and follow them." if can else
-                                "Segment at least two frames of this position in the Segmentation tab, then click Track.")
+            page.set_step_state("track", "todo"); others = sorted(self.tracked)
+            if others and can:
+                where = (f"Position {others[0]} is tracked: move the P slider to {others[0]} to see it" if len(others) == 1 else
+                         f"Positions {', '.join(str(o) for o in others)} are tracked: move the P slider to one of them to see it")
+                page.status.setText(where + ", or click Track to follow this position too.")
+            else:
+                page.status.setText("Click Track to find the microcolonies of this position and follow them." if can else
+                                    "Segment at least two frames of this position in the Segmentation tab, then click Track.")
 
     def show_tracks(self, tracks, position: int):
         info = self.recording_info()
@@ -188,6 +264,86 @@ class MicrocolonyController(QObject):
         if worker.position == self.position():
             self.show_tracks(tracks, worker.position)
         self.refresh()
+
+    # ------------------------------------------------------------------ Measure (every position, for the metric plots)
+    def measure(self):
+        info = self.recording_info()
+        if info is None or (self.metrics_worker is not None and self.metrics_worker.isRunning()):
+            return
+        array, per = self.all_masks(); dt_h = (info.dt_s or 0.0) / 3600.0
+        if array is None or not dt_h or not info.pixel_um:
+            return
+        start = float(info.start_hour); last = int(round((self.page.until_spin.value() - start) / dt_h))
+        frames = frames_for_metrics(per, max(1, int(round(self.page.every_spin.value() / dt_h))), last, self.out_of_focus())
+        if not frames:
+            self.page.set_step_state("measure", "failed", "no position has two segmented frames to measure"); return
+        self.metrics_worker = MetricsWorker(lambda p, t: np.asarray(array[int(t), int(p), 0]), frames, info.pixel_um,
+                                            lambda t: start + int(t) * dt_h, random_hours(start), self)
+        self.metrics_worker.generation = self.generation
+        self.metrics_worker.progress.connect(lambda pct, words: self.page.set_step_state("measure", "running", words))
+        self.metrics_worker.done.connect(self.on_measured)
+        self.metrics_worker.failed.connect(lambda why: (self.page.set_step_state("measure", "failed", why), self.refresh()))
+        self.page.set_measure_enabled(False); self.page.set_step_state("measure", "running", "0 %"); self.metrics_worker.start()
+
+    def on_measured(self, metrics):
+        worker = self.sender()
+        if worker is None or worker.generation != self.generation:
+            return                                                  # another recording was loaded meanwhile
+        self.metrics = metrics; self.show_metrics(metrics); self.refresh()
+
+    def show_metrics(self, metrics):
+        self.page.set_metrics(metrics)
+        if metrics is None:
+            return
+        hours = [h for p in metrics.positions for h in metrics.hours[p]]; n = len(metrics.positions)
+        self.page.set_step_state("measure", "done", f"{n} position{'' if n == 1 else 's'}, {min(hours):g} to {max(hours):g} h")
+        self.page.step_labels["measure"].setToolTip("Positions " + ", ".join(str(p) for p in metrics.positions))
+
+    # ------------------------------------------------------------------ with the saved session
+    def save_state(self, folder) -> list:
+        """Writes what the page worked out into the session folder (the followed microcolonies of every tracked position,
+        the all-positions metrics, the outlines drawn by hand). Returns the files written; none when there is nothing."""
+        if not self.tracked and self.metrics is None and not self.outlines:
+            return []
+        out = Path(folder) / STATE_DIR; out.mkdir(parents=True, exist_ok=True); written = []
+        for old in list(out.glob("microcolonies_p*.npz")) + [out / "microcolony_metrics.npz"]:      # of an earlier save to this folder
+            old.unlink(missing_ok=True)
+        for p, tracks in sorted(self.tracked.items()):
+            written.append(save_tracks(tracks, out / f"microcolonies_p{int(p)}.npz"))
+            if self.drawn.get(p) is not None:
+                written.append(save_tracks(self.drawn[p], out / f"microcolonies_p{int(p)}_drawn.npz"))
+        if self.metrics is not None:
+            written.append(save_metrics(self.metrics, out / "microcolony_metrics.npz"))
+        about = {"positions": sorted(int(p) for p in self.tracked), "follow_until_h": self.page.until_spin.value(), "every_h": self.page.every_spin.value(),
+                 "outlines": [{"position": int(p), "frame": int(t), "outlines": lines} for (p, t), lines in sorted(self.outlines.items())]}
+        (out / "microcolonies.json").write_text(json.dumps(about, indent=1)); written.append(str(out / "microcolonies.json"))
+        return written
+
+    def load_state(self, folder) -> bool:
+        """Brings back what save_state wrote. False when the session holds none of it or it cannot be read (the page
+        then starts empty and says so)."""
+        src = Path(folder) / STATE_DIR
+        if not (src / "microcolonies.json").exists():
+            return False
+        try:
+            about = json.loads((src / "microcolonies.json").read_text())
+            tracked = {int(p): load_tracks(src / f"microcolonies_p{int(p)}.npz") for p in about.get("positions", [])}
+            drawn = {p: load_tracks(src / f"microcolonies_p{p}_drawn.npz") if (src / f"microcolonies_p{p}_drawn.npz").exists() else t for p, t in tracked.items()}
+            metrics = load_metrics(src / "microcolony_metrics.npz") if (src / "microcolony_metrics.npz").exists() else None
+            outlines = {(int(o["position"]), int(o["frame"])): [[tuple(float(v) for v in point) for point in line] for line in o["outlines"]]
+                        for o in about.get("outlines", [])}
+        except (ValueError, KeyError, TypeError, OSError) as exc:
+            self.page.status.setText(f"The microcolony results saved with this session could not be read ({exc}). Click Track to follow them again.")
+            return False
+        self.close_window(); self.tracked, self.drawn, self.metrics, self.outlines = tracked, drawn, metrics, outlines
+        self.shown_position = None; self.refresh()                      # shows the tracks of the position in the view area
+        info = self.recording_info(); dt_h = (info.dt_s or 0.0) / 3600.0 if info is not None else 0.0
+        if about.get("follow_until_h") is not None:
+            self.page.until_spin.setValue(float(about["follow_until_h"]))
+        if dt_h and about.get("every_h"):
+            self.page.set_every(dt_h, float(about["every_h"]))
+        self.show_metrics(metrics)
+        return True
 
     # ------------------------------------------------------------------ cursor, window, exports
     def on_hour_changed(self, hour: float):

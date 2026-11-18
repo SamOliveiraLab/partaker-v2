@@ -370,3 +370,28 @@ def close_gaps(tracks: MicrocolonyTracks, labels_at: Callable[[int], np.ndarray]
         cell_identity[t] = {int(l): int(v) for l, v in zip(labels, cid)}; maps[t] = pack_map(I)
     rows.sort(key=lambda r: (r["time"], r["identity"]))
     return replace(tracks, rows=rows, cell_identity=cell_identity, maps=maps, _lasting=None)
+
+
+# ---------------------------------------------------------------- with the saved session
+def save_tracks(tracks: MicrocolonyTracks, path) -> str:
+    """The followed microcolonies as a file of numbers and text (stage_files)."""
+    from . import stage_files as SF
+    header = {"frames": list(tracks.frames), "hours": tracks.hours, "offsets": tracks.offsets, "canvas_shape": list(tracks.canvas_shape),
+              "identities": tracks.identities, "events": tracks.events, "rows": tracks.rows, "cell_identity": tracks.cell_identity,
+              "min_cells": int(tracks.min_cells)}
+    arrays = {f"map_{t}": np.frombuffer(packed, np.uint8) for t, packed in tracks.maps.items()}
+    arrays.update({f"points_{t}": np.stack([np.asarray(a, np.int64) for a in triple]) for t, triple in tracks.points.items()})
+    return SF.write(path, "followed microcolonies", header, arrays)
+
+
+def load_tracks(path) -> MicrocolonyTracks:
+    from . import stage_files as SF
+    h, arrays = SF.read(path, "followed microcolonies")
+    return MicrocolonyTracks(
+        frames=[int(t) for t in h["frames"]], hours={int(t): float(v) for t, v in h["hours"].items()},
+        offsets={int(t): tuple(int(v) for v in o) for t, o in h["offsets"].items()}, canvas_shape=tuple(int(v) for v in h["canvas_shape"]),
+        identities=SF.int_keys(h["identities"]), events=h["events"], rows=h["rows"],
+        cell_identity={int(t): {int(cell): int(i) for cell, i in cells.items()} for t, cells in h["cell_identity"].items()},
+        min_cells=int(h["min_cells"]),
+        maps={int(k[4:]): v.tobytes() for k, v in arrays.items() if k.startswith("map_")},
+        points={int(k[7:]): tuple(v) for k, v in arrays.items() if k.startswith("points_")})

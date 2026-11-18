@@ -1,7 +1,8 @@
 """The Microcolonies page of the Biofilm Stages tab, built like the Seeding page: the steps with a button, the time strip
 with its cursor and Play, the microcolonies to follow with Follow and the film strip, eight cards, two plots with a picker.
-Every number comes from the microcolonies the tool followed on the loaded recording (microcolony_follow); the page only
-shows them. The controller (microcolony_controller) feeds it."""
+Every number comes from the microcolonies the tool followed on the loaded recording (microcolony_follow) or, for the
+plots under the line of the picker, from the metrics it measured on every segmented position (microcolony_metrics); the
+page only shows them. The controller (microcolony_controller) feeds it."""
 from __future__ import annotations
 
 from typing import Optional
@@ -11,12 +12,13 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (QComboBox, QDoubleSpinBox, QGridLayout, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton,
                                QVBoxLayout, QWidget)
 
+from nd2_analyzer.analysis.biofilm_stages import microcolony_metric_plots as XP
 from nd2_analyzer.analysis.biofilm_stages import microcolony_plots as MP
 from nd2_analyzer.analysis.biofilm_stages.microcolony_film import draw_film_strip
 from .seeding_page import LEFT_COLUMN_PX, FactCard, PlotCanvas, StripCanvas, step_words
 
-STEPS = ("load", "segment", "track")
-STEP_NAMES = {"load": "Raw Frames", "segment": "Segmented Frames", "track": "Microcolonies"}
+STEPS = ("load", "segment", "track", "measure")
+STEP_NAMES = {"load": "Raw Frames", "segment": "Segmented Frames", "track": "Microcolonies", "measure": "All positions"}
 PLAY_TICK_MS = 250             # Play on the strip: one frame of the recording every quarter of a second
 RULE_WORDS = "A microcolony: cells less than 0.5 µm apart, 4 or more of them, still there 1 h later."
 
@@ -29,10 +31,11 @@ class MicrocolonyPage(QWidget):
     selection_changed = Signal(object)
     export_requested = Signal(str)             # "film" or "image"
     compare_requested = Signal()               # manual selection next to automatic detection, on the frame at the cursor
+    measure_requested = Signal()               # the metrics of every segmented position
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.tracks = None; self.film = None; self.hour = 0.0
+        self.tracks = None; self.film = None; self.metrics = None; self.hour = 0.0
         self.step_states = {s: ("todo", "") for s in STEPS}
         self.play_timer = QTimer(self); self.play_timer.setInterval(PLAY_TICK_MS); self.play_timer.timeout.connect(self._play_step)
         lay = QVBoxLayout(self); lay.setContentsMargins(6, 4, 6, 4); lay.setSpacing(4)
@@ -97,9 +100,21 @@ class MicrocolonyPage(QWidget):
             combo = QComboBox()
             for key, title in MP.FIGURES:
                 combo.addItem(title, key)
+            combo.insertSeparator(combo.count())                   # under the line: every position, each frame by itself
+            for key, title in XP.FIGURES:
+                combo.addItem(title, key)
             combo.setCurrentIndex(max(0, combo.findData(default))); combo.currentIndexChanged.connect(lambda _i: self._render_plots())
             self.plot_combos.append(combo); picker.addWidget(combo)
-        picker.addStretch(1); right.addLayout(picker)
+        picker.addStretch(1)
+        picker.addWidget(QLabel("All positions, every:"))
+        self.every_spin = QDoubleSpinBox(); self.every_spin.setDecimals(2); self.every_spin.setSuffix(" h"); self.every_spin.setRange(0.01, 1000.0); self.every_spin.setEnabled(False)
+        self.every_spin.setToolTip("The time between two measured frames, from the first frame to the hour of \"Follow until\"")
+        picker.addWidget(self.every_spin)
+        self.measure_button = QPushButton("Measure"); self.measure_button.setEnabled(False)
+        self.measure_button.setToolTip("Measures every segmented position for the plots under the line of the picker: cells per microcolony, local "
+                                       "density, spacing, alignment, largest microcolony, area.  " + XP.RULE_NOTE.capitalize() + ".")
+        self.measure_button.clicked.connect(self.measure_requested.emit); picker.addWidget(self.measure_button)
+        right.addLayout(picker)
         plots = QHBoxLayout(); plots.setSpacing(6); self.panels = []
         for _default in MP.FIGURE_DEFAULTS:
             canvas = PlotCanvas(size=MP.FIGURE_SIZE_IN, min_height=330); canvas.mpl_connect("button_press_event", lambda ev, c=canvas: self._on_plot_press(c, ev))
@@ -128,6 +143,18 @@ class MicrocolonyPage(QWidget):
     def set_until(self, first_h: float, last_h: float, step_h: float, value: Optional[float] = None):
         self.until_spin.blockSignals(True); self.until_spin.setRange(first_h, last_h); self.until_spin.setSingleStep(step_h)
         self.until_spin.setValue(last_h if value is None else value); self.until_spin.blockSignals(False)
+
+    def set_measure_enabled(self, on: bool):
+        self.measure_button.setEnabled(bool(on)); self.every_spin.setEnabled(bool(on))
+
+    def set_every(self, step_h: float, value_h: Optional[float] = None):
+        """The frame step of the recording is the smallest choice and the size of one click."""
+        self.every_spin.blockSignals(True); self.every_spin.setMinimum(step_h); self.every_spin.setSingleStep(step_h)
+        self.every_spin.setValue(step_h if value_h is None else value_h); self.every_spin.blockSignals(False)
+
+    def set_metrics(self, metrics):
+        """The metrics of every measured position (None clears their plots)."""
+        self.metrics = metrics; self._render_plots()
 
     def set_tracks(self, tracks, film=None):
         """The followed microcolonies of the recording (None clears the page)."""
@@ -218,11 +245,15 @@ class MicrocolonyPage(QWidget):
     # ------------------------------------------------------------------ drawing
     def _render_plots(self):
         for combo, canvas in zip(self.plot_combos, self.panels):
-            if self.tracks is None:
+            key = combo.currentData(); of_all = key in XP.DRAW
+            if (self.metrics if of_all else self.tracks) is None:
                 canvas.figure.clear(); ax = canvas.figure.add_axes([0, 0, 1, 1]); ax.axis("off")
-                ax.text(0.5, 0.5, "Track the microcolonies to see this plot", ha="center", va="center", color="#777777", transform=ax.transAxes); canvas.draw_idle()
+                ax.text(0.5, 0.5, XP.MEASURE_FIRST if of_all else "Track the microcolonies to see this plot", ha="center", va="center", color="#777777",
+                        transform=ax.transAxes); canvas.draw_idle()
+            elif of_all:
+                canvas.render(XP.DRAW[key], self.metrics, self.hour)
             else:
-                canvas.render(MP.DRAW[combo.currentData()], self.tracks, self.hour, self.selected())
+                canvas.render(MP.DRAW[key], self.tracks, self.hour, self.selected())
 
     def _render_film(self):
         now = None
