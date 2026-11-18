@@ -128,3 +128,19 @@ def test_the_maturation_list_and_the_p_slider_move_together():
     assert g.page.selected() == 1 and moved == [3]
     where[0] = 7; g.on_view_index_changed((0, 7, 0))                              # a position that was not measured: the list stays
     assert g.page.selected() == 1 and moved == [3]
+
+
+def test_the_maturation_worker_measures_and_says_how_far_it_is():
+    """The Maturation tab's worker runs its measure to the end and says its progress (it once called a helper it did
+    not import, so every Measure on that tab failed), and stops when the tool is closing."""
+    from nd2_analyzer.ui.biofilms.stages.growth_controller import GrowthWorker
+    from test_growth_measure import PX as GROWTH_PX, recording
+    labels, dye = recording(); ref = MX.DyeReference(zero=np.zeros((240, 240), np.float32), flat=np.ones((240, 240), np.float32))
+    worker = GrowthWorker(labels, {0: list(range(8)), 1: list(range(8))}, GROWTH_PX, lambda t: 24.0 + 1.5 * t, ref, 2, None, dye)
+    got, why, said = [], [], []
+    worker.done.connect(got.append); worker.failed.connect(why.append); worker.progress.connect(lambda pct, words: said.append(words)); worker.run()
+    assert why == [] and len(got) == 1 and got[0].cells[0].tolist() == [4, 6, 8, 10, 12, 14, 16, 18] and said[-1] == "100 %"
+    worker = GrowthWorker(labels, {0: list(range(8)), 1: list(range(8))}, GROWTH_PX, lambda t: 24.0 + 1.5 * t, ref, 2, None, dye)
+    worker.isInterruptionRequested = lambda: True; got, why = [], []
+    worker.done.connect(got.append); worker.failed.connect(why.append); worker.run()
+    assert got == [] and why == []

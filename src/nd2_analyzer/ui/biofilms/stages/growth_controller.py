@@ -22,7 +22,7 @@ from nd2_analyzer.analysis.biofilm_stages.growth_measure import load_growth_stat
 from nd2_analyzer.data.appstate import ApplicationState
 from nd2_analyzer.data.image_data import ImageData
 from .growth_window import GrowthDialog
-from .microcolony_controller import STATE_DIR, recording_words
+from .microcolony_controller import STATE_DIR, recording_words, say_progress
 
 WORKER_WAIT_MS = 30000
 
