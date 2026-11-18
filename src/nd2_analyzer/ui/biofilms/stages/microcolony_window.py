@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Optional
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import (QComboBox, QDialog, QFileDialog, QHBoxLayout, QLabel, QMessageBox, QProgressDialog, QPushButton, QSlider,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFileDialog, QHBoxLayout, QLabel, QMessageBox, QProgressDialog, QPushButton, QSlider,
                                QVBoxLayout)
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -29,6 +29,10 @@ class MicrocolonyDialog(QDialog):
             for identity, line in rows:
                 self.combo.addItem(line, int(identity))
         self.combo.currentIndexChanged.connect(self._on_combo); top.addWidget(self.combo); top.addSpacing(16)
+        self.stain_box = QCheckBox("matrix stain"); self.stain_box.setEnabled(film.counted_at is not None); self.stain_box.setChecked(bool(film.show_stain))
+        self.stain_box.setToolTip("Shows the matrix stain in green on the film, and how much of this microcolony it covers" if film.counted_at is not None else
+                                  "Give the dye frames and click Measure on the Maturation tab first: the matrix stain is measured there")
+        self.stain_box.toggled.connect(self._on_stain); top.addWidget(self.stain_box); top.addSpacing(16)
         self.hint = QLabel(HINT); top.addWidget(self.hint); top.addStretch(); layout.addLayout(top)
         self.figure = Figure(figsize=FIGURE_IN); self.canvas = FigureCanvas(self.figure); self.canvas.mpl_connect("button_press_event", self._on_click)
         layout.addWidget(self.canvas, 1)
@@ -77,6 +81,9 @@ class MicrocolonyDialog(QDialog):
 
     def _on_slider(self, v):
         self.step = int(v); self.redraw()
+
+    def _on_stain(self, on):
+        self.film.show_stain = bool(on) and self.film.counted_at is not None; self.redraw()
 
     def _on_play(self, on):
         self.play_button.setText("Pause" if on else "Play")

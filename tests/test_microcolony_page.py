@@ -177,3 +177,36 @@ def test_manual_selection_is_asked_for_from_the_page():
     assert p.compare_button.isEnabled() and p.compare_button.text() == "Manual selection"
     p.compare_button.click()
     assert asked == [True]
+
+
+# ---------------------------------------------------------------- the matrix stain in the Follow window
+def left_block_stain(t):
+    """Matrix over the left block (microcolony 1) from frame 3 on, in frame coordinates."""
+    m = np.zeros((120, 200), bool)
+    if t >= 3:
+        m[35:68, 15:68] = True
+    return m
+
+
+def test_the_film_shows_the_matrix_stain_when_asked(film):
+    film.set_root(1); y0, _y1, x0, _x1 = film.box; oy, ox = film.tracks.offsets[4]; spot = (51 + oy - y0, 41 + ox - x0)      # background between the four cells of the left block, under the matrix
+    plain = film.picture(4)[0][spot]
+    film.set_stain(left_block_stain); film.show_stain = True
+    stained = film.picture(4)[0][spot]
+    assert stained[1] > plain[1] + 0.3 and stained[1] > stained[0] + 0.3                 # green where the matrix is
+    hours, cover = film.stain_series()
+    assert hours.tolist() == [24.0, 24.5, 25.0, 25.5, 26.0, 26.5] and (cover[:3] == 0).all() and (cover[3:] > 20).all()
+
+
+def test_the_window_has_a_matrix_stain_box_that_needs_the_stain(toy, film):
+    from nd2_analyzer.ui.biofilms.stages.microcolony_window import MicrocolonyDialog
+    tracks, _ = toy
+    dlg = MicrocolonyDialog(film, MP.entries(tracks), root=1)
+    assert not dlg.stain_box.isEnabled() and "Maturation" in dlg.stain_box.toolTip()   # no dye frames measured yet
+    dlg.close()
+    film.set_stain(left_block_stain)
+    dlg = MicrocolonyDialog(film, MP.entries(tracks), root=1)
+    assert dlg.stain_box.isEnabled() and not film.show_stain
+    dlg.stain_box.setChecked(True)
+    assert film.show_stain
+    dlg.close()

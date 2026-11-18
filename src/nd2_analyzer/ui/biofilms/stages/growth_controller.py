@@ -206,6 +206,15 @@ class GrowthController(QObject):
         self.worker.done.connect(self.on_measured); self.worker.failed.connect(lambda why: (self.page.set_step_state("measure", "failed", why), self.refresh()))
         self.page.set_measure_enabled(False); self.page.set_step_state("measure", "running", "0 %"); self.worker.start()
 
+    def counted_at_for(self, position: int) -> Optional[Callable[[int], np.ndarray]]:
+        """frame -> the matrix mask of that frame of the position, once the dye frames are given and the position is
+        measured; None before. The Microcolonies window uses it for its matrix stain box."""
+        info = self.recording_info(); p = int(position)
+        if self.measured is None or self.reference is None or info is None or p not in self.measured.free_dye:
+            return None
+        channel = channel_with_role(info.channel_roles, "matrix"); raw = self.raw_at(channel); level = self.measured.free_dye[p]; settings = self.measured.settings
+        return lambda t: MX.matrix(MX.stain(MX.correct(raw(p, t), self.reference), level, settings), info.pixel_um, settings)[0]
+
     def film(self) -> Optional[GrowthFilm]:
         info = self.recording_info(); array, _per = self.mask_array()
         if self.measured is None or info is None or array is None:

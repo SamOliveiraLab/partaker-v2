@@ -43,6 +43,7 @@ class BiofilmStagesTab(QWidget):
         self.microcolony_controller = MicrocolonyController(self.microcolony_page, self.controller.recording_info, self.controller.position, self)
         self.growth_page = GrowthPage()
         self.growth_controller = GrowthController(self.growth_page, self.controller.recording_info, self)
+        self.microcolony_controller.stain_source = self.growth_controller.counted_at_for      # the matrix stain box of the Microcolonies window
         self.live_pages = (self.seeding_page, self.microcolony_page, self.growth_page)
         self.pages = [self.seeding_page, self.microcolony_page, self.growth_page, DispersionPage()]
         for p in self.pages:

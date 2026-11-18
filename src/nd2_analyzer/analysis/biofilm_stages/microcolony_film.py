@@ -18,6 +18,7 @@ FIGURE_IN = (10.0, 4.6)       # the window's figure, as the lineage window's
 PALETTE = ("#56b4e9", "#e3b23c", "#e07aa4", "#4477AA", "#EE6677", "#35b6b4", "#AA3377", "#7fb069", "#c9a227", "#5c6bc0", "#d1813b", "#6f8fd6")
 LONE, OTHER = "#3c3c3c", "#707070"                     # a cell in no microcolony; a cell of a microcolony that is not followed
 TAG_GREEN = "#39ff39"
+STAIN_GREEN = "#1fbf3f"                                # the matrix stain, as in Figure 4
 PAD_UM = 3.0
 
 
@@ -30,6 +31,32 @@ class MicrocolonyFilm:
         self.kids = merged_into(tracks)
         self.root: Optional[int] = None; self.order: List[int] = []; self.frames: List[int] = []; self.box = (0, 1, 0, 1)
         self._cells: Dict[int, np.ndarray] = {}
+        self.counted_at: Optional[Callable[[int], np.ndarray]] = None      # frame -> the matrix mask of the frame, when it has been measured
+        self.show_stain = False; self._counted: Dict[int, np.ndarray] = {}; self._stain_series = None
+
+    def set_stain(self, counted_at: Optional[Callable[[int], np.ndarray]]):
+        """Where the matrix stain comes from (the Maturation tab's measure of this position); None when there is none."""
+        self.counted_at = counted_at; self._counted = {}; self._stain_series = None
+        if counted_at is None:
+            self.show_stain = False
+
+    def counted(self, t: int) -> np.ndarray:
+        if t not in self._counted:
+            if len(self._counted) > 120:
+                self._counted.pop(next(iter(self._counted)))
+            self._counted[t] = np.asarray(self.counted_at(t), bool)
+        return self._counted[t]
+
+    def stain_series(self):
+        """(hours, % of the followed microcolony's area that is matrix stain) over the frames of the film."""
+        if self._stain_series is None:
+            cover = []
+            for t in self.frames:
+                ids = self.tracks.identity_map(t); mine = np.isin(ids, [i for i in self.order if self.owner(i, t) == self.root]); oy, ox = self.tracks.offsets[t]
+                c = self.counted(t); on = np.zeros(ids.shape, bool); on[oy:oy + c.shape[0], ox:ox + c.shape[1]] = c
+                cover.append(100.0 * float((on & mine).sum()) / max(int(mine.sum()), 1))
+            self._stain_series = (np.array([self.tracks.hours[t] for t in self.frames]), np.array(cover))
+        return self._stain_series
 
     # ------------------------------------------------------------------ which microcolony
     def default_root(self) -> Optional[int]:
@@ -48,7 +75,7 @@ class MicrocolonyFilm:
         last = max(last, first)
         self.frames = [t for t in self.tracks.frames if first <= t <= last]
         self.box = self._box()
-        self._cells_series = None
+        self._cells_series = None; self._stain_series = None
 
     def _layout(self, r: int) -> List[int]:
         above, below = [], []
@@ -144,6 +171,12 @@ class MicrocolonyFilm:
             shade = np.clip(soft * 1.6, 0, 1)[..., None] * 0.30; back = (lab == 0)[..., None]
             rgb = np.where(back, rgb * (1 - shade) + np.array(to_rgb(self.palette.get(r, OTHER))) * shade, rgb)
             lines.append((soft, self.palette.get(r, OTHER), r, ndi.center_of_mass(mine)))
+        if self.show_stain and self.counted_at is not None:               # the cells dimmed, the matrix stain in green over them
+            y0, y1, x0, x1 = self.box; oy, ox = self.tracks.offsets[t]; c = self.counted(t); on = np.zeros((y1 - y0, x1 - x0), np.float32)
+            fy0, fy1, fx0, fx1 = max(y0 - oy, 0), min(y1 - oy, c.shape[0]), max(x0 - ox, 0), min(x1 - ox, c.shape[1])
+            if fy1 > fy0 and fx1 > fx0:
+                on[fy0 + oy - y0:fy1 + oy - y0, fx0 + ox - x0:fx1 + ox - x0] = c[fy0:fy1, fx0:fx1]
+            a = ndi.gaussian_filter(on, 1.5)[..., None] * 0.62; rgb = rgb * 0.6 * (1 - a) + np.array(to_rgb(STAIN_GREEN)) * a
         return rgb, lines
 
     def scale_um(self) -> float:
@@ -202,9 +235,14 @@ class MicrocolonyFilm:
         fig.text(0.50, 0.955, "merging history", fontsize=10.5, fontweight="bold", color=SP.INK, va="center")
         fig.text(0.50, 0.885, f"{SP_words(n_now)} now; each bar ends where it merges", fontsize=9, color="#444444", va="center")
         # the cells it holds
-        hs, ns = self.cells_series(); ax3 = fig.add_axes([0.50, 0.15, 0.46, 0.21]); SP.open_frame(ax3); k = hs <= now
-        ax3.plot(hs[k], ns[k], color=FOLLOWED, lw=2); ax3.axvline(now, color="#9a9a9a", lw=1.2, zorder=1)
-        ax3.set_xlim(first_h - pad, last_h + pad); ax3.set_ylim(0, max(int(ns.max()), 1) * 1.12); ax3.set_xlabel("time after inoculation (h)"); ax3.set_ylabel("cells in it")
+        ax3 = fig.add_axes([0.50, 0.15, 0.46, 0.21]); SP.open_frame(ax3)
+        if self.show_stain and self.counted_at is not None:
+            hs, cover = self.stain_series(); k = hs <= now; ax3.plot(hs[k], cover[k], color=STAIN_GREEN, lw=2)
+            ax3.set_ylim(0, max(float(cover.max()), 1.0) * 1.12); ax3.set_ylabel("matrix stain\ninside it (%)")
+        else:
+            hs, ns = self.cells_series(); k = hs <= now; ax3.plot(hs[k], ns[k], color=FOLLOWED, lw=2)
+            ax3.set_ylim(0, max(int(ns.max()), 1) * 1.12); ax3.set_ylabel("cells in it")
+        ax3.axvline(now, color="#9a9a9a", lw=1.2, zorder=1); ax3.set_xlim(first_h - pad, last_h + pad); ax3.set_xlabel("time after inoculation (h)")
         return ax, ax2
 
     # ------------------------------------------------------------------ export

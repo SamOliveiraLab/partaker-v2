@@ -15,7 +15,7 @@ from pubsub import pub
 
 from nd2_analyzer.analysis.biofilm_stages import microcolony_plots as MP
 from nd2_analyzer.analysis.biofilm_stages.microcolony_film import FIGURE_IN, MicrocolonyFilm
-from nd2_analyzer.analysis.biofilm_stages.microcolony_follow import follow_microcolonies
+from nd2_analyzer.analysis.biofilm_stages.microcolony_follow import close_gaps, follow_microcolonies
 from nd2_analyzer.data.image_data import ImageData
 from .microcolony_window import MicrocolonyDialog
 
@@ -57,6 +57,7 @@ class FollowWorker(QThread):
         try:
             tracks = follow_microcolonies(labels_at, frames, pixel_um, dt_h, start_hour,
                                           progress=lambda k, n: self.progress.emit(int(100 * k / max(n, 1)), f"{100 * k // max(n, 1)} %"))
+            self.drawn = close_gaps(tracks, labels_at, pixel_um)      # for the pictures: short gaps drawn through, the record unchanged
         except Exception as exc:                                   # the page shows the reason in the Microcolonies step
             self.failed.emit(f"{type(exc).__name__}: {exc}"); return
         self.done.emit(tracks)
@@ -72,6 +73,8 @@ class MicrocolonyController(QObject):
         page.track_requested.connect(self.track); page.hour_changed.connect(self.on_hour_changed)
         page.window_requested.connect(self.open_window); page.export_requested.connect(self.export); page.compare_requested.connect(self.open_compare)
         self.outlines: Dict[tuple, list] = {}                      # (position, frame) -> the outlines drawn by hand
+        self.stain_source: Optional[Callable[[int], Optional[Callable[[int], np.ndarray]]]] = None   # position -> (frame -> matrix mask), from the Maturation tab
+        self.drawn: Dict[int, object] = {}                         # position -> the followed microcolonies with their gaps closed, for the pictures
         self.compare_window = None
         for topic, fn in (("experiment_loaded", self.on_changed), ("image_data_loaded", self.on_new_recording),
                           ("batch_segmentation_completed", self.on_segmented), ("view_index_changed", self.on_changed)):
@@ -95,7 +98,7 @@ class MicrocolonyController(QObject):
         self.refresh()
 
     def on_new_recording(self, image_data=None):
-        self.generation += 1; self.tracked = {}; self.close_window(); self.page.set_tracks(None); self.refresh()
+        self.generation += 1; self.tracked = {}; self.drawn = {}; self.close_window(); self.page.set_tracks(None); self.refresh()
 
     def masks(self, position: int):
         """(array, frames): the mask cache of the model with the most frames of this position, and those frames."""
@@ -152,7 +155,7 @@ class MicrocolonyController(QObject):
         info = self.recording_info()
         if tracks is None or info is None:
             self.page.set_tracks(None); return
-        self.page.set_tracks(tracks, MicrocolonyFilm(tracks, self.labels_at(position), info.pixel_um))
+        self.page.set_tracks(tracks, MicrocolonyFilm(self.drawn.get(position, tracks), self.labels_at(position), info.pixel_um))
         n, m = len(tracks.lasting()), len(tracks.merges())
         self.page.set_step_state("track", "done", f"{n:,} followed, {MP.words(m, 'merge', 'merges')}")
         first, last = tracks.frames[0], tracks.frames[-1]
@@ -181,7 +184,7 @@ class MicrocolonyController(QObject):
         worker = self.sender()
         if worker is None or worker.generation != self.generation:
             return                                                  # another recording was loaded meanwhile
-        self.tracked[worker.position] = tracks
+        self.tracked[worker.position] = tracks; self.drawn[worker.position] = getattr(worker, "drawn", None) or tracks
         if worker.position == self.position():
             self.show_tracks(tracks, worker.position)
         self.refresh()
@@ -207,7 +210,8 @@ class MicrocolonyController(QObject):
         if tracks is None or info is None:
             return
         self.close_window()
-        film = MicrocolonyFilm(tracks, self.labels_at(p), info.pixel_um)        # its own film: the page's strip keeps its place
+        film = MicrocolonyFilm(self.drawn.get(p, tracks), self.labels_at(p), info.pixel_um)     # its own film: the page's strip keeps its place
+        film.set_stain(self.stain_source(p) if self.stain_source is not None else None)
         self.window = MicrocolonyDialog(film, MP.entries(tracks), root=identity, parent=self.page.window())
         self.window.destroyed.connect(lambda *_a: setattr(self, "window", None)); self.window.show()
 
