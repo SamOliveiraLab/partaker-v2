@@ -12,6 +12,7 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (QComboBox, QDoubleSpinBox, QGridLayout, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton,
                                QVBoxLayout, QWidget)
 
+from nd2_analyzer.analysis.biofilm_stages import growth_plots as GP
 from nd2_analyzer.analysis.biofilm_stages import microcolony_metric_plots as XP
 from nd2_analyzer.analysis.biofilm_stages import microcolony_plots as MP
 from nd2_analyzer.analysis.biofilm_stages.microcolony_film import draw_film_strip
@@ -33,8 +34,8 @@ class MicrocolonyStrip(StripCanvas):
         self.ax.clear(); self.ax.axis("on"); MP.draw_strip(self.ax, self.span, self.cursor_h, self.th1_h); self.draw_idle()
 
 
-STEPS = ("load", "segment", "track", "measure")
-STEP_NAMES = {"load": "Raw Frames", "segment": "Segmented Frames", "track": "Microcolonies", "measure": "All positions"}
+STEPS = ("load", "segment", "track", "measure", "stain")
+STEP_NAMES = {"load": "Raw Frames", "segment": "Segmented Frames", "track": "Microcolonies", "measure": "All positions", "stain": "Matrix stain"}
 PLAY_TICK_MS = 250             # Play on the strip: one frame of the recording every quarter of a second
 RULE_WORDS = "A microcolony: cells less than 0.5 µm apart, 4 or more of them, still there 1 h later."
 
@@ -52,6 +53,8 @@ class MicrocolonyPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.tracks = None; self.film = None; self.metrics = None; self.hour = 0.0
+        self.stain = None                          # matrix stain of each followed microcolony (summary), once measured
+        self.growth = None                         # the Maturation tab's measure, for the plot of the stain inside and outside microcolonies
         self.step_states = {s: ("todo", "") for s in STEPS}
         self.play_timer = QTimer(self); self.play_timer.setInterval(PLAY_TICK_MS); self.play_timer.timeout.connect(self._play_step)
         lay = QVBoxLayout(self); lay.setContentsMargins(6, 4, 6, 4); lay.setSpacing(4)
@@ -121,7 +124,7 @@ class MicrocolonyPage(QWidget):
             for key, title in MP.FIGURES:
                 combo.addItem(title, key)
             combo.insertSeparator(combo.count())                   # under the line: every position, each frame by itself
-            for key, title in XP.FIGURES:
+            for key, title in XP.FIGURES + (XP.STAIN,):
                 combo.addItem(title, key)
             combo.setCurrentIndex(max(0, combo.findData(default))); combo.currentIndexChanged.connect(lambda _i: self._render_plots())
             self.plot_combos.append(combo); picker.addWidget(combo)
@@ -180,18 +183,41 @@ class MicrocolonyPage(QWidget):
         """The metrics of every measured position (None clears their plots)."""
         self.metrics = metrics; self._enable_buttons(); self._render_plots()
 
+    def _fill_list(self):
+        """The microcolonies to follow, each with its matrix stain once that is measured."""
+        self.candidates.clear(); bold = QFont(self.candidates.font()); bold.setBold(True)
+        for title, rows in MP.entries(self.tracks, self.stain):
+            head = QListWidgetItem(title); head.setFont(bold); head.setFlags(Qt.ItemIsEnabled); self.candidates.addItem(head)
+            for identity, line in rows:
+                item = QListWidgetItem(line); item.setData(Qt.UserRole, int(identity)); self.candidates.addItem(item)
+
+    def set_stain(self, summary):
+        """When each followed microcolony gets its matrix stain and how much of it is covered (None: not measured). The
+        list says it under each microcolony; the selection stays."""
+        self.stain = summary
+        if self.tracks is None:
+            return
+        kept = self.selected(); self.candidates.blockSignals(True); self._fill_list()
+        row = next((r for r in range(self.candidates.count()) if self.candidates.item(r).data(Qt.UserRole) == kept), -1)
+        if row >= 0:
+            self.candidates.setCurrentRow(row)
+        self.candidates.blockSignals(False); self._render_film()
+
+    def set_growth(self, growth):
+        """The Maturation tab's measure (or None): the plot "Matrix stain over time" draws it."""
+        self.growth = growth; self._render_plots()
+
+    def refresh_film(self):
+        self._render_film()
+
     def set_tracks(self, tracks, film=None):
         """The followed microcolonies of the recording (None clears the page)."""
-        self.tracks, self.film = tracks, film; self.candidates.clear(); self.play_timer.stop(); self.strip_play_button.setText("Play")
+        self.tracks, self.film = tracks, film; self.stain = None; self.candidates.clear(); self.play_timer.stop(); self.strip_play_button.setText("Play")
         if tracks is None:
             for card in self.cards:
                 card.show_fact("", "", False)
         else:
-            bold = QFont(self.candidates.font()); bold.setBold(True)
-            for title, rows in MP.entries(tracks):
-                head = QListWidgetItem(title); head.setFont(bold); head.setFlags(Qt.ItemIsEnabled); self.candidates.addItem(head)
-                for identity, line in rows:
-                    item = QListWidgetItem(line); item.setData(Qt.UserRole, int(identity)); self.candidates.addItem(item)
+            self._fill_list()
             for card, (value, meaning, ok) in zip(self.cards, MP.cards(tracks)):
                 card.show_fact(value, meaning, ok)
             first = next((r for r in range(self.candidates.count()) if self.candidates.item(r).data(Qt.UserRole) is not None), -1)
@@ -270,11 +296,14 @@ class MicrocolonyPage(QWidget):
     # ------------------------------------------------------------------ drawing
     def _render_plots(self):
         for combo, canvas in zip(self.plot_combos, self.panels):
-            key = combo.currentData(); of_all = key in XP.DRAW
-            if (self.metrics if of_all else self.tracks) is None:
-                canvas.figure.clear(); ax = canvas.figure.add_axes([0, 0, 1, 1]); ax.axis("off")
-                ax.text(0.5, 0.5, XP.MEASURE_FIRST if of_all else "Track the microcolonies to see this plot", ha="center", va="center", color="#777777",
-                        transform=ax.transAxes); canvas.draw_idle()
+            key = combo.currentData(); of_all = key in XP.DRAW; of_stain = key == XP.STAIN[0]
+            needed = (self.growth if self.growth is not None and GP.has_matrix(self.growth) else None) if of_stain else self.metrics if of_all else self.tracks
+            if needed is None:
+                canvas.figure.clear(); ax = canvas.figure.add_axes([0.06, 0, 0.88, 1]); ax.axis("off")
+                ax.text(0.5, 0.5, XP.STAIN_FIRST if of_stain else XP.MEASURE_FIRST if of_all else "Track the microcolonies to see this plot", ha="center",
+                        va="center", color="#777777", transform=ax.transAxes, wrap=True); canvas.draw_idle()
+            elif of_stain:
+                canvas.render(GP.draw_inside, self.growth, self.hour, None)
             elif of_all:
                 canvas.render(XP.DRAW[key], self.metrics, self.hour)
             else:

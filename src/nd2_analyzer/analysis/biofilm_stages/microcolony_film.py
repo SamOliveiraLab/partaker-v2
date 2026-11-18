@@ -80,12 +80,17 @@ class MicrocolonyFilm:
         self.root: Optional[int] = None; self.order: List[int] = []; self.frames: List[int] = []; self.box = (0, 1, 0, 1)
         self._cells: Dict[int, np.ndarray] = {}
         self.counted_at: Optional[Callable[[int], np.ndarray]] = None      # frame -> the matrix mask of the frame, when it has been measured
-        self.show_stain = False; self._counted: Dict[int, np.ndarray] = {}; self._stain_series = None
+        self.show_stain = False; self._counted: Dict[int, np.ndarray] = {}; self._stain_series = None; self._stain_rows = None
         self._small: Dict[tuple, tuple] = {}                               # the coarse pictures of the film strip, kept
 
-    def set_stain(self, counted_at: Optional[Callable[[int], np.ndarray]]):
-        """Where the matrix stain comes from (the Maturation tab's measure of this position); None when there is none."""
+    def set_stain(self, counted_at: Optional[Callable[[int], np.ndarray]], rows: Optional[list] = None, show: Optional[bool] = None):
+        """Where the matrix stain comes from (the Maturation tab's measure of this position); None when there is none.
+        rows (matrix_stain.per_microcolony of the same tracks): the stain of every microcolony is known already, so
+        the curve needs no measuring. show: also switch the stain on or off in the picture."""
         self.counted_at = counted_at; self._counted = {}; self._stain_series = None; self._small = {}
+        self._stain_rows = None if rows is None or counted_at is None else {(int(r["identity"]), int(r["time"])): 100.0 * float(r["cover"]) for r in rows}
+        if show is not None:
+            self.show_stain = bool(show)
         if counted_at is None:
             self.show_stain = False
 
@@ -98,12 +103,15 @@ class MicrocolonyFilm:
 
     def stain_ready(self) -> bool:
         """The matrix stain of every frame of this film is measured (stain_series answers at once)."""
-        return self._stain_series is not None
+        return self._stain_series is not None or self._stain_rows is not None
 
     def measure_stain(self):
         """Measures the matrix stain inside the followed microcolony frame by frame, giving (frames done, frames in
         all) after each one, so a window can say how far it is. Nothing to do when it is measured already."""
         if self._stain_series is not None or self.counted_at is None:
+            return
+        if self._stain_rows is not None:                    # measured for every microcolony of the position already
+            self._stain_series = (np.array([self.tracks.hours[t] for t in self.frames]), np.array([self._stain_rows.get((self.root, t), 0.0) for t in self.frames]))
             return
         root, frames, source = self.root, list(self.frames), self.counted_at; cover = []
         changed = lambda: self.root != root or self.frames != frames or self.counted_at is not source or self._stain_series is not None

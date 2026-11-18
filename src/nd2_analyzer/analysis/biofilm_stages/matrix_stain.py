@@ -11,8 +11,8 @@ matrix          stain above the cut-off (5,000 counts above free dye) that is at
 Plain Python (numpy, scipy, OpenCV), no Qt."""
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Iterable, Tuple
+from dataclasses import dataclass, field
+from typing import Callable, Dict, Iterable, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -138,4 +138,37 @@ def microcolony_stain_summary(rows: list, first_stain_um2: float = FIRST_STAIN_U
             s["first_stain_h"] = r["hours"]
         if 100.0 * r["cover"] > s["most_cover_pct"] or s["most_cover_h"] is None:
             s["most_cover_pct"], s["most_cover_h"] = 100.0 * r["cover"], r["hours"]
+    return out
+
+
+@dataclass
+class MicrocolonyStain:
+    """The matrix stain of one tracked position: the matrix mask of every followed frame, kept packed (an eighth of a
+    byte per pixel), and what it gives for each followed microcolony."""
+    shape: tuple
+    packed: Dict[int, bytes] = field(default_factory=dict, repr=False)     # frame -> the matrix mask of the frame
+    rows: list = field(default_factory=list, repr=False)                   # per_microcolony: time, hours, identity, area, stain, cover
+    summary: Dict[int, dict] = field(default_factory=dict)                 # microcolony_stain_summary
+
+    def counted_at(self, t: int) -> np.ndarray:
+        """The matrix mask of a followed frame, at once."""
+        n = int(self.shape[0]) * int(self.shape[1])
+        return np.unpackbits(np.frombuffer(self.packed[int(t)], np.uint8))[:n].reshape(self.shape).astype(bool)
+
+    def series(self, identity: int) -> Tuple[np.ndarray, np.ndarray]:
+        """(hours, % of the microcolony's area that is matrix stain) over the frames it is followed in."""
+        mine = sorted((r for r in self.rows if r["identity"] == int(identity)), key=lambda r: r["time"])
+        return np.array([r["hours"] for r in mine], float), np.array([100.0 * r["cover"] for r in mine], float)
+
+
+def measure_microcolony_stain(tracks, counted_at: Callable[[int], np.ndarray], pixel_um: float,
+                              progress: Optional[Callable[[int, int], None]] = None) -> MicrocolonyStain:
+    """The matrix mask of every followed frame, worked out once and kept, and the stain inside each followed
+    microcolony. counted_at(frame): the matrix mask of the frame (the slow part: about a third of a second a frame)."""
+    out = MicrocolonyStain(shape=(0, 0)); n = len(tracks.frames)
+    for k, t in enumerate(tracks.frames, 1):
+        mask = np.asarray(counted_at(t), bool); out.shape = tuple(mask.shape); out.packed[int(t)] = np.packbits(mask).tobytes()
+        if progress:
+            progress(k, n)
+    out.rows = per_microcolony(tracks, out.counted_at, pixel_um); out.summary = microcolony_stain_summary(out.rows)
     return out

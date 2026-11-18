@@ -85,7 +85,7 @@ def test_the_picker_lists_the_metrics_under_the_plots_of_the_followed_microcolon
     combo = page.plot_combos[0]
     titles = [combo.itemText(i) for i in range(combo.count())]
     assert titles[:5] == [title for _key, title in MP.FIGURES]
-    assert titles[5] == "" and titles[6:] == [title for _key, title in XP.FIGURES]      # a separator line between the two
+    assert titles[5] == "" and titles[6:] == [title for _key, title in XP.FIGURES] + ["Matrix stain over time"]      # a separator line between the two; the stain last
 
 
 def test_a_metric_plot_asks_for_the_measure_until_it_is_there(page, measured):

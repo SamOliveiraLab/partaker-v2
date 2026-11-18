@@ -59,15 +59,27 @@ def end_hour(tracks: MicrocolonyTracks, identity: int) -> float:
     return float(merged[0]["hours"]) if merged else tracks.hours[tracks.identities[identity]["end"]]
 
 
-def entries(tracks: MicrocolonyTracks) -> List[Tuple[str, List[Tuple[int, str]]]]:
-    """The list of the page: (section title, [(identity, line)]), microcolonies still there first, then those that merged."""
+def stain_words(summary: Optional[dict], identity: int) -> str:
+    """The second line of a microcolony in the list, once the matrix stain of the position is measured."""
+    s = (summary or {}).get(int(identity))
+    if s is None:
+        return ""
+    if s["first_stain_h"] is None:
+        return "\n     no matrix stain"
+    return f"\n     matrix stain from {s['first_stain_h']:g} h, up to {s['most_cover_pct']:.0f} % of its area"
+
+
+def entries(tracks: MicrocolonyTracks, stain: Optional[dict] = None) -> List[Tuple[str, List[Tuple[int, str]]]]:
+    """The list of the page: (section title, [(identity, line)]), microcolonies still there first, then those that
+    merged. stain (matrix_stain.microcolony_stain_summary): each line then says when the microcolony gets its matrix
+    stain and how much of its area the stain covers at most."""
     keep = tracks.lasting(); kids = merged_into(tracks); last_h = tracks.hours[tracks.frames[-1]]
     born = lambda i: tracks.hours[tracks.identities[i]["birth"]]
     into = {int(e["identity"]): (int(e["into"]), float(e["hours"])) for e in tracks.merges()}
     still = sorted((i for i in keep if tracks.identities[i]["ended"] == "still there"), key=lambda i: (born(i), i))
     merged = sorted(into, key=lambda i: (born(i), i))
-    there = [(i, f"Microcolony {i}: from {born(i):.1f} h" + (f", {len(kids[i])} merged into it" if kids.get(i) else "")) for i in still]
-    gone = [(i, f"Microcolony {i}: {born(i):.1f} to {into[i][1]:.1f} h, merges into {into[i][0]}") for i in merged]
+    there = [(i, f"Microcolony {i}: from {born(i):.1f} h" + (f", {len(kids[i])} merged into it" if kids.get(i) else "") + stain_words(stain, i)) for i in still]
+    gone = [(i, f"Microcolony {i}: {born(i):.1f} to {into[i][1]:.1f} h, merges into {into[i][0]}" + stain_words(stain, i)) for i in merged]
     return [(f"still there at {last_h:g} h", there), ("merged into another", gone)]
 
 

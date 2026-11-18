@@ -15,6 +15,8 @@ from PySide6.QtCore import QCoreApplication, QObject, QThread, Signal
 from PySide6.QtWidgets import QFileDialog
 from pubsub import pub
 
+from nd2_analyzer.analysis.biofilm_stages import matrix_stain as MX
+from nd2_analyzer.analysis.biofilm_stages import microcolony_metric_plots as XP
 from nd2_analyzer.analysis.biofilm_stages import microcolony_plots as MP
 from nd2_analyzer.analysis.biofilm_stages import stage_tables as ST
 from nd2_analyzer.analysis.biofilm_stages.microcolony_film import FIGURE_IN, MicrocolonyFilm, extents
@@ -108,6 +110,39 @@ class MetricsWorker(QThread):
         self.done.emit(out)
 
 
+class StainWorker(QThread):
+    """Measures the matrix stain of every followed frame of one position off the window's thread: the matrix mask of
+    each frame and the stain inside each followed microcolony. The dye channel is read through a file handle of its
+    own, so the window can keep showing frames meanwhile. recipe: what the Maturation tab measured for the position
+    (reference of the dye frames, free dye level, settings, dye channel, recording path, raw_at as a fallback)."""
+    progress = Signal(int, str)
+    done = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, tracks, recipe: dict, pixel_um: float, parent=None):
+        super().__init__(parent)
+        self.tracks, self.recipe, self.pixel_um = tracks, dict(recipe), float(pixel_um); self.generation = 0; self.position = int(recipe.get("position", 0)); self.token = None
+
+    def run(self):
+        r = self.recipe; handle = None; p = self.position
+        try:
+            raw = r["raw_at"]; path = r.get("path")
+            if path and str(path).lower().endswith(".nd2"):
+                import nd2
+                handle = nd2.ND2File(str(path)); data = handle.to_dask()
+                if data.ndim == 5:
+                    raw = lambda position, t: np.asarray(data[t, position, r["channel"]])
+            counted_at = lambda t: MX.matrix(MX.stain(MX.correct(raw(p, int(t)), r["reference"]), r["level"], r["settings"]), self.pixel_um, r["settings"])[0]
+            out = MX.measure_microcolony_stain(self.tracks, counted_at, self.pixel_um,
+                                               progress=lambda k, n: self.progress.emit(int(100 * k / max(n, 1)), f"{100 * k // max(n, 1)} %"))
+        except Exception as exc:                                   # the page shows the reason in the Matrix stain step
+            self.failed.emit(f"{type(exc).__name__}: {exc}"); return
+        finally:
+            if handle is not None:
+                handle.close()
+        self.done.emit(out)
+
+
 class MicrocolonyController(QObject):
     metrics_changed = Signal()                 # the all-positions measure arrived, was loaded or was cleared
     # the tool's messages and the methods that hear them; each asks for the names the message carries (as the Seeding
@@ -124,7 +159,10 @@ class MicrocolonyController(QObject):
         page.track_requested.connect(self.track); page.hour_changed.connect(self.on_hour_changed)
         page.window_requested.connect(self.open_window); page.export_requested.connect(self.export); page.compare_requested.connect(self.open_compare)
         self.outlines: Dict[tuple, list] = {}                      # (position, frame) -> the outlines drawn by hand
-        self.stain_source: Optional[Callable[[int], Optional[Callable[[int], np.ndarray]]]] = None   # position -> (frame -> matrix mask), from the Maturation tab
+        self.stain_fallback: Optional[Callable[[int], Optional[Callable[[int], np.ndarray]]]] = None  # position -> (frame -> matrix mask), worked out on demand (the Maturation tab)
+        self.stain_recipe: Optional[Callable[[int], Optional[dict]]] = None   # position -> what the Maturation tab measured for it (see StainWorker), None before
+        self.stains: Dict[int, object] = {}                        # position -> matrix_stain.MicrocolonyStain of its followed microcolonies
+        self.stain_worker: Optional[StainWorker] = None; self.stain_token = 0
         self.drawn: Dict[int, object] = {}                         # position -> the followed microcolonies with their gaps closed, for the pictures
         self.compare_window = None
         self.metrics = None; self.metrics_worker: Optional[MetricsWorker] = None; self.every_set_for = None
@@ -136,7 +174,7 @@ class MicrocolonyController(QObject):
             app.aboutToQuit.connect(self.shutdown)
 
     def shutdown(self):
-        for worker in (self.worker, self.metrics_worker):
+        for worker in (self.worker, self.metrics_worker, self.stain_worker):
             if worker is not None and worker.isRunning():
                 worker.requestInterruption(); worker.wait(WORKER_WAIT_MS)
 
@@ -154,7 +192,7 @@ class MicrocolonyController(QObject):
         self.refresh()
 
     def on_new_recording(self, image_data):
-        self.generation += 1; self.tracked = {}; self.drawn = {}; self.metrics = None; self.close_window()
+        self.generation += 1; self.tracked = {}; self.drawn = {}; self.metrics = None; self.stains = {}; self.stain_token += 1; self.close_window()
         self.page.set_tracks(None); self.page.set_metrics(None); self.refresh(); self.metrics_changed.emit()
 
     def masks(self, position: int):
@@ -242,8 +280,9 @@ class MicrocolonyController(QObject):
     def show_tracks(self, tracks, position: int):
         info = self.recording_info()
         if tracks is None or info is None:
-            self.page.set_tracks(None); return
+            self.page.set_tracks(None); self.show_stain(position); return
         self.page.set_tracks(tracks, MicrocolonyFilm(self.drawn.get(position, tracks), self.labels_at(position), info.pixel_um))
+        self.show_stain(position); self.maybe_measure_stain()
         n, m = len(tracks.lasting()), len(tracks.merges())
         self.page.set_step_state("track", "done", f"{n:,} followed, {MP.words(m, 'merge', 'merges')}")
         first, last = tracks.frames[0], tracks.frames[-1]
@@ -273,9 +312,70 @@ class MicrocolonyController(QObject):
         if worker is None or worker.generation != self.generation:
             return                                                  # another recording was loaded meanwhile
         self.tracked[worker.position] = tracks; self.drawn[worker.position] = getattr(worker, "drawn", None) or tracks
+        self.stains.pop(worker.position, None)                      # the stain was measured on the tracks before these
         if worker.position == self.position():
             self.show_tracks(tracks, worker.position)
         self.refresh()
+
+    # ------------------------------------------------------------------ the matrix stain of the followed microcolonies
+    def stain_source(self, position: int) -> Optional[Callable[[int], np.ndarray]]:
+        """frame -> the matrix mask of that frame of the position: at once when the stain of the position is measured,
+        else worked out frame by frame from the Maturation tab's measure; None when there is no stain to show."""
+        stain = self.stains.get(int(position))
+        if stain is not None:
+            return stain.counted_at
+        return self.stain_fallback(int(position)) if self.stain_fallback is not None else None
+
+    def on_stain_source_changed(self):
+        """The Maturation tab measured again, loaded or lost its measure: the stain kept here is of the measure before."""
+        self.stains = {}; self.stain_token += 1; self.show_stain(self.position()); self.maybe_measure_stain()
+
+    def show_stain(self, position: int):
+        """The stain of the position on the page: in the list, on the film strip, in the Matrix stain step."""
+        stain = self.stains.get(int(position)); film = self.page.film
+        if film is not None:
+            if stain is not None:
+                film.set_stain(stain.counted_at, rows=stain.rows, show=True)
+            else:
+                film.set_stain(None)
+        self.page.set_stain(stain.summary if stain is not None else None)
+        measuring = self.stain_worker is not None and self.stain_worker.isRunning()
+        if stain is not None:
+            tracks = self.tracked.get(int(position)); keep = tracks.lasting() if tracks is not None else set(stain.summary)
+            stained = sum(1 for i in keep if stain.summary.get(i, {}).get("first_stain_h") is not None)
+            self.page.set_step_state("stain", "done", f"{stained} of {len(keep)} microcolonies"); self.page.step_labels["stain"].setToolTip(
+                "The matrix stain inside each followed microcolony of this position: see the list, the film strip and the Follow window")
+        elif not measuring:
+            self.page.set_step_state("stain", "todo"); self.page.step_labels["stain"].setToolTip(XP.STAIN_FIRST)
+
+    def maybe_measure_stain(self):
+        """Measures the matrix stain of the shown position by itself, as soon as it is tracked and the Maturation tab has
+        the dye frames and its measure. Nothing to click."""
+        p = int(self.position()); tracks = self.drawn.get(p) or self.tracked.get(p); info = self.recording_info()
+        if tracks is None or info is None or p in self.stains or (self.stain_worker is not None and self.stain_worker.isRunning()):
+            return
+        recipe = self.stain_recipe(p) if self.stain_recipe is not None else None
+        if recipe is None:
+            return
+        self.stain_worker = StainWorker(tracks, recipe, info.pixel_um, self)
+        self.stain_worker.generation, self.stain_worker.token = self.generation, self.stain_token
+        self.stain_worker.progress.connect(lambda pct, words: self.page.set_step_state("stain", "running", words))
+        self.stain_worker.done.connect(self.on_stain_measured)
+        self.stain_worker.failed.connect(lambda why: self.page.set_step_state("stain", "failed", why))
+        self.page.set_step_state("stain", "running", "0 %"); self.stain_worker.start()
+
+    def on_stain_measured(self, stain):
+        worker = self.sender() or self.stain_worker
+        if worker is None or worker.generation != self.generation or worker.token != self.stain_token:
+            return self.maybe_measure_stain()                       # another recording, or another measure of the dye, meanwhile
+        p = worker.position
+        if (self.drawn.get(p) or self.tracked.get(p)) is not worker.tracks:
+            return self.maybe_measure_stain()                       # tracked again meanwhile
+        self.stains[p] = stain
+        if p == self.position():
+            self.show_stain(p)
+        else:
+            self.maybe_measure_stain()
 
     # ------------------------------------------------------------------ Measure (every position, for the metric plots)
     def measure(self):
@@ -392,7 +492,11 @@ class MicrocolonyController(QObject):
             return
         self.close_window()
         film = MicrocolonyFilm(self.drawn.get(p, tracks), self.labels_at(p), info.pixel_um)     # its own film: the page's strip keeps its place
-        film.set_stain(self.stain_source(p) if self.stain_source is not None else None)
+        stain = self.stains.get(p)
+        if stain is not None:
+            film.set_stain(stain.counted_at, rows=stain.rows, show=True)     # measured already: the box is ticked and the stain is there at once
+        else:
+            film.set_stain(self.stain_source(p))
         self.window = MicrocolonyDialog(film, MP.entries(tracks), root=identity, parent=self.page.window())
         self.window.destroyed.connect(lambda *_a: setattr(self, "window", None)); self.window.show()
 

@@ -227,6 +227,21 @@ class GrowthController(QObject):
         channel = channel_with_role(info.channel_roles, "matrix"); raw = self.raw_at(channel); level = self.measured.free_dye[p]; settings = self.measured.settings
         return lambda t: MX.matrix(MX.stain(MX.correct(raw(p, t), self.reference), level, settings), info.pixel_um, settings)[0]
 
+    def stain_recipe(self, position: int) -> Optional[dict]:
+        """What is needed to measure the matrix stain of a position as this tab did (so there is one free dye level per
+        position in the tool): the reference of the dye frames, the position's free dye level, the settings, the dye
+        channel and where to read it. None before the dye frames are given and the position is measured."""
+        info = self.recording_info(); p = int(position)
+        if self.measured is None or self.reference is None or info is None or p not in self.measured.free_dye:
+            return None
+        channel = channel_with_role(info.channel_roles, "matrix")
+        if channel is None:
+            return None
+        image_data = ImageData.get_instance(); files = getattr(image_data, "image_filename", None) if image_data is not None else None
+        path = files[0] if isinstance(files, (list, tuple)) and files else files
+        return {"reference": self.reference, "level": float(self.measured.free_dye[p]), "settings": self.measured.settings, "channel": int(channel),
+                "path": path, "raw_at": self.raw_at(channel), "position": p}
+
     def film(self) -> Optional[GrowthFilm]:
         info = self.recording_info(); array, _per = self.mask_array()
         if self.measured is None or info is None or array is None:

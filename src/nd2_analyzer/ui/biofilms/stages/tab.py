@@ -43,7 +43,9 @@ class BiofilmStagesTab(QWidget):
         self.microcolony_controller = MicrocolonyController(self.microcolony_page, self.controller.recording_info, self.controller.position, self)
         self.growth_page = GrowthPage()
         self.growth_controller = GrowthController(self.growth_page, self.controller.recording_info, self)
-        self.microcolony_controller.stain_source = self.growth_controller.counted_at_for      # the matrix stain box of the Microcolonies window
+        self.microcolony_controller.stain_fallback = self.growth_controller.counted_at_for    # the matrix stain box of the Microcolonies window
+        self.microcolony_controller.stain_recipe = self.growth_controller.stain_recipe        # the stain of the followed microcolonies, measured by itself
+        self.growth_controller.measured_changed.connect(self._share_stain)
         self.growth_controller.measured_changed.connect(self._share_th1)                      # one Th1 in the tool: the Maturation tab's
         self.microcolony_controller.metrics_changed.connect(self._share_microcolonies)        # Figure 5 b: cells in microcolonies, on the Maturation plot
         self.live_pages = (self.seeding_page, self.microcolony_page, self.growth_page)
@@ -103,6 +105,11 @@ class BiofilmStagesTab(QWidget):
         """The Microcolonies strip splits at the Th1 the Maturation tab measured (the mean of its positions)."""
         measured = self.growth_controller.measured
         self.microcolony_page.set_th1(measured.th1["th1_h"] if measured is not None and measured.th1 else None)
+
+    def _share_stain(self):
+        """The Microcolonies page shows the matrix stain as soon as the Maturation tab has measured: its plot of the
+        stain inside and outside microcolonies, and (measured by itself) the stain of each followed microcolony."""
+        self.microcolony_page.set_growth(self.growth_controller.measured); self.microcolony_controller.on_stain_source_changed()
 
     def _share_microcolonies(self):
         """The Maturation plot "Microcolonies and matrix stain" also draws the cells in microcolonies, once the

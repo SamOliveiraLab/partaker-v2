@@ -23,6 +23,8 @@ FIGURES = (("m_count", "Number of microcolonies, all positions"), ("m_per", "Cel
            ("m_area", "Microcolony area"))
 TITLE = dict(FIGURES)
 MEASURE_FIRST = "Click Measure (all positions) to see this plot"
+STAIN = ("stain", "Matrix stain over time")    # Figure 4 d, drawn by growth_plots.draw_inside from the Maturation tab's measure
+STAIN_FIRST = "Matrix stain: on the Maturation tab click Dye frames..., then Measure. It then shows here."
 RING_MIN_CELLS = 15            # a ring of the density map needs this many cells to get a colour
 HEAT = LinearSegmentedColormap.from_list("microcolony", ["#fff3e0", "#fbd9a8", ORANGE, "#7a3d00"])
 
