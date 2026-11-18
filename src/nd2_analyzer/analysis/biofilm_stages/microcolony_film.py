@@ -319,7 +319,7 @@ class MicrocolonyFilm:
             ax.text(cx, cy, str(r), color=TAG_GREEN, fontsize=9.5, fontweight="bold", ha="center", va="center", zorder=6,
                     path_effects=[pe.withStroke(linewidth=2.2, foreground="black")])
         um = self.scale_um(); L = um / self.pixel_um; edge = [pe.withStroke(linewidth=2.6, foreground="black")]
-        # the scale bar as Figure 3 d: a white bar and white words on the picture itself, no box over the cells
+        # the scale bar: a white bar and white words with a dark edge, no box over the cells (the film's ground is already black)
         ax.plot([w * 0.05, w * 0.05 + L], [h * 0.955, h * 0.955], color="white", lw=2.5, solid_capstyle="butt", zorder=5, path_effects=edge)
         ax.text(w * 0.05 + L / 2, h * 0.94, f"{um:g} µm", color="white", fontsize=9, ha="center", va="bottom", zorder=5, path_effects=edge)
         ax.set_xlim(0, w); ax.set_ylim(h, 0)
