@@ -65,3 +65,21 @@ def predict_th2(per_position: Dict[int, Curve], resamples: int = 2000, seed: int
     low, high = (float(v) for v in np.percentile(found, [2.5, 97.5])) if found else (float("nan"), float("nan"))
     return {"th2_h": th2, "range95_h": (low, high), "fastest_h": fastest, "peak_rate": peak, "K": params[0], "r": params[1], "t0": params[2],
             "resamples": len(found), "last_counted_h": float(hours[-1]), "reached": bool(th2 <= hours[-1])}
+
+
+def th1(hours: Sequence[float], matrix_share: Sequence[float]):
+    """The first hour from which matrix stain is present in every later frame; None when it is not there at the end."""
+    h, present = np.asarray(hours, float), np.asarray(matrix_share, float) > 0
+    order = np.argsort(h); h, present = h[order], present[order]
+    if not len(h) or not present[-1]:
+        return None
+    absent = np.flatnonzero(~present)
+    return float(h[absent.max() + 1]) if absent.size else float(h[0])
+
+
+def th1_of_positions(per_position: Dict[int, Tuple[Sequence[float], Sequence[float]]]) -> dict:
+    """Th1 of every position (hours, matrix share of the frame) and their mean and s.d."""
+    each = {int(p): th1(h, m) for p, (h, m) in per_position.items()}
+    found = np.array([v for v in each.values() if v is not None], float)
+    return {"per_position_h": each, "th1_h": float(found.mean()) if found.size else None,
+            "sd_h": float(found.std(ddof=1)) if found.size > 1 else 0.0, "positions": int(found.size)}
