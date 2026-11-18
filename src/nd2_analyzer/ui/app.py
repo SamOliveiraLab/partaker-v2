@@ -125,15 +125,17 @@ class App(QMainWindow):
         self.eps_analysis_tab = EPSAnalysisWidget()
         self.live_dead_analysis_tab = LiveDeadAnalysisWidget()
 
+        # The tab bar tells the biofilm story in its order: Segmentation, the four stages, Live-Dead Analysis.
+        # The older EPS Analysis, Colony Separation and Colony Analysis tabs are kept (their code still runs and
+        # other parts reach them by name) but not shown: the stage pages measure the same things by the rules of
+        # the Partaker 2 paper, and two definitions of a microcolony in one window would mislead.
         self.tab_widget.addTab(self.segmentation_tab, "Segmentation")
-        self.tab_widget.addTab(self.eps_analysis_tab, "EPS Analysis")
-        self.tab_widget.addTab(self.colony_separation_tab, "Colony Separation")
-        self.tab_widget.addTab(self.cube_analysis_tab, "Colony Analysis")
-        self.tab_widget.addTab(self.live_dead_analysis_tab, "Live-Dead Analysis")
-        # the results of the biofilm route, one page per stage of the story
+        for older in (self.eps_analysis_tab, self.colony_separation_tab, self.cube_analysis_tab):
+            older.setParent(self); older.hide()
         from nd2_analyzer.ui.biofilms.stages.tab import BiofilmStagesTab
-        self.biofilm_stages_tab = BiofilmStagesTab()
-        self.tab_widget.addTab(self.biofilm_stages_tab, "Biofilm Stages")
+        self.biofilm_stages_tab = BiofilmStagesTab(self)
+        self.biofilm_stages_tab.move_pages_to(self.tab_widget)
+        self.tab_widget.addTab(self.live_dead_analysis_tab, "Live-Dead Analysis")
         self.biofilm_stages_tab.connect_main_window(
             set_frame=lambda frame: self.viewArea.slider_t.setValue(self.viewArea._map_frame_to_slider(frame)),
             tracking_widget=lambda: getattr(getattr(self, "trackingTab", None), "tracking_widget", None),
