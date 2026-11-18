@@ -51,6 +51,18 @@ def microcolony_tables(tracks: MicrocolonyTracks, position: int) -> Dict[str, Ta
     }
 
 
+def stain_tables(stain, position: int) -> Dict[str, Table]:
+    """The matrix stain of the followed microcolonies of one position (matrix_stain.MicrocolonyStain): one row per
+    microcolony (when its stain begins, how much of it is covered at most) and one row per microcolony and frame."""
+    tail = f"_p{int(position)}"
+    each = [[int(i), _cell(s["first_stain_h"]), float(s["most_cover_pct"]), _cell(s["most_cover_h"]), float(s["from_h"]), float(s["to_h"])]
+            for i, s in sorted(stain.summary.items())]
+    frames = [[int(r["identity"]), int(r["time"]), float(r["hours"]), float(r["area_um2"]), float(r["stain_um2"]), 100.0 * float(r["cover"])]
+              for r in sorted(stain.rows, key=lambda r: (r["identity"], r["time"]))]
+    return {"microcolony_matrix_stain" + tail: (["microcolony", "first_stain_h", "most_covered_pct", "most_covered_at_h", "followed_from_h", "followed_to_h"], each),
+            "microcolony_matrix_stain_frames" + tail: (["microcolony", "frame", "hours", "area_um2", "stain_um2", "covered_pct"], frames)}
+
+
 def _means(names, mean_of, have) -> Table:
     """hours, positions, then the mean and s.d. over the positions of every series. names: a series, or (series, the
     name of its column)."""

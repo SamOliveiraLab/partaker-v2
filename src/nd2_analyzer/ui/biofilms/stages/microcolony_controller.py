@@ -417,6 +417,8 @@ class MicrocolonyController(QObject):
         tables = {}
         for p, tracks in sorted(self.tracked.items()):
             tables.update(ST.microcolony_tables(tracks, p))
+            if p in self.stains:
+                tables.update(ST.stain_tables(self.stains[p], p))
         if self.metrics is not None:
             tables.update(ST.metric_tables(self.metrics))
         if not tables:

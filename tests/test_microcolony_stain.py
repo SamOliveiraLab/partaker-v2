@@ -153,3 +153,23 @@ def test_the_maturation_controller_gives_the_recipe_of_a_measured_position():
     made = g.stain_recipe(2)
     assert made["level"] == 2000.0 and made["channel"] == 2 and made["position"] == 2 and made["settings"] == g.measured.settings and callable(made["raw_at"])
     assert g.stain_recipe(7) is None                                                            # a position that was not measured
+
+
+# ---------------------------------------------------------------- Numbers
+def test_numbers_also_writes_the_matrix_stain_of_each_microcolony(tracks, stain, tmp_path, monkeypatch):
+    import csv
+    from PySide6.QtWidgets import QFileDialog
+    from nd2_analyzer.analysis.biofilm_stages import stage_tables as ST
+    tables = ST.stain_tables(stain, position=0)
+    assert list(tables) == ["microcolony_matrix_stain_p0", "microcolony_matrix_stain_frames_p0"]
+    head, rows = tables["microcolony_matrix_stain_p0"]
+    assert head == ["microcolony", "first_stain_h", "most_covered_pct", "most_covered_at_h", "followed_from_h", "followed_to_h"]
+    assert rows == [[1, 25.0, pytest.approx(100.0), 25.0, 24.0, 25.5], [2, "", 0.0, 24.0, 24.0, 25.5]]            # no stain: an empty cell
+    head, rows = tables["microcolony_matrix_stain_frames_p0"]
+    assert head == ["microcolony", "frame", "hours", "area_um2", "stain_um2", "covered_pct"] and len(rows) == 8 and rows[2][:3] == [1, 2, 25.0]
+    c = controller(tracks); c.stains[0] = stain
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(tmp_path)))
+    c.export("numbers")
+    assert "microcolony_matrix_stain_p0.csv" in sorted(f.name for f in tmp_path.iterdir())
+    with open(tmp_path / "microcolony_matrix_stain_p0.csv", newline="") as f:
+        assert list(csv.reader(f))[2] == ["2", "", "0.0", "24.0", "24.0", "25.5"]
