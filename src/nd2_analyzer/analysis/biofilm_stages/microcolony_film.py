@@ -22,7 +22,7 @@ TAG_GREEN = "#39ff39"
 STAIN_GREEN = "#1fbf3f"                                # the matrix stain, as in Figure 4
 PAD_UM = 3.0
 REACH_UM = 0.5                 # a click this near a microcolony (about one cell width) is a click on it
-STRIP_TILE_PX = 160            # a tile of the page's film strip is drawn about this many pixels wide
+STRIP_TILE_PX = 240            # a tile of the page's film strip is drawn about this many pixels wide (two per point on a fine screen)
 IMAGE_SHARE = 0.37             # the picture takes this share of the width of the window's figure
 
 
@@ -383,18 +383,18 @@ def SP_words(n: int) -> str:
 
 
 @SP.with_house_style
-def draw_film_strip(fig, film: Optional[MicrocolonyFilm], n: int = 5, now: Optional[int] = None):
-    """A few frames of the followed microcolony's film side by side, the hour over each; the one at the cursor in bold."""
+def draw_film_strip(fig, film: Optional[MicrocolonyFilm], n: int = 6, now: Optional[int] = None, columns: int = 3):
+    """A few frames of the followed microcolony's film in rows of `columns`, as large as the figure allows, the hour
+    over each; the one at the cursor in bold."""
     fig.clear()
     if film is None or film.root is None or not film.frames:
         SP.empty_axes(fig, "Pick a microcolony and click Follow to see its film"); return []
     picks = sorted({film.frames[int(round(k))] for k in np.linspace(0, len(film.frames) - 1, min(n, len(film.frames)))})
     near = min(picks, key=lambda t: abs(t - now)) if now is not None else None
-    axes = []; w = 0.92 / len(picks); aspect = fig.get_figwidth() / fig.get_figheight(); side = min(w - 0.012, 0.66 / aspect)
-    step = step_for(film.box[1] - film.box[0], STRIP_TILE_PX)
-    for k, t in enumerate(picks):
+    axes = []; step = step_for(film.box[1] - film.box[0], STRIP_TILE_PX)
+    for t, box in zip(picks, FS.tile_grid(fig, len(picks), columns if columns else len(picks), title_in=0.2)):
         rgb, lines = film.picture(t, step)
-        ax = fig.add_axes([0.04 + k * w + (w - side) / 2, 0.08, side, side * aspect]); ax.imshow(rgb, interpolation="antialiased")
+        ax = fig.add_axes(box); ax.imshow(rgb, interpolation="antialiased")
         for soft, colour, _r, _c in lines:
             ax.contour(soft, levels=[0.22], colors=[colour], linewidths=0.7)
         ax.set_xticks([]); ax.set_yticks([])

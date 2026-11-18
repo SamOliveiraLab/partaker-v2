@@ -110,7 +110,7 @@ class MicrocolonyPage(QWidget):
         self.numbers_button.setToolTip("Writes the numbers behind every plot of this page as CSV files into a folder you choose")
         self.numbers_button.clicked.connect(lambda: self.export_requested.emit("numbers")); buttons.addWidget(self.numbers_button, 2, 1)
         left.addLayout(buttons)
-        self.film_canvas = PlotCanvas(size=(3.3, 1.25), min_height=115); self.film_canvas.setMaximumHeight(135); left.addWidget(self.film_canvas)
+        self.film_canvas = PlotCanvas(size=(3.3, 2.45), min_height=235); self.film_canvas.setMaximumHeight(255); left.addWidget(self.film_canvas)   # two rows of three frames
         self.film_caption = QLabel(""); self.film_caption.setAlignment(Qt.AlignCenter); left.addWidget(self.film_caption)   # which microcolony the strip shows
         left_box = QWidget(); left_box.setLayout(left); left_box.setFixedWidth(LEFT_COLUMN_PX); row.addWidget(left_box)
         right = QVBoxLayout(); right.setSpacing(6)
@@ -261,16 +261,15 @@ class MicrocolonyPage(QWidget):
 
     def _on_plot_press(self, canvas, event):
         """A click on a bar of the merging history picks that microcolony; a click on any time plot moves the cursor."""
-        if event.inaxes is None or event.xdata is None or self.tracks is None:
+        if event.inaxes is None or event.xdata is None or self.strip.span is None:
             return
         rows = getattr(event.inaxes, "_microcolony_rows", None)
-        if rows and event.ydata is not None:
+        if rows and event.ydata is not None and self.tracks is not None:
             identity = min(rows, key=lambda i: abs(rows[i] - event.ydata))
             if abs(rows[identity] - event.ydata) <= 0.6 and self.select(identity):
                 return
-        first_h, last_h = self.tracks.hours[self.tracks.frames[0]], self.tracks.hours[self.tracks.frames[-1]]
-        if event.inaxes.get_xlabel() == "time after inoculation (h)":
-            self.strip.set_hour(min(max(event.xdata, first_h), last_h), emit=True)
+        if getattr(event.inaxes, "_time_axis", False):
+            self.strip.set_hour(min(max(event.xdata, self.strip.span[0]), self.strip.span[1]), emit=True)
 
     def _frame_hours(self) -> list:
         return [self.tracks.hours[t] for t in self.tracks.frames] if self.tracks is not None else []
@@ -314,7 +313,7 @@ class MicrocolonyPage(QWidget):
         if self.tracks is not None:
             now = min(self.tracks.frames, key=lambda t: abs(self.tracks.hours[t] - self.hour))
         shown = self.film if self.tracks is not None and self.selected() is not None else None
-        self.film_canvas.render(draw_film_strip, shown, 5, now)
+        self.film_canvas.render(draw_film_strip, shown, 6, now)
         merged = len(shown.order) - 1 if shown is not None and shown.root is not None else 0
         self.film_caption.setText("" if shown is None or shown.root is None else f"microcolony {shown.root}" +
                                   (f" and the {merged} that merge{'s' if merged == 1 else ''} into it" if merged else ""))

@@ -161,7 +161,7 @@ def draw_radial(fig, metrics: MicrocolonyMetrics, cursor_h: Optional[float] = No
     lo, hi = float(np.nanmin(density)), float(np.nanmax(density))
     image = ax.imshow(np.ma.masked_invalid(density[:, :top]).T, origin="lower", aspect="auto", cmap=HEAT, vmin=np.floor(lo), vmax=max(np.ceil(hi), np.floor(lo) + 1),
                       extent=(hours[0] - step / 2, hours[-1] + step / 2, float(edges[0]), float(edges[top])), interpolation="nearest")
-    ax.set_xticks(FS.time_ticks(float(hours[0]), float(hours[-1]))); ax.set_xlabel("Time (h)", fontweight="bold"); FS.cursor(ax, cursor_h)
+    ax.set_xticks(FS.time_ticks(float(hours[0]), float(hours[-1]))); ax.set_xlabel("Time (h)", fontweight="bold"); FS.cursor(ax, cursor_h); ax._time_axis = True
     ax.set_ylabel("Distance from centre (µm)", fontweight="bold")
     bar_axes = fig.add_axes([0.83, FS.AXES_BOTTOM, 0.025, FS.AXES_TOP - FS.AXES_BOTTOM]); bar = fig.colorbar(image, cax=bar_axes); bar.outline.set_linewidth(0.6)
     bar.set_label("Cells per 100 µm²", fontweight="bold")

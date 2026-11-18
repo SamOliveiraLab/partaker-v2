@@ -12,6 +12,7 @@ from matplotlib.colors import to_rgb
 from . import growth_plots as GP
 from . import figure_style as FS
 from . import matrix_stain as MX
+from .microcolony_rules import frame_microcolonies
 from . import seeding_plots as SP
 from .growth_measure import GrowthStates
 
@@ -57,16 +58,25 @@ class GrowthFilm:
                 a = cv2.GaussianBlur(counted.astype(np.float32), (0, 0), 1.5)[..., None] * 0.62; rgb = rgb * (1 - a) + np.array(to_rgb(STAIN)) * a
             n = PICTURE_PX; h, w = rgb.shape[:2]; size = (n, max(1, int(round(n * h / w))))
             small = np.clip(cv2.resize(rgb.astype(np.float32), size, interpolation=cv2.INTER_AREA), 0, 1)
-            colony = MX.microcolony_area(labels, self.pixel_um)
+            found = frame_microcolonies(labels, self.pixel_um); colony = found.regions > 0       # the same area as matrix_stain.microcolony_area
             lines = cv2.resize(cv2.GaussianBlur(colony.astype(np.float32), (0, 0), 0.45 / self.pixel_um), size, interpolation=cv2.INTER_AREA) if colony.any() else None
-            self._pictures[key] = (small, lines)
+            self._pictures[key] = (small, lines, int(found.n_microcolonies))
         return self._pictures[key]
+
+    def microcolonies(self, t: int) -> int:
+        """The microcolonies of the frame (linked groups of 4 or more cells), as Figure 5 a writes under each frame."""
+        return self._picture(t)[2]
+
+    def stain_measured(self, t: int) -> bool:
+        """Whether the matrix stain was measured on this frame (not after a loss of focus)."""
+        hours = self.gs.matrix_hours.get(self.position, ())
+        return bool(len(hours)) and float(np.min(np.abs(np.asarray(hours) - self.hour(t)))) < 1e-6
 
     @SP.with_house_style
     def draw(self, fig, t: int):
         """One frame of the film. Returns the image axes."""
         fig.clear(); p = self.position; gs = self.gs; hours = gs.hours[p]; k = self.frames.index(int(t)); now = float(hours[k])
-        rgb, lines = self._picture(t); h, w = rgb.shape[:2]; aspect = fig.get_figwidth() / fig.get_figheight()
+        rgb, lines, _count = self._picture(t); h, w = rgb.shape[:2]; aspect = fig.get_figwidth() / fig.get_figheight()
         ax = fig.add_axes([0.03, 0.05, 0.37, 0.37 * aspect * h / w]); ax.imshow(rgb, interpolation="antialiased"); ax.set_xticks([]); ax.set_yticks([])
         for s in ax.spines.values():
             s.set_visible(False)
@@ -114,18 +124,25 @@ class GrowthFilm:
 
 
 @SP.with_house_style
-def draw_film_strip(fig, film: Optional[GrowthFilm], n: int = 4, now_h: Optional[float] = None):
-    """A few frames of the selected position side by side, the hour over each; the one nearest the cursor in bold."""
+def draw_film_strip(fig, film: Optional[GrowthFilm], n: int = 4, now_h: Optional[float] = None, columns: int = 2):
+    """A few frames of the selected position as Figure 5 a shows them: phase contrast, the microcolonies outlined in
+    orange, the matrix stain in green, the hour over each frame (the one nearest the cursor in bold) and the number of
+    microcolonies under it. A frame whose stain was not measured says so: no green there does not mean no stain."""
     fig.clear()
     if film is None or film.position is None or not film.frames:
         SP.empty_axes(fig, "Measure, then pick a position to see its frames"); return []
     picks = sorted({film.frames[int(round(k))] for k in np.linspace(0, len(film.frames) - 1, min(n, len(film.frames)))})
     near = min(picks, key=lambda t: abs(film.hour(t) - now_h)) if now_h is not None else None
-    axes = []; w = 0.92 / len(picks); aspect = fig.get_figwidth() / fig.get_figheight(); side = min(w - 0.012, 0.66 / aspect)
-    for k, t in enumerate(picks):
-        ax = fig.add_axes([0.04 + k * w + (w - side) / 2, 0.08, side, side * aspect]); ax.imshow(film.picture(t)[::3, ::3], interpolation="antialiased")
+    with_stain = bool(len(film.gs.matrix_hours.get(film.position, ()))); axes = []
+    for t, box in zip(picks, FS.tile_grid(fig, len(picks), columns, title_in=0.2, caption_in=0.36)):
+        rgb, lines, count = film._picture(t); ax = fig.add_axes(box); ax.imshow(rgb, interpolation="antialiased")
+        if lines is not None:
+            ax.contour(lines, levels=[0.5], colors=[OUTLINE], linewidths=0.7)
         ax.set_xticks([]); ax.set_yticks([])
         for s in ax.spines.values():
             s.set_visible(False)
-        ax.set_title(f"{film.hour(t):g} h", fontsize=8.5, fontweight="bold" if t == near else "normal", pad=3); axes.append(ax)
+        ax.set_title(f"{film.hour(t):g} h", fontsize=8.5, fontweight="bold" if t == near else "normal", pad=3)
+        words = "no microcolony" if count == 0 else f"{count} microcolon{'y' if count == 1 else 'ies'}"
+        ax.set_xlabel(words + ("\nstain not measured" if with_stain and not film.stain_measured(t) else ""), fontsize=8, color=FS.G1, labelpad=3, fontweight="normal")
+        axes.append(ax)
     return axes

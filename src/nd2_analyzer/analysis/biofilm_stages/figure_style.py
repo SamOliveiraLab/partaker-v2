@@ -43,6 +43,20 @@ def card(fig, title_text: str, note: str = "", note2: str = "", left: float = CA
     return ax
 
 
+def tile_grid(fig, n: int, columns: int, title_in: float = 0.2, caption_in: float = 0.0, margin_in: float = 0.08, gap_in: float = 0.1) -> List[list]:
+    """Places for n square pictures in rows of `columns`, as large as the figure allows, each with room for a line above
+    it (its hour) and caption_in inches under it. Returns [x, y, width, height] in figure fractions, row by row."""
+    width, height = fig.get_figwidth(), fig.get_figheight(); rows = -(-int(n) // int(columns))
+    cell_w, cell_h = (width - 2 * margin_in) / columns, (height - 2 * margin_in) / rows
+    side = max(min(cell_w - gap_in, cell_h - title_in - caption_in - gap_in), 0.1); out = []
+    for k in range(int(n)):
+        r, c = divmod(k, int(columns))
+        x = margin_in + c * cell_w + (cell_w - side) / 2
+        top = height - margin_in - r * cell_h - title_in - (cell_h - title_in - caption_in - side) / 2
+        out.append([x / width, (top - side) / height, side / width, side / height])
+    return out
+
+
 def time_ticks(first_h: float, last_h: float, most: int = 8) -> np.ndarray:
     """Hours to tick: a round step (6 h, 12 h, ...) counted from the first frame, at most `most` steps."""
     span = max(float(last_h) - float(first_h), 1e-9)
@@ -53,7 +67,7 @@ def time_ticks(first_h: float, last_h: float, most: int = 8) -> np.ndarray:
 def time_axis(ax, first_h: float, x_end: float, show: bool = True, most: int = 8):
     """The time axis of a panel: from just before the first frame to just after x_end."""
     span = max(x_end - first_h, 1e-9); ax.set_xlim(first_h - 0.012 * span - 0.0, x_end + 0.04 * span)
-    ticks = time_ticks(first_h, x_end, most); ax.set_xticks(ticks)
+    ticks = time_ticks(first_h, x_end, most); ax.set_xticks(ticks); ax._time_axis = True          # a click on it moves the page's cursor
     if show:
         ax.set_xticklabels([f"{t:g}" for t in ticks]); ax.set_xlabel("Time (h)", fontweight="bold")
     else:

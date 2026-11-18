@@ -91,7 +91,7 @@ class GrowthPage(QWidget):
         left = QVBoxLayout(); left.setSpacing(4); left.addWidget(QLabel("Positions to follow"))
         self.candidates = QListWidget(); self.candidates.setMinimumHeight(100); self.candidates.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.candidates.itemDoubleClicked.connect(lambda _item: self._follow()); self.candidates.currentItemChanged.connect(self._on_selection)
-        left.addWidget(self.candidates, 1)
+        left.addWidget(self.candidates, 0)                     # as tall as its positions: the rest of the column is the frames
         buttons = QGridLayout(); buttons.setSpacing(4)
         self.follow_button = QPushButton("Follow"); self.follow_button.setToolTip("Opens the Maturation window on the selected position: its film, its cells and its matrix stain")
         self.follow_button.clicked.connect(self._follow)
@@ -105,7 +105,7 @@ class GrowthPage(QWidget):
         buttons.addWidget(self.follow_button, 0, 0); buttons.addWidget(self.numbers_button, 0, 1)
         buttons.addWidget(self.film_button, 1, 0); buttons.addWidget(self.image_button, 1, 1)
         left.addLayout(buttons)
-        self.film_canvas = PlotCanvas(size=(3.3, 1.25), min_height=115); self.film_canvas.setMaximumHeight(135); left.addWidget(self.film_canvas)
+        self.film_canvas = PlotCanvas(size=(3.3, 4.8), min_height=340); left.addWidget(self.film_canvas, 1)     # the frames of Figure 5 a, large
         left_box = QWidget(); left_box.setLayout(left); left_box.setFixedWidth(LEFT_COLUMN_PX); row.addWidget(left_box)
         right = QVBoxLayout(); right.setSpacing(6)
         grid = QGridLayout(); grid.setSpacing(6); self.cards = []
@@ -164,6 +164,8 @@ class GrowthPage(QWidget):
                 head = QListWidgetItem(title); head.setFont(bold); head.setFlags(Qt.ItemIsEnabled); self.candidates.addItem(head)
                 for position, line in rows:
                     item = QListWidgetItem(line); item.setData(Qt.UserRole, int(position)); self.candidates.addItem(item)
+            rows = sum(self.candidates.sizeHintForRow(r) for r in range(self.candidates.count())) + 2 * self.candidates.frameWidth() + 6
+            self.candidates.setFixedHeight(min(max(rows, 60), 240))      # the list as tall as its positions; the frames get the rest
             first = next((r for r in range(self.candidates.count()) if self.candidates.item(r).data(Qt.UserRole) is not None), -1)
             if first >= 0:
                 self.candidates.setCurrentRow(first)
@@ -201,7 +203,7 @@ class GrowthPage(QWidget):
         """A click on a time plot moves the cursor there."""
         if event.inaxes is None or event.xdata is None or self.strip.span is None:
             return
-        if event.inaxes.get_xlabel() == "time after inoculation (h)":
+        if getattr(event.inaxes, "_time_axis", False):
             self.strip.set_hour(min(max(event.xdata, self.strip.span[0]), self.strip.span[1]), emit=True)
 
     def _toggle_play(self):
