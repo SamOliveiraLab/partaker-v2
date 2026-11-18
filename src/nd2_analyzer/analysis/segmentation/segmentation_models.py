@@ -6,7 +6,6 @@ from cellpose_omni import models, utils
 from scipy.ndimage import gaussian_filter
 from skimage import exposure
 from skimage.measure import label
-from skimage.restoration import richardson_lucy
 
 from .unet import unet_segmentation
 
@@ -491,13 +490,14 @@ class SegmentationModels:
 
 def preprocess_image(image):
     """
-    Preprocess an image by applying Gaussian blur, CLAHE, and Richardson-Lucy deblurring.
+    The frame the model sees: scaled to 0-1, smoothed (Gaussian, sigma 1) and contrast-equalised (CLAHE),
+    so cells in a dim part of the field stand out like cells in a bright part.
 
     Parameters:
         image (np.ndarray): Input image.
 
     Returns:
-        np.ndarray: Preprocessed image.
+        np.ndarray: Preprocessed image, float32 in 0-1.
     """
     image = np.asarray(image, dtype=np.float32)
     min_val = np.min(image)
@@ -514,11 +514,9 @@ def preprocess_image(image):
 
     denoised_frame = gaussian_filter(normalized_frame, sigma=1)
 
-    # Apply CLAHE to improve contrast
+    # The contrast-equalised frame is the one the model sees. Until Nov 2026 it was computed and thrown away,
+    # and a Richardson-Lucy deblur of the un-equalised frame was returned instead: on run 2 (E. coli, phase
+    # contrast) that lost about 4 cells in 10 at 24 h (79 found where there are 135).
     clahe = exposure.equalize_adapthist(denoised_frame, clip_limit=0.03)
 
-    # Step 3: Deblur the image
-    psf = np.ones((5, 5)) / 25  # Example PSF
-    deblurred_frame = richardson_lucy(denoised_frame, psf, num_iter=30)
-
-    return deblurred_frame
+    return clahe.astype(np.float32)
