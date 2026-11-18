@@ -150,3 +150,18 @@ def test_the_dye_channel_is_the_one_the_experiment_calls_matrix_dye():
     from nd2_analyzer.ui.biofilms.stages.growth_controller import channel_with_role
     roles = {"0": "phase", "1": "cell_marker", "2": "matrix"}
     assert channel_with_role(roles, "matrix") == 2 and channel_with_role(roles, "phase") == 0 and channel_with_role({"0": "phase"}, "matrix") is None
+
+
+def test_the_film_paints_no_matrix_stain_on_frames_where_it_was_not_measured():
+    """After a loss of focus the matrix stain is not measured (the dye image is on another scale): the film shows those
+    frames in grey, as the plot shows no value there."""
+    from nd2_analyzer.analysis.biofilm_stages.growth_film import GrowthFilm
+    labels, dye = recording()
+    ref = MX.DyeReference(zero=np.zeros((240, 240), np.float32), flat=np.ones((240, 240), np.float32))
+    stopped = GM.measure_growth_states(labels, dye, {0: list(range(8))}, pixel_um=PX, hour_of=lambda t: 24.0 + 1.5 * t, reference=ref,
+                                       matrix_frames={0: list(range(6))}, resamples=20)            # matrix measured on frames 0 to 5 only
+    film = GrowthFilm(stopped, labels, lambda p, t: 1000.0 - 300.0 * (labels(p, t) > 0), dye, ref, PX)
+    spot = lambda rgb: rgb[int(175 * rgb.shape[0] / 240), int(175 * rgb.shape[1] / 240)]
+    measured_frame, later_frame = spot(film.picture(5)), spot(film.picture(7))
+    assert measured_frame[1] > measured_frame[0] + 0.2                      # green where the stain was measured
+    assert abs(later_frame[1] - later_frame[0]) < 0.02                      # grey on a frame where it was not

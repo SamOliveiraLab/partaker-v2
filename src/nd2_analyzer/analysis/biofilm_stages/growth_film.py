@@ -49,7 +49,9 @@ class GrowthFilm:
             p = self.position; ph = np.asarray(self.phase_at(p, t), np.float32); lo, hi = np.percentile(ph, [0.5, 99.5])
             grey = np.clip((ph - lo) / max(hi - lo, 1e-6), 0, 1); rgb = np.repeat((0.18 + 0.72 * grey)[..., None], 3, -1)
             labels = np.asarray(self.labels_at(p, t))
-            if self.dye_at is not None and self.reference is not None and p in self.gs.free_dye:
+            measured_h = self.gs.matrix_hours.get(p, ())                # the stain is painted only where it was measured
+            if (self.dye_at is not None and self.reference is not None and p in self.gs.free_dye
+                    and len(measured_h) and float(np.min(np.abs(np.asarray(measured_h) - self.hour(t)))) < 1e-6):
                 counted, _single = MX.matrix(MX.stain(MX.correct(self.dye_at(p, t), self.reference), self.gs.free_dye[p], self.gs.settings), self.pixel_um, self.gs.settings)
                 a = cv2.GaussianBlur(counted.astype(np.float32), (0, 0), 1.5)[..., None] * 0.62; rgb = rgb * (1 - a) + np.array(to_rgb(STAIN)) * a
             n = PICTURE_PX; h, w = rgb.shape[:2]; size = (n, max(1, int(round(n * h / w))))
