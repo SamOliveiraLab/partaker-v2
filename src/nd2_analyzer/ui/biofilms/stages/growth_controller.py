@@ -142,7 +142,8 @@ class GrowthController(QObject):
                            (hour(0), hour(info.n_frames - 1)) if dt_h else None)
         page.set_step_state("load", "done", f"{info.n_frames:,}")
         total = sum(len(f) for f in per.values())
-        page.set_step_state("segment", "done" if per else "todo", f"{total:,}, positions {', '.join(str(p) for p in sorted(per))}" if per else "")
+        page.set_step_state("segment", "done" if per else "todo", f"{total:,}, {len(per)} positions" if len(per) != 1 else f"{total:,}, position {next(iter(per))}")
+        page.step_labels["segment"].setToolTip("Positions " + ", ".join(str(p) for p in sorted(per)) if per else "")
         busy = self.worker is not None and self.worker.isRunning()
         page.set_measure_enabled(bool(per and dt_h and info.pixel_um) and not busy)
         if dt_h and self.every_set_for != self.generation:
@@ -173,7 +174,8 @@ class GrowthController(QObject):
             self.reference = MX.dye_reference(before, after); self.dye_paths = (str(before_path), str(after_path))
         except Exception as exc:
             self.reference = None; self.page.set_step_state("dye", "failed", f"{type(exc).__name__}: {exc}"); return False
-        self.page.set_step_state("dye", "done", f"before ({len(before)} positions) and after ({len(after)})")
+        self.page.set_step_state("dye", "done", "before and after")
+        self.page.step_labels["dye"].setToolTip(f"Before the dye: {before_path} ({len(before)} positions)\nRight after: {after_path} ({len(after)} positions)")
         return True
 
     # ------------------------------------------------------------------ Measure
@@ -218,7 +220,8 @@ class GrowthController(QObject):
             return
         self.measured = measured; self.page.set_measured(measured, self.film())
         th1 = f"Th1 {measured.th1['th1_h']:.1f} h" if measured.th1 and measured.th1["th1_h"] is not None else "Th1 not measured"
-        self.page.set_step_state("measure", "done", f"{th1}, {GP.th2_words(measured) or 'Th2 not found'}")
+        th2 = f"Th2 {measured.th2['th2_h']:.1f} h" if measured.th2 else "Th2 not found"
+        self.page.set_step_state("measure", "done", f"{th1}, {th2}")
         n = sum(len(f) for f in measured.frames.values()); first, last = GP._span(measured)
         dye = (f"  Free dye {np.mean(list(measured.free_dye.values())):,.0f} counts, cut-off {measured.settings.cut_off:,.0f} above it, matrix at least "
                f"{measured.settings.min_width_um:g} µm wide." if measured.free_dye else "")
