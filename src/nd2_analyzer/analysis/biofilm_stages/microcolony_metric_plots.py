@@ -25,6 +25,7 @@ FIGURES = (("m_count", "Number of microcolonies, all positions"), ("m_per", "Cel
 TITLE = dict(FIGURES)
 MEASURE_FIRST = "Click Measure (all positions) to see this plot"
 STAIN = ("stain", "Matrix stain over time")    # Figure 4 d, drawn by growth_plots.draw_inside from the Maturation tab's measure
+NO_SHARED_HOUR = "The positions were not measured at the same hours: click Measure (all positions) again"
 STAIN_FIRST = "Matrix stain: on the Maturation tab click Dye frames..., then Measure. It then shows here."
 RING_MIN_CELLS = 15            # a ring of the density map needs this many cells to get a colour
 HEAT = LinearSegmentedColormap.from_list("microcolony", ["#fff3e0", "#fbd9a8", ORANGE, "#7a3d00"])
@@ -194,5 +195,21 @@ def draw_radial(fig, metrics: MicrocolonyMetrics, cursor_h: Optional[float] = No
     return ax
 
 
+def _whole(draw):
+    """A plot of the positions' mean needs hours that every position was measured at; without one it says so."""
+    import functools
+
+    @functools.wraps(draw)
+    def checked(fig, metrics: MicrocolonyMetrics, cursor_h: Optional[float] = None, **kw):
+        if not len(metrics._shared(metrics.values["cells"])[0]):
+            fig.clear(); ax = fig.add_axes([0.06, 0, 0.88, 1]); ax.axis("off")
+            ax.text(0.5, 0.5, NO_SHARED_HOUR, ha="center", va="center", color=SP.EMPTY_GREY, transform=ax.transAxes, wrap=True)
+            return ax
+        return draw(fig, metrics, cursor_h, **kw)
+    return checked
+
+
+draw_count, draw_per, draw_in, draw_density, draw_spacing, draw_alignment, draw_largest, draw_radial, draw_area = (
+    _whole(f) for f in (draw_count, draw_per, draw_in, draw_density, draw_spacing, draw_alignment, draw_largest, draw_radial, draw_area))
 DRAW = {"m_count": draw_count, "m_per": draw_per, "m_in": draw_in, "m_density": draw_density, "m_spacing": draw_spacing,
         "m_alignment": draw_alignment, "m_largest": draw_largest, "m_radial": draw_radial, "m_area": draw_area}

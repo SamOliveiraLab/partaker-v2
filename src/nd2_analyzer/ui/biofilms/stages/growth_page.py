@@ -154,8 +154,16 @@ class GrowthPage(QWidget):
         Microcolonies tab's measure of every position (Figure 5 b), or None."""
         self.shared = shared; self._render_plots()
 
-    def set_measured(self, measured, film=None):
-        """The growth-states measure of the recording (None clears the page)."""
+    def set_measured(self, measured, film=None, position: Optional[int] = None):
+        """The growth-states measure of the recording (None clears the page). The list opens on `position` when it was
+        measured (the position in the view area), else on the first; filling the list moves nothing else."""
+        self.filling = True
+        try:
+            self._set_measured(measured, film, open_on=position)
+        finally:
+            self.filling = False
+
+    def _set_measured(self, measured, film, open_on):
         self.measured, self.film = measured, film; self.candidates.clear(); self.play_timer.stop(); self.strip_play_button.setText("Play")
         self.strip.set_measured(measured)
         if measured is not None:
@@ -167,7 +175,7 @@ class GrowthPage(QWidget):
             rows = sum(self.candidates.sizeHintForRow(r) for r in range(self.candidates.count())) + 2 * self.candidates.frameWidth() + 6
             self.candidates.setFixedHeight(min(max(rows, 60), 240))      # the list as tall as its positions; the frames get the rest
             first = next((r for r in range(self.candidates.count()) if self.candidates.item(r).data(Qt.UserRole) is not None), -1)
-            if first >= 0:
+            if first >= 0 and not (open_on is not None and self.select(open_on)):      # the loop above names its own `position`
                 self.candidates.setCurrentRow(first)
         self.strip_play_button.setEnabled(measured is not None)
         self._enable_buttons(); self._render_cards(); self._render_plots(); self._render_film()
@@ -175,6 +183,15 @@ class GrowthPage(QWidget):
     def selected(self) -> Optional[int]:
         item = self.candidates.currentItem(); position = item.data(Qt.UserRole) if item is not None else None
         return int(position) if position is not None else None
+
+    def select(self, position: int) -> bool:
+        """Selects a measured position in the list; False when it is not there."""
+        for r in range(self.candidates.count()):
+            if self.candidates.item(r).data(Qt.UserRole) == int(position):
+                if self.candidates.currentRow() != r:
+                    self.candidates.setCurrentRow(r)
+                return True
+        return False
 
     def set_hour(self, h: float):
         self.hour = float(h); self.strip.set_hour(h); self._render_cards(); self._render_plots(); self._render_film()
@@ -190,7 +207,9 @@ class GrowthPage(QWidget):
         position = self.selected()
         if position is not None and self.film is not None:
             self.film.set_position(position)
-        self._enable_buttons(); self._render_plots(); self._render_film(); self.selection_changed.emit(position)
+        self._enable_buttons(); self._render_plots(); self._render_film()
+        if not getattr(self, "filling", False):
+            self.selection_changed.emit(position)                  # a click in the list, or the P slider: not the list being filled
 
     def _follow(self):
         if self.selected() is not None:

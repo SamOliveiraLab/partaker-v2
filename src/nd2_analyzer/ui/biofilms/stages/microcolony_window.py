@@ -84,6 +84,15 @@ class MicrocolonyDialog(QDialog):
     def _on_slider(self, v):
         self.step = int(v); self.redraw()
 
+    def set_stain(self, counted_at, rows=None):
+        """The stain of the position changed while the window is open: measured (it is shown at once, the box ticked) or
+        gone (the Maturation tab measures again: the box is off until the new stain is there)."""
+        self.film.set_stain(counted_at, rows=rows, show=counted_at is not None)
+        self.stain_box.blockSignals(True); self.stain_box.setEnabled(counted_at is not None); self.stain_box.setChecked(counted_at is not None)
+        self.stain_box.blockSignals(False)
+        if not self.closed:
+            self.redraw()
+
     def _on_stain(self, on):
         self.film.show_stain = bool(on) and self.film.counted_at is not None
         self._measure_stain()

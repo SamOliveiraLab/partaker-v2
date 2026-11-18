@@ -46,6 +46,7 @@ class BiofilmStagesTab(QWidget):
         self.microcolony_controller.stain_fallback = self.growth_controller.counted_at_for    # the matrix stain box of the Microcolonies window
         self.microcolony_controller.stain_recipe = self.growth_controller.stain_recipe        # the stain of the followed microcolonies, measured by itself
         self.growth_controller.measured_changed.connect(self._share_stain)
+        self.growth_controller.position = self.controller.position
         self.growth_controller.measured_changed.connect(self._share_th1)                      # one Th1 in the tool: the Maturation tab's
         self.microcolony_controller.metrics_changed.connect(self._share_microcolonies)        # Figure 5 b: cells in microcolonies, on the Maturation plot
         self.live_pages = (self.seeding_page, self.microcolony_page, self.growth_page)
@@ -80,12 +81,12 @@ class BiofilmStagesTab(QWidget):
         tabs.currentChanged.connect(self._on_tab_shown)
         self.hide()
 
-    def connect_main_window(self, set_frame=None, tracking_widget=None):
+    def connect_main_window(self, set_frame=None, tracking_widget=None, set_position=None):
         """The main window gives two callbacks: set_frame(frame) moves the view area's T slider, tracking_widget() returns
         the tracking widget (its tracks are used when the Seeding page has not tracked the position itself)."""
         self.controller.connect_main_window(set_frame=set_frame, tracking_widget=tracking_widget)
         self.microcolony_controller.connect_main_window(set_frame=set_frame)
-        self.growth_controller.connect_main_window(set_frame=set_frame)
+        self.growth_controller.connect_main_window(set_frame=set_frame, set_position=set_position)     # a position picked in its list moves the P slider
 
     def follow_frame(self, frame: int):
         """The view area's T slider moved: the cursor follows it, on the Seeding strip now and on the other pages when

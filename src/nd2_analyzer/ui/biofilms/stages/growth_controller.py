@@ -36,6 +36,16 @@ def frames_to_measure(segmented: list, step: int = 1, skip: Optional[Callable[[i
     return [t for t in frames if ((t - frames[0]) % max(int(step), 1) == 0 or t == frames[-1]) and not (skip is not None and skip(t))]
 
 
+def direct_path(image_data) -> Optional[str]:
+    """The recording's file, for a worker to read through a handle of its own; None when the tool crops or registers
+    the frames on the way (ImageData.get does both, a file handle does neither: the worker then reads through the tool,
+    or the stain would be shifted against the cells)."""
+    if image_data is None or getattr(image_data, "crop_coordinates", None) is not None or getattr(image_data, "registration_offsets", None) is not None:
+        return None
+    files = getattr(image_data, "image_filename", None)
+    return files[0] if isinstance(files, (list, tuple)) and files else files
+
+
 def channel_with_role(channel_roles: dict, role: str) -> Optional[int]:
     for key, value in sorted((channel_roles or {}).items(), key=lambda kv: int(kv[0])):
         if value == role:
@@ -65,8 +75,10 @@ class GrowthWorker(QThread):
                     dye_at = (lambda p, t: np.asarray(data[t, p, channel])) if data.ndim == 5 else None
                 dye_at = dye_at or fallback
             out = measure_growth_states(labels_at, dye_at, frames, pixel_um, hour_of, reference if dye_at is not None else None,
-                                        progress=lambda k, n: self.progress.emit(int(100 * k / max(n, 1)), f"{100 * k // max(n, 1)} %"),
+                                        progress=lambda k, n: say_progress(self, k, n),
                                         matrix_frames=self.matrix_frames)
+        except InterruptedError:
+            return                                                  # the tool is closing: no result, no error
         except Exception as exc:                                   # the page shows the reason in the Growth States step
             self.failed.emit(f"{type(exc).__name__}: {exc}"); return
         finally:
@@ -78,7 +90,8 @@ class GrowthWorker(QThread):
 class GrowthController(QObject):
     measured_changed = Signal()                # a measure arrived, was loaded or was cleared: the Microcolonies strip takes its Th1
     # the tool's messages and the methods that hear them, with the names each message carries (see MicrocolonyController)
-    LISTENS = (("experiment_loaded", "on_experiment_loaded"), ("image_data_loaded", "on_new_recording"), ("batch_segmentation_completed", "on_segmented"))
+    LISTENS = (("experiment_loaded", "on_experiment_loaded"), ("image_data_loaded", "on_new_recording"), ("batch_segmentation_completed", "on_segmented"),
+               ("view_index_changed", "on_view_index_changed"))
 
     def __init__(self, page, recording_info: Callable[[], object], parent=None):
         super().__init__(parent)
@@ -87,7 +100,9 @@ class GrowthController(QObject):
         self.measured = None; self.reference: Optional[MX.DyeReference] = None; self.dye_paths: Optional[tuple] = None
         self.worker: Optional[GrowthWorker] = None; self.window: Optional[GrowthDialog] = None; self.generation = 0; self.every_set_for = None
         page.dye_requested.connect(self.choose_dye_frames); page.measure_requested.connect(self.measure); page.hour_changed.connect(self.on_hour_changed)
-        page.window_requested.connect(self.open_window); page.export_requested.connect(self.export)
+        page.window_requested.connect(self.open_window); page.export_requested.connect(self.export); page.selection_changed.connect(self.on_position_selected)
+        self.position: Optional[Callable[[], int]] = None           # the position the view area shows (the tab gives it)
+        self.set_position: Optional[Callable[[int], None]] = None   # moves the view area's P slider (the main window gives it)
         for topic, method in self.LISTENS:
             pub.subscribe(getattr(self, method), topic)
         app = QCoreApplication.instance()
@@ -98,8 +113,20 @@ class GrowthController(QObject):
         if self.worker is not None and self.worker.isRunning():
             self.worker.requestInterruption(); self.worker.wait(WORKER_WAIT_MS)
 
-    def connect_main_window(self, set_frame: Optional[Callable[[int], None]] = None):
-        self.set_frame = set_frame; self.refresh()
+    def connect_main_window(self, set_frame: Optional[Callable[[int], None]] = None, set_position: Optional[Callable[[int], None]] = None):
+        self.set_frame = set_frame; self.set_position = set_position; self.refresh()
+
+    # ------------------------------------------------------------------ one position: the list, the picture on the left, the P slider
+    def on_position_selected(self, position):
+        """A position picked in the list: the view area goes to it, so the picture on the left is the position of the
+        list, of the frames and of the bold line."""
+        if position is not None and self.set_position is not None and (self.position is None or int(position) != int(self.position())):
+            self.set_position(int(position))
+
+    def on_view_index_changed(self, index):
+        """The P slider moved: the list follows when that position was measured."""
+        if self.measured is not None and self.position is not None:
+            self.page.select(int(self.position()))
 
     # ------------------------------------------------------------------ what the tool has
     def on_experiment_loaded(self, experiment):
@@ -209,7 +236,7 @@ class GrowthController(QObject):
         if not frames:
             self.page.set_step_state("measure", "failed", "no position has two segmented frames to measure"); return
         channel = channel_with_role(info.channel_roles, "matrix"); image_data = ImageData.get_instance()
-        files = image_data.image_filename; path = files[0] if isinstance(files, (list, tuple)) and files else files
+        path = direct_path(image_data)
         labels_at = lambda p, t: np.asarray(array[int(t), int(p), 0])
         self.worker = GrowthWorker(labels_at, frames, info.pixel_um, self.hour_of(info), self.reference, channel, path,
                                    self.raw_at(channel) if channel is not None else None, matrix_frames, self)
@@ -237,8 +264,7 @@ class GrowthController(QObject):
         channel = channel_with_role(info.channel_roles, "matrix")
         if channel is None:
             return None
-        image_data = ImageData.get_instance(); files = getattr(image_data, "image_filename", None) if image_data is not None else None
-        path = files[0] if isinstance(files, (list, tuple)) and files else files
+        path = direct_path(ImageData.get_instance())
         return {"reference": self.reference, "level": float(self.measured.free_dye[p]), "settings": self.measured.settings, "channel": int(channel),
                 "path": path, "raw_at": self.raw_at(channel), "position": p}
 
@@ -257,7 +283,7 @@ class GrowthController(QObject):
         self.measured = measured; self.show_measured(measured); self.refresh()
 
     def show_measured(self, measured):
-        self.page.set_measured(measured, self.film())
+        self.page.set_measured(measured, self.film(), position=int(self.position()) if self.position is not None else None)   # opens on the view area's position
         th1 = f"Th1 {measured.th1['th1_h']:.1f} h" if measured.th1 and measured.th1["th1_h"] is not None else "Th1 not measured"
         th2 = f"Th2 {measured.th2['th2_h']:.1f} h" if measured.th2 else "Th2 not found"
         self.page.set_step_state("measure", "done", f"{th1}, {th2}")

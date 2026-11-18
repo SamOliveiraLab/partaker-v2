@@ -63,13 +63,18 @@ def stain_tables(stain, position: int) -> Dict[str, Table]:
             "microcolony_matrix_stain_frames" + tail: (["microcolony", "frame", "hours", "area_um2", "stain_um2", "covered_pct"], frames)}
 
 
-def _means(names, mean_of, have) -> Table:
+def _means(names, mean_of, have, counts=None, geometric=()) -> Table:
     """hours, positions, then the mean and s.d. over the positions of every series. names: a series, or (series, the
-    name of its column)."""
+    name of its column). counts(series) -> (hours, positions with a value): a column of how many positions the mean is
+    of. geometric: the series that also get the mean of their logarithms (what a logarithmic plot draws)."""
     head = ["hours", "positions"]; columns = []; hours = None
     for name in names:
         series, column = (name, name) if isinstance(name, str) else name
         hours, mean, sd = mean_of(series); head += [f"{column}_mean", f"{column}_sd"]; columns += [mean, sd]
+        if counts is not None:
+            head.append(f"{column}_n"); columns.append(np.asarray(counts(series)[1], float))
+        if series in geometric:
+            head.append(f"{column}_geometric_mean"); columns.append(mean_of(series, geometric=True)[1])
     rows = [[float(h), int(have)] + [_cell(c[k]) for c in columns] for k, h in enumerate(hours)] if hours is not None else []
     return head, rows
 
@@ -89,7 +94,7 @@ def metric_tables(metrics: MicrocolonyMetrics) -> Dict[str, Table]:
         for r in np.flatnonzero(total_n[h] > 0):
             rings.append([h, float(edges[r]), float(edges[r + 1]), int(total_n[h][r]), float(total_sum[h][r] / total_n[h][r])])
     return {"microcolony_metrics_every_position": (["position", "frame", "hours"] + list(SERIES), every),
-            "microcolony_metrics_mean": _means(SERIES, metrics.mean_of, len(metrics.positions)),
+            "microcolony_metrics_mean": _means(SERIES, metrics.mean_of, len(metrics.positions), counts=metrics.have, geometric=("cells_per_microcolony",)),
             "microcolony_density_by_distance": (["hours", "from_um", "to_um", "cells", "cells_within_3um_per_100um2"], rings)}
 
 

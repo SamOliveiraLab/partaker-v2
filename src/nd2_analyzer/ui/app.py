@@ -139,6 +139,7 @@ class App(QMainWindow):
         self.biofilm_stages_tab.connect_main_window(
             set_frame=lambda frame: self.viewArea.slider_t.setValue(self.viewArea._map_frame_to_slider(frame)),
             tracking_widget=lambda: getattr(getattr(self, "trackingTab", None), "tracking_widget", None),
+            set_position=lambda position: self.viewArea.slider_p.setValue(int(position)),
         )
         # and the other way: the stage strip's cursor follows the T slider
         self.viewArea.slider_t.valueChanged.connect(

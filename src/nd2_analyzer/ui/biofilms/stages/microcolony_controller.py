@@ -31,6 +31,14 @@ MEASURE_EVERY_H = 1.5          # the step of the all-positions metrics when the 
 RANDOM_EVERY_H, RANDOM_FOR_H = 3.0, 9.0      # the cells are also placed at random every 3 h of the first 9 h: later the surface is too full
 
 
+def say_progress(worker, k: int, n: int):
+    """A worker's progress, said to the page; and the place where a worker stops when the tool is closing (it is asked
+    to stop at shutdown, and a measure reports after every frame)."""
+    if worker.isInterruptionRequested():
+        raise InterruptedError("the tool is closing")
+    worker.progress.emit(int(100 * k / max(n, 1)), f"{100 * k // max(n, 1)} %")
+
+
 def frames_to_follow(segmented: list, last: int, skip: Optional[Callable[[int], bool]] = None) -> list:
     """The unbroken run of segmented frames from the first one, not past `last` and not into a frame `skip` names
     (out of focus): a microcolony cannot be followed through frames that are blurred."""
@@ -44,11 +52,12 @@ def frames_to_follow(segmented: list, last: int, skip: Optional[Callable[[int], 
 
 def frames_for_metrics(segmented: Dict[int, list], step: int, last: int, skip: Optional[Callable[[int], bool]] = None) -> Dict[int, list]:
     """position -> every step-th of its segmented frames counted from the first, not past `last` and without the frames
-    `skip` names (out of focus). A position with fewer than two such frames gives no curve and is left out."""
-    out = {}
+    `skip` names (out of focus). A position with fewer than two such frames gives no curve and is left out. The count
+    starts at the first frame any position has, so every position is measured at the same hours."""
+    out = {}; firsts = [min(int(t) for t in frames) for frames in segmented.values() if len(frames)]; origin = min(firsts) if firsts else 0
     for p, frames in segmented.items():
         frames = sorted(int(t) for t in frames)
-        keep = [t for t in frames if (t - frames[0]) % max(int(step), 1) == 0 and t <= int(last) and not (skip is not None and skip(t))]
+        keep = [t for t in frames if (t - origin) % max(int(step), 1) == 0 and t <= int(last) and not (skip is not None and skip(t))]
         if len(keep) >= 2:
             out[int(p)] = keep
     return out
@@ -82,9 +91,11 @@ class FollowWorker(QThread):
         labels_at, frames, pixel_um, dt_h, start_hour = self.args
         try:
             tracks = follow_microcolonies(labels_at, frames, pixel_um, dt_h, start_hour,
-                                          progress=lambda k, n: self.progress.emit(int(100 * k / max(n, 1)), f"{100 * k // max(n, 1)} %"))
+                                          progress=lambda k, n: say_progress(self, k, n))
             self.drawn = close_gaps(tracks, labels_at, pixel_um)      # for the pictures: short gaps drawn through, the record unchanged
             extents(self.drawn, labels_at)                            # where each microcolony is at each frame, so the film opens at once
+        except InterruptedError:
+            return                                                  # the tool is closing: no result, no error
         except Exception as exc:                                   # the page shows the reason in the Microcolonies step
             self.failed.emit(f"{type(exc).__name__}: {exc}"); return
         self.done.emit(tracks)
@@ -104,7 +115,9 @@ class MetricsWorker(QThread):
         labels_at, frames, pixel_um, hour_of, random_at = self.args
         try:
             out = measure_metrics(labels_at, frames, pixel_um, hour_of, random_hours=random_at,
-                                  progress=lambda k, n: self.progress.emit(int(100 * k / max(n, 1)), f"{100 * k // max(n, 1)} %"))
+                                  progress=lambda k, n: say_progress(self, k, n))
+        except InterruptedError:
+            return                                                  # the tool is closing: no result, no error
         except Exception as exc:                                   # the page shows the reason in the All positions step
             self.failed.emit(f"{type(exc).__name__}: {exc}"); return
         self.done.emit(out)
@@ -134,7 +147,9 @@ class StainWorker(QThread):
                     raw = lambda position, t: np.asarray(data[t, position, r["channel"]])
             counted_at = lambda t: MX.matrix(MX.stain(MX.correct(raw(p, int(t)), r["reference"]), r["level"], r["settings"]), self.pixel_um, r["settings"])[0]
             out = MX.measure_microcolony_stain(self.tracks, counted_at, self.pixel_um,
-                                               progress=lambda k, n: self.progress.emit(int(100 * k / max(n, 1)), f"{100 * k // max(n, 1)} %"))
+                                               progress=lambda k, n: say_progress(self, k, n))
+        except InterruptedError:
+            return                                                  # the tool is closing: no result, no error
         except Exception as exc:                                   # the page shows the reason in the Matrix stain step
             self.failed.emit(f"{type(exc).__name__}: {exc}"); return
         finally:
@@ -166,6 +181,8 @@ class MicrocolonyController(QObject):
         self.drawn: Dict[int, object] = {}                         # position -> the followed microcolonies with their gaps closed, for the pictures
         self.compare_window = None
         self.metrics = None; self.metrics_worker: Optional[MetricsWorker] = None; self.every_set_for = None
+        self.until_for = None                                      # (recording, position, first and last frame) "Follow until" was set for
+        self.window_position: Optional[int] = None                 # the position the open Follow window shows
         page.measure_requested.connect(self.measure)
         for topic, method in self.LISTENS:
             pub.subscribe(getattr(self, method), topic)
@@ -193,6 +210,7 @@ class MicrocolonyController(QObject):
 
     def on_new_recording(self, image_data):
         self.generation += 1; self.tracked = {}; self.drawn = {}; self.metrics = None; self.stains = {}; self.stain_token += 1; self.close_window()
+        self.outlines = {}; self.until_for = None                  # outlines drawn on the recording before do not follow into this one
         self.page.set_tracks(None); self.page.set_metrics(None); self.refresh(); self.metrics_changed.emit()
 
     def masks(self, position: int):
@@ -259,14 +277,16 @@ class MicrocolonyController(QObject):
             self.every_set_for = self.generation; page.set_every(dt_h, max(dt_h, round(MEASURE_EVERY_H / dt_h) * dt_h))
         if self.metrics is None and not measuring:
             page.set_step_state("measure", "todo")
-        if frames and dt_h and p != self.shown_position:
-            good = frames_to_follow(frames, frames[-1], self.out_of_focus()) or frames[:1]      # up to the last frame before focus is lost
-            page.set_until(hour(good[0]), hour(good[-1]), dt_h)
         tracks = self.tracked.get(p)
+        if frames and dt_h:
+            good = frames_to_follow(frames, frames[-1], self.out_of_focus()) or frames[:1]      # up to the last frame before focus is lost
+            span = (self.generation, p, good[0], good[-1])
+            if span != self.until_for:                               # another position, or this one got (more) segmented frames
+                self.until_for = span; page.set_until(hour(good[0]), hour(good[-1]), dt_h)
+                if tracks is not None:
+                    page.until_spin.setValue(tracks.hours[tracks.frames[-1]])       # "Follow until" shows where its tracks end
         if p != self.shown_position:
             self.shown_position = p; self.show_tracks(tracks, p)
-            if tracks is not None:
-                page.until_spin.setValue(tracks.hours[tracks.frames[-1]])       # "Follow until" shows where its tracks end
         if tracks is None and not (self.worker is not None and self.worker.isRunning()):
             page.set_step_state("track", "todo"); others = sorted(self.tracked)
             if others:
@@ -339,6 +359,11 @@ class MicrocolonyController(QObject):
             else:
                 film.set_stain(None)
         self.page.set_stain(stain.summary if stain is not None else None)
+        if self.window is not None and self.window_position == int(position):      # the open Follow window shows the same stain as the page
+            try:
+                self.window.set_stain(stain.counted_at if stain is not None else None, stain.rows if stain is not None else None)
+            except RuntimeError:
+                self.window = None                                    # closed meanwhile
         measuring = self.stain_worker is not None and self.stain_worker.isRunning()
         if stain is not None:
             tracks = self.tracked.get(int(position)); keep = tracks.lasting() if tracks is not None else set(stain.summary)
@@ -499,7 +524,7 @@ class MicrocolonyController(QObject):
             film.set_stain(stain.counted_at, rows=stain.rows, show=True)     # measured already: the box is ticked and the stain is there at once
         else:
             film.set_stain(self.stain_source(p))
-        self.window = MicrocolonyDialog(film, MP.entries(tracks), root=identity, parent=self.page.window())
+        self.window = MicrocolonyDialog(film, MP.entries(tracks), root=identity, parent=self.page.window()); self.window_position = int(p)
         self.window.destroyed.connect(lambda *_a: setattr(self, "window", None)); self.window.show()
 
     def open_compare(self):
