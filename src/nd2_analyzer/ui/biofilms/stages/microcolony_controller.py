@@ -69,7 +69,9 @@ class MicrocolonyController(QObject):
         self.tracked: Dict[int, object] = {}                       # position -> MicrocolonyTracks
         self.worker: Optional[FollowWorker] = None; self.window: Optional[MicrocolonyDialog] = None; self.generation = 0; self.shown_position = None
         page.track_requested.connect(self.track); page.hour_changed.connect(self.on_hour_changed)
-        page.window_requested.connect(self.open_window); page.export_requested.connect(self.export)
+        page.window_requested.connect(self.open_window); page.export_requested.connect(self.export); page.compare_requested.connect(self.open_compare)
+        self.outlines: Dict[tuple, list] = {}                      # (position, frame) -> the outlines drawn by hand
+        self.compare_window = None
         for topic, fn in (("experiment_loaded", self.on_changed), ("image_data_loaded", self.on_new_recording),
                           ("batch_segmentation_completed", self.on_segmented), ("view_index_changed", self.on_changed)):
             pub.subscribe(fn, topic)
@@ -198,6 +200,25 @@ class MicrocolonyController(QObject):
         film = MicrocolonyFilm(tracks, self.labels_at(p), info.pixel_um)        # its own film: the page's strip keeps its place
         self.window = MicrocolonyDialog(film, MP.entries(tracks), root=identity, parent=self.page.window())
         self.window.destroyed.connect(lambda *_a: setattr(self, "window", None)); self.window.show()
+
+    def open_compare(self):
+        """Manual selection next to automatic detection, on the segmented frame nearest the cursor."""
+        from .microcolony_compare_window import MicrocolonyCompareDialog
+        info = self.recording_info(); p = self.position(); array, frames = self.masks(p)
+        if info is None or not frames or not info.pixel_um:
+            return
+        dt_h = (info.dt_s or 0.0) / 3600.0; hour = lambda t: float(info.start_hour) + t * dt_h
+        t = min(frames, key=lambda f: abs(hour(f) - self.page.hour))
+        if self.compare_window is not None:
+            try:
+                self.compare_window.close()
+            except RuntimeError:
+                pass
+        key = (int(p), int(t))
+        self.compare_window = MicrocolonyCompareDialog(np.asarray(array[t, p, 0]), info.pixel_um, f"position {p}   frame {t}   {hour(t):g} h",
+                                                       outlines=self.outlines.get(key), on_change=lambda o, k=key: self.outlines.__setitem__(k, o),
+                                                       parent=self.page.window())
+        self.compare_window.destroyed.connect(lambda *_a: setattr(self, "compare_window", None)); self.compare_window.show()
 
     def export(self, kind: str):
         film = self.page.film

@@ -162,3 +162,14 @@ def test_the_recording_line_says_the_frame_step_in_plain_words():
     assert recording_words(info, position=2) == "E. coli run 2, 89 frames, 30 min apart, 0.0433 µm per px, 24 to 68 h after inoculation, position 2"
     info.dt_s = 3.0; info.n_frames = 35400; info.start_hour = 0.0
     assert recording_words(info, position=0) == "E. coli run 2, 35,400 frames, 3 s apart, 0.0433 µm per px, 0 to 29.5 h after inoculation, position 0"
+
+
+def test_manual_selection_is_asked_for_from_the_page():
+    from nd2_analyzer.ui.biofilms.stages.microcolony_page import MicrocolonyPage
+    p = MicrocolonyPage(); asked = []
+    p.compare_requested.connect(lambda: asked.append(True))
+    assert not p.compare_button.isEnabled()                    # nothing segmented yet: no frame to draw on
+    p.set_step_state("segment", "done", "6, position 0"); p.set_track_enabled(True)
+    assert p.compare_button.isEnabled() and p.compare_button.text() == "Manual selection"
+    p.compare_button.click()
+    assert asked == [True]

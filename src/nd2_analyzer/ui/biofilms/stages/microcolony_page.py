@@ -28,6 +28,7 @@ class MicrocolonyPage(QWidget):
     window_requested = Signal(object)          # the selected microcolony
     selection_changed = Signal(object)
     export_requested = Signal(str)             # "film" or "image"
+    compare_requested = Signal()               # manual selection next to automatic detection, on the frame at the cursor
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -80,6 +81,9 @@ class MicrocolonyPage(QWidget):
         self.image_button = QPushButton("Save image"); self.image_button.clicked.connect(lambda: self.export_requested.emit("image"))
         for k, b in enumerate((self.follow_button, self.play_button, self.film_button, self.image_button)):
             b.setEnabled(False); buttons.addWidget(b, k // 2, k % 2)
+        self.compare_button = QPushButton("Manual selection"); self.compare_button.setEnabled(False)
+        self.compare_button.setToolTip("Draw outlines around the microcolonies you see on the frame at the cursor, next to what the tool found")
+        self.compare_button.clicked.connect(self.compare_requested.emit); buttons.addWidget(self.compare_button, 2, 0, 1, 2)
         left.addLayout(buttons)
         self.film_canvas = PlotCanvas(size=(3.3, 1.25), min_height=115); self.film_canvas.setMaximumHeight(135); left.addWidget(self.film_canvas)
         left_box = QWidget(); left_box.setLayout(left); left_box.setFixedWidth(LEFT_COLUMN_PX); row.addWidget(left_box)
@@ -119,6 +123,7 @@ class MicrocolonyPage(QWidget):
 
     def set_track_enabled(self, on: bool):
         self.track_button.setEnabled(bool(on)); self.until_spin.setEnabled(bool(on))
+        self.compare_button.setEnabled(self.step_states["segment"][0] == "done")
 
     def set_until(self, first_h: float, last_h: float, step_h: float, value: Optional[float] = None):
         self.until_spin.blockSignals(True); self.until_spin.setRange(first_h, last_h); self.until_spin.setSingleStep(step_h)
