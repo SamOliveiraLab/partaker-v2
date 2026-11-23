@@ -1,5 +1,0 @@
-time,scope,aggregation,valid_positions,valid_pixels,live_only_percent,dead_only_percent,double_positive_percent,neither_percent,dead_channel_positive_percent
-0,cell,mean,2,4390901,0.0,65.76284909399843,34.23715090600158,0.0,100.0
-0,cell,pooled,2,4390901,0.0,67.03462455655456,32.96537544344543,0.0,100.0
-0,whole_frame,mean,2,8372224,0.0,61.76755423648483,38.232445763515166,0.0,100.0
-0,whole_frame,pooled,2,8372224,0.0,61.767554236484834,38.232445763515166,0.0,100.0

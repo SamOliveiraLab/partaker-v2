@@ -1,3 +1,0 @@
-position,time,time_hours,baseline_time,baseline_time_hours,cell_count,cell_area_pixels,live_only_percent,dead_only_percent,double_positive_percent,neither_percent,dead_positive_percent,cell_count_retention_percent,cell_area_retention_percent
-0,0,0.0,0,0.0,21598,1670699,0.0,60.44200660920968,39.55799339079032,0.0,100.0,100.0,100.0
-1,0,0.0,0,0.0,20427,2720202,0.0,71.08369157878717,28.916308421212836,0.0,100.0,100.0,100.0
