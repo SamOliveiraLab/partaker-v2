@@ -32,3 +32,18 @@ def window_to_frame(x: float, y: float, box: Optional[Dict[str, int]]) -> Tuple[
     if box is None:
         return int(x), int(y)
     return int(x) + box["col0"], int(y) + box["row0"]
+
+
+def inset_window(image, shown, box, margin=15):
+    """Hide an excluded frame margin while preserving source coordinates."""
+    height, width = image.shape[:2]
+    if min(height, width) <= 2 * margin:
+        return shown, box
+    prior = box or dict(row0=0, row1=height, col0=0, col1=width)
+    bounds = dict(row0=max(margin, prior["row0"]), row1=min(height - margin, prior["row1"]),
+                  col0=max(margin, prior["col0"]), col1=min(width - margin, prior["col1"]))
+    if bounds["row0"] >= bounds["row1"] or bounds["col0"] >= bounds["col1"]:
+        return shown, box
+    window = shown[bounds["row0"] - prior["row0"]:bounds["row1"] - prior["row0"],
+                   bounds["col0"] - prior["col0"]:bounds["col1"] - prior["col0"]]
+    return window, bounds

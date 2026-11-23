@@ -11,6 +11,41 @@ def analysis_image(image):
     return image[BORDER_PX:-BORDER_PX, BORDER_PX:-BORDER_PX]
 
 
+
+def detect_colony_contours(image, intensity_threshold, min_colony_size, kernel_size):
+    """Use the verifier's Otsu-adjusted threshold and filled outer contours."""
+    gray = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    otsu, _ = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    threshold = float(np.clip(otsu + intensity_threshold - 50, 0, 255))
+    _, binary = cv2.threshold(blurred, threshold, 255, cv2.THRESH_BINARY)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
+    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    return [contour for contour in contours if cv2.contourArea(contour) > min_colony_size]
+
+
+def detect_dark_regions(raw_image, roi_mask, threshold=128, min_area=1, kernel_size=1):
+    """Return dark components confined to the supplied ROI, preserving holes."""
+    roi = np.asarray(roi_mask, dtype=bool)
+    if roi.shape != raw_image.shape:
+        raise ValueError("ROI mask must match the image shape")
+    if not np.any(roi):
+        return np.zeros(roi.shape, dtype=np.uint8)
+    image = cv2.normalize(raw_image, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    image = cv2.GaussianBlur(image, (5, 5), 0)
+    mask = ((image <= threshold) & roi).astype(np.uint8)
+    kernel_size = max(1, int(kernel_size)) | 1
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel) & roi
+    mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_OPEN, kernel) & roi
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(mask.astype(np.uint8))
+    keep = np.zeros(count, dtype=np.uint8)
+    keep[1:] = stats[1:, cv2.CC_STAT_AREA] >= min_area
+    return keep[labels]
+
+
 def interior_colonies(colonies, shape):
     """Drop excluded centroids and give each remaining component its own ROI.
 

@@ -159,22 +159,3 @@ class MaturationPage(StagePage):
         th2 = f"Th2 {sh.th2_h:.1f} h" if sh.th2_h is not None else "Th2 not reached: growth has not stopped by the end of the run"
         self.status.say(f"Th1 matrix appears {sh.th1_h} h (SD {sh.th1_sd_h:.1f} h over {len(sh.th1_positions)} positions)   |   {th2}   |   "
                         f"matrix peak {mat.mean.max():.0f} % at {mat.hours[mat.mean.argmax()]:.0f} h   |   cell-area rate peak {rate.mean.max():.2f} % per h at {rate.hours[rate.mean.argmax()]:.0f} h")
-
-
-class DispersionPage(StagePage):
-    name = "Dispersion"
-    question = "not measured in this run: the recording ends before growth stops, and a cell that swims off leaves no trace in phase contrast. The candidate signals are shown."
-
-    def build_controls(self):
-        self.import_button = QPushButton("Import dispersion data..."); self.import_button.setToolTip("A table of a later recording, or literature, once there is one")
-        self.import_button.clicked.connect(lambda: self.status.say("Import for dispersion is a slot: tell me the table's columns and it will plot here."))
-        self.controls.addWidget(self.import_button); self.controls.addStretch()
-
-    def render(self):
-        if self.study is None: return
-        self.panel.render(P.draw_dispersion, self.study, self.hour)
-        cands = self.study.dispersion_candidates()
-        header = cands.get("header", "") if isinstance(cands, dict) else ""
-        items = cands.get("candidates", []) if isinstance(cands, dict) else (cands if isinstance(cands, list) else [])
-        words = [f"{c.get('key', '')} {c.get('title', '')}".strip() for c in items if isinstance(c, dict)]
-        self.status.say((header + "   Candidates: " + "; ".join(words)) if words else "Candidates: free cells (D1), microcolonies that vanish (D2); the others need the dye or a later run.")

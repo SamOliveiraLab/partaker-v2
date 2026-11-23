@@ -41,6 +41,7 @@ class Experiment:
             file_map: Optional[Dict] = None,
             import_mode: Optional[str] = None,
             biofilm: Optional[Dict] = None,
+            dispersion_timing: Optional[Dict] = None,
     ):
         """
         Initialize an experiment with analysis configuration.
@@ -72,6 +73,7 @@ class Experiment:
         # start_hour (h after inoculation at frame 0), channel_roles ({"0": "phase", ...}),
         # flow ({"present": bool, "shear_mpa": float or None, "direction": str or None}).
         self.biofilm = biofilm
+        self.dispersion_timing = dispersion_timing
 
         # Set defaults for optional parameters
         self.selected_positions = selected_positions if selected_positions is not None else [0, 1, 2, 3]
@@ -223,6 +225,7 @@ class Experiment:
             "component_intervals": self.component_intervals,
             "focus_loss_intervals": self.focus_loss_intervals,
             "biofilm": self.biofilm,
+            "dispersion_timing": self.dispersion_timing,
             "has_roi": roi_mask is not None,
             "has_registration": registration_offsets is not None,
             "crop_coordinates": crop_coordinates,
@@ -315,6 +318,7 @@ class Experiment:
             component_intervals=config.get("component_intervals"),
             focus_loss_intervals=config.get("focus_loss_intervals", []),
             biofilm=config.get("biofilm"),
+            dispersion_timing=config.get("dispersion_timing"),
         )
 
         # Load ROI mask if it exists

@@ -1,7 +1,6 @@
-"""The Biofilm Stages tab: four stage pages in the story's order, one cursor shared by all.
+"""The Biofilm Stages tab: recording-specific Seeding and Dispersion cursors.
 
-The Seeding page is the live one: it measures the loaded recording through its controller (Track, Measure, the film, the
-exports). The other three pages still read a study JSON until they are rebuilt the same way."""
+Seeding and Dispersion measure loaded recordings. Microcolonies and Maturation read a study JSON."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,7 +8,9 @@ from pathlib import Path
 from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QPushButton, QTabWidget, QVBoxLayout, QWidget
 
 from nd2_analyzer.analysis.biofilm_stages.study import BiofilmStudy
-from .pages import DispersionPage, MaturationPage, MicrocoloniesPage
+from .dispersion_controller import DispersionController
+from .dispersion_page import DispersionPage
+from .pages import MaturationPage, MicrocoloniesPage
 from .seeding_controller import SeedingController
 from .seeding_page import SeedingPage
 
@@ -33,9 +34,13 @@ class BiofilmStagesTab(QWidget):
         self.tabs = QTabWidget()
         self.seeding_page = SeedingPage()
         self.controller = SeedingController(self.seeding_page, self)
-        self.pages = [self.seeding_page, MicrocoloniesPage(), MaturationPage(), DispersionPage()]
+        self.dispersion_page = DispersionPage()
+        self.dispersion = DispersionController(self.dispersion_page, self)
+        self.pages = [self.seeding_page, MicrocoloniesPage(), MaturationPage(), self.dispersion_page]
         for p in self.pages:
-            self.tabs.addTab(p, getattr(p, "name", "Seeding")); p.hour_changed.connect(self._on_hour)
+            self.tabs.addTab(p, getattr(p, "name", "Seeding"))
+            if p not in (self.seeding_page, self.dispersion_page):
+                p.hour_changed.connect(self._on_hour)
         self.tabs.currentChanged.connect(self._on_tab_shown)
         lay.addWidget(self.tabs, 1)
         self.setLayout(lay)
@@ -46,19 +51,21 @@ class BiofilmStagesTab(QWidget):
                 self.study_label.setText(f"default study could not be read: {exc}")
         self.tabs.setCurrentIndex(0); self.study_row.setVisible(False)
 
-    def connect_main_window(self, set_frame=None, tracking_widget=None):
+    def connect_main_window(self, set_frame=None, tracking_widget=None, open_experiment=None, set_view=None):
         """The main window gives two callbacks: set_frame(frame) moves the view area's T slider, tracking_widget() returns
         the tracking widget (its tracks are used when the Seeding page has not tracked the position itself)."""
         self.controller.connect_main_window(set_frame=set_frame, tracking_widget=tracking_widget)
+        self.dispersion.open_experiment = open_experiment
+        self.dispersion.set_view = set_view
 
     def follow_frame(self, frame: int):
-        """The view area's T slider moved: the cursor follows it, on the Seeding strip now and on the other pages when
-        they are shown. The strip does not call back, so a move that came from the strip ends here."""
+        """Only the active recording page follows the viewer's frame."""
+        if self.tabs.currentWidget() is not self.seeding_page:
+            return
         info = self.seeding_page.info
         if info is None or not info.dt_s:
             return
         h = float(info.start_hour) + int(frame) * float(info.dt_s) / 3600.0
-        self.shared_hour = h
         if self.seeding_page.strip.cursor_h is None or abs(self.seeding_page.strip.cursor_h - h) > 1e-9:
             self.seeding_page.set_hour(h)
 
@@ -81,15 +88,15 @@ class BiofilmStagesTab(QWidget):
         if path: self.load_study(path)
 
     def _on_hour(self, h):
-        """One cursor for all four pages. Only the page on screen is redrawn now; the others take the hour when they are
-        shown, so Play on the Seeding strip does not redraw three hidden study pages eight times a second."""
+        """Share study hours only between the Microcolonies and Maturation study pages."""
         self.shared_hour = float(h)
         shown = self.tabs.currentWidget()
-        if shown is not self.sender() and shown is not None:
+        if shown is not self.sender() and shown in self.pages[1:3]:
             shown.set_hour(h)
 
     def _on_tab_shown(self, _index):
         shown = self.tabs.currentWidget()
-        self.study_row.setVisible(shown is not self.seeding_page)
-        if shown is not None and self.shared_hour is not None and getattr(shown, "hour", None) != self.shared_hour:
+        self.dispersion.refresh()
+        self.study_row.setVisible(shown not in (self.seeding_page, self.dispersion_page))
+        if shown in self.pages[1:3] and self.shared_hour is not None and getattr(shown, "hour", None) != self.shared_hour:
             shown.set_hour(self.shared_hour)

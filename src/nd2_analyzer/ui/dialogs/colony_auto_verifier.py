@@ -1395,9 +1395,9 @@ class VerifyColoniesDialog(QDialog):
         controls.setContentsMargins(0, 0, 0, 0)
         controls.setSpacing(10)
         for name, label, low, high, default in (
-            ("threshold", "Dark cell detection", 0, 100, 24),
-            ("min_area", "Minimum area", 1, 1000, 36),
-            ("kernel", "Smoothing", 1, 31, 3),
+            ("threshold", "Dark cell detection", 0, 100, 50),
+            ("min_area", "Minimum area", 1, 1000, 1),
+            ("kernel", "Smoothing", 1, 31, 1),
         ):
             header = QHBoxLayout()
             header.addWidget(QLabel(label))
@@ -2260,9 +2260,9 @@ class VerifyColoniesDialog(QDialog):
         self.min_size_slider.setValue(int(self.params.get("min_size", 1)))
         self.threshold_slider.setValue(int(self.params.get("threshold", 50)))
         self.kernel_slider.setValue(int(self.params.get("kernel", 1)))
-        self.inner_threshold_slider.setValue(int(self.params.get("inner_threshold", 24)))
-        self.inner_min_area_slider.setValue(int(self.params.get("inner_min_area", 36)))
-        self.inner_kernel_slider.setValue(int(self.params.get("inner_kernel", 3)))
+        self.inner_threshold_slider.setValue(int(self.params.get("inner_threshold", 50)))
+        self.inner_min_area_slider.setValue(int(self.params.get("inner_min_area", 1)))
+        self.inner_kernel_slider.setValue(int(self.params.get("inner_kernel", 1)))
         self.opacity_slider.setValue(35)
         self.view_mode_combo.setCurrentText("Overlay")
 
