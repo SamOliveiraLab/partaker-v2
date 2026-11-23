@@ -138,38 +138,11 @@ class ColonySeparator:
         Detect colonies using threshold + contour analysis
         """
 
-        img = raw_image
+        from nd2_analyzer.analysis.colony_regions import detect_colony_contours
 
-        # normalize to uint8 if needed
-        img = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-
-        # Smooths image using Gaussian blur before thresholding
-        img_blur = cv2.GaussianBlur(img, (5, 5), 0)
-
-        # threshold
-        #_, thresh = cv2.threshold(img_blur, self.intensity_threshold, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        ret, _ = cv2.threshold(img_blur,0,255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-        adjusted = ret + (self.intensity_threshold - 50)
-        adjusted = np.clip(adjusted, 0, 255)
-
-        _, thresh = cv2.threshold(img_blur, adjusted,255, cv2.THRESH_BINARY)
-
-        # morphological closing
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (self.kernel_size, self.kernel_size))
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
-
-        thresh_grouped = thresh
-        # find contours
-        contours, _ = cv2.findContours(
-            thresh_grouped,
-            cv2.RETR_EXTERNAL,
-            cv2.CHAIN_APPROX_SIMPLE
+        contours = detect_colony_contours(
+            raw_image, self.intensity_threshold, self.min_colony_size, self.kernel_size
         )
-
-        min_area = self.min_colony_size
-        contours = [c for c in contours if cv2.contourArea(c) > min_area]
 
         colonies = []
         colony_id = 1
@@ -230,22 +203,9 @@ class ColonySeparator:
     @staticmethod
     def detect_dark_regions(raw_image, roi_mask, threshold, min_area, kernel_size):
         """Return dark components confined to the supplied ROI, preserving holes."""
-        roi = np.asarray(roi_mask, dtype=bool)
-        if roi.shape != raw_image.shape:
-            raise ValueError("ROI mask must match the image shape")
-        if not np.any(roi):
-            return np.zeros(roi.shape, dtype=np.uint8)
-        image = cv2.normalize(raw_image, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-        image = cv2.GaussianBlur(image, (5, 5), 0)
-        mask = ((image <= threshold) & roi).astype(np.uint8)
-        kernel_size = max(1, int(kernel_size)) | 1
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel) & roi
-        mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_OPEN, kernel) & roi
-        count, labels, stats, _ = cv2.connectedComponentsWithStats(mask.astype(np.uint8))
-        keep = np.zeros(count, dtype=np.uint8)
-        keep[1:] = stats[1:, cv2.CC_STAT_AREA] >= min_area
-        return keep[labels]
+        from nd2_analyzer.analysis.colony_regions import detect_dark_regions
+
+        return detect_dark_regions(raw_image, roi_mask, threshold, min_area, kernel_size)
 
     def update_parameters(self,
                           intensity_threshold: float = None,

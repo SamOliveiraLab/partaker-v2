@@ -37,6 +37,11 @@ class ViewAreaWidget(QWidget):
         self.current_p = 0
         self.current_c = 0
         self.current_mode = "normal"  # normal, segmented, or labeled
+        self.dispersion_overlay = None
+        self._dispersion_display = None
+        self._dispersion_zoom = 1.0
+        self._dispersion_center = (0.5, 0.5)
+        self._dispersion_drag = None
         self._display_pixmap = None
         self._display_image_rect = QRectF()
         self.current_model = None
@@ -381,9 +386,23 @@ class ViewAreaWidget(QWidget):
         Args:
             image: Processed image array ready for display
         """
-        from nd2_analyzer.ui.widgets.view_roi import roi_window
+        from nd2_analyzer.ui.widgets.view_roi import inset_window, roi_window
         normalize = self.normalize_checkbox.isChecked()
         shown, self._view_box = roi_window(image, self.view_roi)
+        if image is self._dispersion_display:
+            shown, self._view_box = inset_window(image, shown, self._view_box)
+        if image is self._dispersion_display and self._dispersion_zoom > 1:
+            height, width = shown.shape[:2]
+            h, w = max(1, round(height / self._dispersion_zoom)), max(1, round(width / self._dispersion_zoom))
+            cx, cy = self._dispersion_center
+            x = max(0, min(width - w, round(width * cx - w / 2)))
+            y = max(0, min(height - h, round(height * cy - h / 2)))
+            self._dispersion_center = ((x + w / 2) / width, (y + h / 2) / height)
+            shown = shown[y:y + h, x:x + w]
+            if self._view_box is not None:
+                x += self._view_box["col0"]
+                y += self._view_box["row0"]
+            self._view_box = dict(col0=x, col1=x + w, row0=y, row1=y + h)
         processed_img, width, height, bytes_per_line, qt_format = (
             self._prepare_image_for_display(shown, normalize)
         )
@@ -413,9 +432,42 @@ class ViewAreaWidget(QWidget):
         )
 
     def eventFilter(self, watched, event):
-        if watched is self.image_label and event.type() in (QEvent.Resize, QEvent.ContentsRectChange):
-            self._fit_display_pixmap()
+        if watched is self.image_label:
+            if event.type() in (QEvent.Resize, QEvent.ContentsRectChange):
+                self._fit_display_pixmap()
+            if self._dispersion_display is not None and not self.manual_selection_active:
+                if self._dispersion_gesture(event):
+                    return True
         return super().eventFilter(watched, event)
+
+    def _dispersion_gesture(self, event):
+        kind = event.type()
+        if kind == QEvent.Wheel and event.angleDelta().y():
+            factor = 1.25 if event.angleDelta().y() > 0 else 0.8
+            self._dispersion_zoom = max(1, min(8, self._dispersion_zoom * factor))
+        elif kind == QEvent.MouseButtonDblClick and event.button() == Qt.LeftButton:
+            self._dispersion_zoom = 1.0
+            self._dispersion_center = (0.5, 0.5)
+            self._dispersion_drag = None
+        elif kind == QEvent.MouseButtonPress and event.button() == Qt.LeftButton and self._dispersion_zoom > 1:
+            self._dispersion_drag = event.position()
+            return True
+        elif kind == QEvent.MouseMove and self._dispersion_drag is not None:
+            delta = event.position() - self._dispersion_drag
+            self._dispersion_drag = event.position()
+            rect = self._display_image_rect
+            cx, cy = self._dispersion_center
+            self._dispersion_center = (
+                cx - delta.x() / (max(1, rect.width()) * self._dispersion_zoom),
+                cy - delta.y() / (max(1, rect.height()) * self._dispersion_zoom),
+            )
+        elif kind == QEvent.MouseButtonRelease and self._dispersion_drag is not None:
+            self._dispersion_drag = None
+            return True
+        else:
+            return False
+        self._create_qimage_and_display(self._dispersion_display)
+        return True
 
     def _image_coordinates_from_display(self, point):
         rect = self._display_image_rect
@@ -469,6 +521,16 @@ class ViewAreaWidget(QWidget):
         display_image = self._apply_tracked_cell_highlighting(
             display_image, time, position, channel, mode
         )
+
+        self._dispersion_display = None
+        if mode == "normal" and self.dispersion_overlay is not None:
+            overlay = self.dispersion_overlay(position, time, channel)
+            if overlay is not None and overlay.shape[:2] == image.shape[:2]:
+                display_image = self._dispersion_display = overlay
+        if self._dispersion_display is None:
+            self._dispersion_zoom = 1.0
+            self._dispersion_center = (0.5, 0.5)
+            self._dispersion_drag = None
 
         # Display the processed image
         self._create_qimage_and_display(display_image)

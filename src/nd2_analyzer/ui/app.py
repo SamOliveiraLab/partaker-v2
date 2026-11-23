@@ -79,6 +79,7 @@ class App(QMainWindow):
 
         # Initialize tabs based on analysis mode
         self.tab_widget = QTabWidget()
+        self.tab_widget.currentChanged.connect(self.on_dispersion_tab_change)
         if self.current_analysis_mode == AnalysisMode.SINGLE_CELL:
             self.init_single_cell_tabs()
         elif self.current_analysis_mode == AnalysisMode.BIOFILM_CLOUD:
@@ -137,7 +138,12 @@ class App(QMainWindow):
         self.biofilm_stages_tab.connect_main_window(
             set_frame=lambda frame: self.viewArea.slider_t.setValue(self.viewArea._map_frame_to_slider(frame)),
             tracking_widget=lambda: getattr(getattr(self, "trackingTab", None), "tracking_widget", None),
+            open_experiment=lambda: self.show_experiment_dialog(dispersion=True),
+            set_view=self.show_dispersion_frame,
         )
+        dispersion = self.biofilm_stages_tab.dispersion
+        dispersion.refresh_view = self.viewArea.refresh_view
+        self.viewArea.dispersion_overlay = dispersion.overlay
         # and the other way: the stage strip's cursor follows the T slider
         self.viewArea.slider_t.valueChanged.connect(
             lambda v: self.biofilm_stages_tab.follow_frame(self.viewArea._map_slider_to_frame(v)))
@@ -519,6 +525,9 @@ class App(QMainWindow):
         if new_mode == self.current_analysis_mode:
             return
 
+        if self.current_analysis_mode == AnalysisMode.BIOFILM_CLOUD:
+            self.biofilm_stages_tab.dispersion.cancel()
+            self.viewArea.dispersion_overlay = None
         self.current_analysis_mode = new_mode
         self.setWindowTitle(f"Partaker 3 - {new_mode.display_name}")
 
@@ -530,8 +539,33 @@ class App(QMainWindow):
         elif new_mode == AnalysisMode.BIOFILM_CLOUD:
             self.init_biofilm_cloud_tabs()
 
-    def show_experiment_dialog(self):
-        experiment = ExperimentDialog(parent=self)
+    def on_dispersion_tab_change(self, _index):
+        if self.viewArea.dispersion_overlay is not None:
+            self.viewArea.refresh_view()
+
+    def show_dispersion_frame(self, position, frame, channel):
+        from PySide6.QtCore import QSignalBlocker
+
+        view = self.viewArea
+        sliders = (view.slider_p, view.slider_c, view.slider_t)
+        values = (position, channel, view._map_frame_to_slider(frame))
+        if all(slider.value() == value for slider, value in zip(sliders, values)):
+            return
+        # Commit all coordinates before publishing the new view index.
+        blockers = [QSignalBlocker(slider) for slider in sliders]
+        try:
+            for slider, value in zip(sliders, values):
+                slider.setValue(value)
+        finally:
+            for blocker in blockers:
+                blocker.unblock()
+        view.p_label.setText(f"P: {view.slider_p.value()}")
+        view.c_label.setText(f"C: {view.slider_c.value()}")
+        view.on_slider_changed()
+        self.biofilm_stages_tab.follow_frame(view.current_t)
+
+    def show_experiment_dialog(self, *, dispersion=False):
+        experiment = ExperimentDialog(parent=self, dispersion=dispersion)
         experiment.exec_()
 
     def show_about_dialog(self):
@@ -737,6 +771,8 @@ class App(QMainWindow):
                     print(f"Restored registration offsets with shape {registration_offsets.shape}")
 
                 pub.sendMessage("image_data_loaded", image_data=image_data)
+                if hasattr(self, "biofilm_stages_tab"):
+                    self.biofilm_stages_tab.dispersion.on_experiment(experiment)
 
                 # Restore ROI if it exists
                 if roi_mask is not None:

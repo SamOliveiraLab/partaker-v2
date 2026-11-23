@@ -1,0 +1,1648 @@
+{
+  "schema_version": 1,
+  "run_id": "ba44b359-5cdf-4c5d-9d44-475280a98c5a",
+  "dataset_id": "7fa8247dff9ff1dc4ddd477a3a67f68afdd41791904c4a4eea0e94fdf2cb28d0",
+  "sample_id": "a",
+  "treatment": "",
+  "analysis_mode": "live_dead",
+  "started_at_utc": "2026-11-05T23:37:05.366958+00:00",
+  "status": "complete",
+  "sources": [
+    {
+      "path": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/ecoli-oct-19-2026 (combinatory)/viability-overnight/non-induced/live-dead/tween-ch8/10X/PHC-P1.tif",
+      "size_bytes": 11300576,
+      "modified_time_ns": 1792801798000000000
+    },
+    {
+      "path": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/ecoli-oct-19-2026 (combinatory)/viability-overnight/non-induced/live-dead/tween-ch8/10X/PHC-P2.tif",
+      "size_bytes": 11291596,
+      "modified_time_ns": 1792801996000000000
+    },
+    {
+      "path": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/ecoli-oct-19-2026 (combinatory)/viability-overnight/non-induced/live-dead/tween-ch8/10X/RFP-P1.tif",
+      "size_bytes": 9939608,
+      "modified_time_ns": 1792801844000000000
+    },
+    {
+      "path": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/ecoli-oct-19-2026 (combinatory)/viability-overnight/non-induced/live-dead/tween-ch8/10X/RFP-P2.tif",
+      "size_bytes": 10448614,
+      "modified_time_ns": 1792802038000000000
+    },
+    {
+      "path": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/ecoli-oct-19-2026 (combinatory)/viability-overnight/non-induced/live-dead/tween-ch8/10X/GFP-P1.tif",
+      "size_bytes": 10164519,
+      "modified_time_ns": 1792801928000000000
+    },
+    {
+      "path": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/ecoli-oct-19-2026 (combinatory)/viability-overnight/non-induced/live-dead/tween-ch8/10X/GFP-P2.tif",
+      "size_bytes": 7276672,
+      "modified_time_ns": 1792802142000000000
+    }
+  ],
+  "source_dimensions": [
+    1,
+    2,
+    3,
+    2044,
+    2048
+  ],
+  "source_axes": "TPCYX",
+  "source_dtype": "uint16",
+  "tiff_file_map": {
+    "0,0,0": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/ecoli-oct-19-2026 (combinatory)/viability-overnight/non-induced/live-dead/tween-ch8/10X/PHC-P1.tif",
+    "1,0,0": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/ecoli-oct-19-2026 (combinatory)/viability-overnight/non-induced/live-dead/tween-ch8/10X/PHC-P2.tif",
+    "0,0,1": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/ecoli-oct-19-2026 (combinatory)/viability-overnight/non-induced/live-dead/tween-ch8/10X/RFP-P1.tif",
+    "1,0,1": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/ecoli-oct-19-2026 (combinatory)/viability-overnight/non-induced/live-dead/tween-ch8/10X/RFP-P2.tif",
+    "0,0,2": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/ecoli-oct-19-2026 (combinatory)/viability-overnight/non-induced/live-dead/tween-ch8/10X/GFP-P1.tif",
+    "1,0,2": "/Volumes/Evans_Drive/TIFF_Timepoints/Peptide-Antibiotic/After-cell-viability-AMP-Experiments/RFP-Ecoli/ecoli-oct-19-2026 (combinatory)/viability-overnight/non-induced/live-dead/tween-ch8/10X/GFP-P2.tif"
+  },
+  "tiff_source_axis_values": {
+    "positions": [
+      0,
+      1
+    ],
+    "channels": [
+      0,
+      1,
+      2
+    ],
+    "times": [
+      0
+    ],
+    "interpretation": "Loaded position/channel/time indices refer to these sorted source IDs; stacked TIFF time is its zero-based page index."
+  },
+  "tiff_import_mode": "batch_tiff",
+  "source_mapping": "For directory TIFFs use the stored file map; for stacks use loader time index; otherwise use T/P/C indices in the source dataset.",
+  "channel_assignments": {
+    "live": 2,
+    "dead": 1,
+    "cell": 0
+  },
+  "configured_channel_names": {
+    "mcherry": "mCherry",
+    "yfp": "YFP",
+    "1": "mCherry",
+    "2": "YFP"
+  },
+  "pixel_calibration": {
+    "x_um": null,
+    "y_um": null,
+    "status": "unavailable",
+    "morphology_fallback_um": 0.064971092928405,
+    "fluorescence_morphology_radius_pixels": null
+  },
+  "transforms": {
+    "crop_xywh": null,
+    "registration_offsets_xy_by_time": null,
+    "application_order": [
+      "crop",
+      "registration"
+    ],
+    "registration_implementation": "ShiftedImage_2D_numba",
+    "registration_sampling": "Output (y,x) samples cropped input (y-YShift,x-XShift), with nearest-edge padding.",
+    "coordinate_space": "cropped_registered_analysis_frame",
+    "bounding_box_maximum": "exclusive"
+  },
+  "segmentation": {
+    "cell_channel": 0,
+    "cell_view_type": "Phase Contrast",
+    "model_name": "omnipose_bact_phase",
+    "source": "partaker_segmented_mask",
+    "fluorescence_cell_threshold": 165,
+    "fluorescence_cell_morphology_radius_pixels": 5,
+    "cell_ids": "frame-specific segmentation labels; not tracked identities"
+  },
+  "processing": {
+    "threshold_uint8": null,
+    "threshold_raw_equivalent": null,
+    "threshold_corrected_equivalent": null,
+    "black_point_raw": 1303.0,
+    "white_point_raw": 38502.00390625,
+    "window_source": "triangle_raw_intensity",
+    "smoothing_sigma": 0.0,
+    "background_subtraction": false,
+    "background_method": "none",
+    "background_margin_pixels": 0,
+    "background_upper_cutoffs": [],
+    "background_include_cells": false,
+    "background_signal_thresholds": [],
+    "background_exclusion_rule": "Union of selected raw-channel threshold masks and optional cell footprints, expanded by the margin",
+    "background_samples": [],
+    "background_sample_definition": "Exactly three non-overlapping integer rectangles per frame/channel; x,y,width,height; upper bounds exclusive; sample finite original intensities before smoothing; subtract pooled mean",
+    "background_sample_disagreement_rule": "Warn if (max sample mean - min sample mean) / abs(pooled mean) exceeds 0.20; warning does not block confirmation",
+    "background_frames": [],
+    "background_reference_time": null,
+    "background_sigma": null,
+    "morphology_enabled": false,
+    "threshold_rule": "finite raw intensity > shared surface",
+    "accepted_setup": {
+      "positions": [
+        0,
+        1
+      ],
+      "time_start": 0,
+      "time_end": 0,
+      "drop_frame_zero": false,
+      "live_channel": 2,
+      "dead_channel": 1,
+      "threshold_uint8": 40,
+      "processing_black_point_raw": 1303.0,
+      "processing_white_point_raw": 38502.00390625,
+      "smoothing_sigma": 0.0,
+      "preview_position": 0,
+      "representative_timepoints": [
+        0
+      ],
+      "sampled_frame_keys": [
+        [
+          0,
+          0,
+          2
+        ],
+        [
+          0,
+          0,
+          1
+        ],
+        [
+          0,
+          1,
+          2
+        ],
+        [
+          0,
+          1,
+          1
+        ]
+      ],
+      "analysis_mode": "live_dead",
+      "capture_interval_value": 24.0,
+      "capture_interval_unit": "hr",
+      "processing_window_source": "triangle_raw_intensity",
+      "threshold_rule": "finite raw intensity > shared surface",
+      "threshold_method": "triangle_shared_midpoint",
+      "triangle_background_sampling": "finite pixels where saved cell labels equal zero",
+      "triangle_background_margin_pixels": 0,
+      "background_enabled": false,
+      "background_margin_pixels": 0,
+      "background_upper_cutoffs": [],
+      "background_include_cells": false,
+      "background_signal_thresholds": [],
+      "background_method": "none",
+      "background_samples": []
+    },
+    "threshold_method": "triangle_shared_midpoint",
+    "triangle_settings": {
+      "hist_bins": 2048,
+      "peak_sigma_bins": 2.0,
+      "peak_prominence_fraction": 0.03,
+      "peak_distance_bins": 12,
+      "block_triangle": "rightmost significant peak, basin-restricted longer tail",
+      "cell_triangle": "tallest significant peak, forced left tail",
+      "selection": "lower arithmetic mean of nine midpoints; tie lower channel index",
+      "interpolation": "bilinear at actual block centers, constant edge extension",
+      "threshold_rule": "finite raw intensity > shared surface",
+      "background_sampling": "finite pixels where saved cell labels equal zero",
+      "background_margin_pixels": 0,
+      "background_bin_range": "eligible background pixels per channel/frame",
+      "cell_bin_range": "all finite original pixels per channel/frame",
+      "otsu_used": false,
+      "background_subtraction": false,
+      "smoothing_sigma": 0
+    },
+    "triangle_frames": [
+      {
+        "time": 0,
+        "position": 0,
+        "settings": {
+          "hist_bins": 2048,
+          "peak_sigma_bins": 2.0,
+          "peak_prominence_fraction": 0.03,
+          "peak_distance_bins": 12,
+          "block_triangle": "rightmost significant peak, basin-restricted longer tail",
+          "cell_triangle": "tallest significant peak, forced left tail",
+          "selection": "lower arithmetic mean of nine midpoints; tie lower channel index",
+          "interpolation": "bilinear at actual block centers, constant edge extension",
+          "threshold_rule": "finite raw intensity > shared surface",
+          "background_sampling": "finite pixels where saved cell labels equal zero",
+          "background_margin_pixels": 0,
+          "background_bin_range": "eligible background pixels per channel/frame",
+          "cell_bin_range": "all finite original pixels per channel/frame",
+          "otsu_used": false,
+          "background_subtraction": false,
+          "smoothing_sigma": 0
+        },
+        "analysis_mode": "live_dead",
+        "shape": [
+          2044,
+          2048
+        ],
+        "selected_role": "live",
+        "selected_channel": 2,
+        "channel_indices": {
+          "live": 2,
+          "dead": 1
+        },
+        "shared_grid": [
+          [
+            6581.8651341199875,
+            5567.598464369774,
+            4251.888903260231
+          ],
+          [
+            7908.213856101036,
+            5968.340190529823,
+            4326.363029360771
+          ],
+          [
+            6638.607325434685,
+            5649.165364384651,
+            4092.301490187645
+          ]
+        ],
+        "channels": {
+          "live": {
+            "mean_midpoint": 5664.927084194289,
+            "block_references": [
+              [
+                9761.132892847061,
+                7732.599553346634,
+                5101.180431127548
+              ],
+              [
+                12413.830336809158,
+                8534.083005666733,
+                5250.1286833286285
+              ],
+              [
+                9874.617275476456,
+                7895.733353376389,
+                4782.005604982376
+              ]
+            ],
+            "midpoints": [
+              [
+                6581.8651341199875,
+                5567.598464369774,
+                4251.888903260231
+              ],
+              [
+                7908.213856101036,
+                5968.340190529823,
+                4326.363029360771
+              ],
+              [
+                6638.607325434685,
+                5649.165364384651,
+                4092.301490187645
+              ]
+            ],
+            "cell_triangle": {
+              "threshold": 3402.597375392914,
+              "peak": 4155.5564341545105,
+              "tail": 1481.5864434242249,
+              "index": 217,
+              "peak_index": 295,
+              "tail_index": 18,
+              "grade": "uni-modal"
+            },
+            "background_sampling": [
+              {
+                "block": 1,
+                "row": 0,
+                "column": 0,
+                "bounds_xyxy": [
+                  0,
+                  0,
+                  682,
+                  681
+                ],
+                "total_pixels": 464442,
+                "eligible_pixels": 312122,
+                "eligible_fraction": 0.672036551388548,
+                "excluded_cell_pixels": 152320,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 2,
+                "row": 0,
+                "column": 1,
+                "bounds_xyxy": [
+                  682,
+                  0,
+                  1365,
+                  681
+                ],
+                "total_pixels": 465123,
+                "eligible_pixels": 90317,
+                "eligible_fraction": 0.1941787441171475,
+                "excluded_cell_pixels": 374806,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 3,
+                "row": 0,
+                "column": 2,
+                "bounds_xyxy": [
+                  1365,
+                  0,
+                  2048,
+                  681
+                ],
+                "total_pixels": 465123,
+                "eligible_pixels": 82377,
+                "eligible_fraction": 0.1771079907895331,
+                "excluded_cell_pixels": 382746,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 4,
+                "row": 1,
+                "column": 0,
+                "bounds_xyxy": [
+                  0,
+                  681,
+                  682,
+                  1362
+                ],
+                "total_pixels": 464442,
+                "eligible_pixels": 381721,
+                "eligible_fraction": 0.8218916463196696,
+                "excluded_cell_pixels": 82721,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 5,
+                "row": 1,
+                "column": 1,
+                "bounds_xyxy": [
+                  682,
+                  681,
+                  1365,
+                  1362
+                ],
+                "total_pixels": 465123,
+                "eligible_pixels": 316882,
+                "eligible_fraction": 0.6812864554107193,
+                "excluded_cell_pixels": 148241,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 6,
+                "row": 1,
+                "column": 2,
+                "bounds_xyxy": [
+                  1365,
+                  681,
+                  2048,
+                  1362
+                ],
+                "total_pixels": 465123,
+                "eligible_pixels": 325776,
+                "eligible_fraction": 0.700408279100367,
+                "excluded_cell_pixels": 139347,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 7,
+                "row": 2,
+                "column": 0,
+                "bounds_xyxy": [
+                  0,
+                  1362,
+                  682,
+                  2044
+                ],
+                "total_pixels": 465124,
+                "eligible_pixels": 357968,
+                "eligible_fraction": 0.7696184243341561,
+                "excluded_cell_pixels": 107156,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 8,
+                "row": 2,
+                "column": 1,
+                "bounds_xyxy": [
+                  682,
+                  1362,
+                  1365,
+                  2044
+                ],
+                "total_pixels": 465806,
+                "eligible_pixels": 308957,
+                "eligible_fraction": 0.663273981013555,
+                "excluded_cell_pixels": 156849,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 9,
+                "row": 2,
+                "column": 2,
+                "bounds_xyxy": [
+                  1365,
+                  1362,
+                  2048,
+                  2044
+                ],
+                "total_pixels": 465806,
+                "eligible_pixels": 339293,
+                "eligible_fraction": 0.7283998059277896,
+                "excluded_cell_pixels": 126513,
+                "nonfinite_background_pixels": 0
+              }
+            ],
+            "block_triangles": [
+              {
+                "threshold": 9761.132892847061,
+                "peak": 9023.484405755997,
+                "tail": 12137.21215415001,
+                "index": 1192,
+                "peak_index": 1088,
+                "tail_index": 1527,
+                "grade": "multi-modal"
+              },
+              {
+                "threshold": 7732.599553346634,
+                "peak": 7200.641509771347,
+                "tail": 8328.392562150955,
+                "index": 906,
+                "peak_index": 831,
+                "tail_index": 990,
+                "grade": "multi-modal"
+              },
+              {
+                "threshold": 5101.180431127548,
+                "peak": 4186.212596178055,
+                "tail": 6115.447100877762,
+                "index": 535,
+                "peak_index": 406,
+                "tail_index": 678,
+                "grade": "bi-modal"
+              },
+              {
+                "threshold": 12413.830336809158,
+                "peak": 11087.48161482811,
+                "tail": 15825.454589605331,
+                "index": 1566,
+                "peak_index": 1379,
+                "tail_index": 2047,
+                "grade": "multi-modal"
+              },
+              {
+                "threshold": 8534.083005666733,
+                "peak": 7817.71284031868,
+                "tail": 9158.247110128403,
+                "index": 1019,
+                "peak_index": 918,
+                "tail_index": 1107,
+                "grade": "multi-modal"
+              },
+              {
+                "threshold": 5250.1286833286285,
+                "peak": 4590.500709295273,
+                "tail": 5597.674605131149,
+                "index": 556,
+                "peak_index": 463,
+                "tail_index": 605,
+                "grade": "bi-modal"
+              },
+              {
+                "threshold": 9874.617275476456,
+                "peak": 8328.392562150955,
+                "tail": 11087.48161482811,
+                "index": 1208,
+                "peak_index": 990,
+                "tail_index": 1379,
+                "grade": "multi-modal"
+              },
+              {
+                "threshold": 7895.733353376389,
+                "peak": 6505.5496661663055,
+                "tail": 8463.155266523361,
+                "index": 929,
+                "peak_index": 733,
+                "tail_index": 1009,
+                "grade": "multi-modal"
+              },
+              {
+                "threshold": 4782.005604982376,
+                "peak": 3746.460613489151,
+                "tail": 6342.415866136551,
+                "index": 490,
+                "peak_index": 344,
+                "tail_index": 710,
+                "grade": "uni-modal"
+              }
+            ]
+          },
+          "dead": {
+            "mean_midpoint": 12516.68734327952,
+            "block_references": [
+              [
+                13538.540013313293,
+                15175.488465309143,
+                15726.098399162292
+              ],
+              [
+                14178.438044548035,
+                14386.776938438416,
+                15324.30196094513
+              ],
+              [
+                15934.437293052673,
+                14386.776938438416,
+                15205.25116443634
+              ]
+            ],
+            "midpoints": [
+              [
+                11849.506837844849,
+                12667.981063842773,
+                12943.286030769348
+              ],
+              [
+                12169.45585346222,
+                12273.62530040741,
+                12742.387811660767
+              ],
+              [
+                13047.455477714539,
+                12273.62530040741,
+                12682.862413406372
+              ]
+            ],
+            "cell_triangle": {
+              "threshold": 10160.473662376404,
+              "peak": 11990.879658699036,
+              "tail": 8344.94901561737,
+              "index": 143,
+              "peak_index": 266,
+              "tail_index": 21,
+              "grade": "uni-modal"
+            },
+            "background_sampling": [
+              {
+                "block": 1,
+                "row": 0,
+                "column": 0,
+                "bounds_xyxy": [
+                  0,
+                  0,
+                  682,
+                  681
+                ],
+                "total_pixels": 464442,
+                "eligible_pixels": 312122,
+                "eligible_fraction": 0.672036551388548,
+                "excluded_cell_pixels": 152320,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 2,
+                "row": 0,
+                "column": 1,
+                "bounds_xyxy": [
+                  682,
+                  0,
+                  1365,
+                  681
+                ],
+                "total_pixels": 465123,
+                "eligible_pixels": 90317,
+                "eligible_fraction": 0.1941787441171475,
+                "excluded_cell_pixels": 374806,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 3,
+                "row": 0,
+                "column": 2,
+                "bounds_xyxy": [
+                  1365,
+                  0,
+                  2048,
+                  681
+                ],
+                "total_pixels": 465123,
+                "eligible_pixels": 82377,
+                "eligible_fraction": 0.1771079907895331,
+                "excluded_cell_pixels": 382746,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 4,
+                "row": 1,
+                "column": 0,
+                "bounds_xyxy": [
+                  0,
+                  681,
+                  682,
+                  1362
+                ],
+                "total_pixels": 464442,
+                "eligible_pixels": 381721,
+                "eligible_fraction": 0.8218916463196696,
+                "excluded_cell_pixels": 82721,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 5,
+                "row": 1,
+                "column": 1,
+                "bounds_xyxy": [
+                  682,
+                  681,
+                  1365,
+                  1362
+                ],
+                "total_pixels": 465123,
+                "eligible_pixels": 316882,
+                "eligible_fraction": 0.6812864554107193,
+                "excluded_cell_pixels": 148241,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 6,
+                "row": 1,
+                "column": 2,
+                "bounds_xyxy": [
+                  1365,
+                  681,
+                  2048,
+                  1362
+                ],
+                "total_pixels": 465123,
+                "eligible_pixels": 325776,
+                "eligible_fraction": 0.700408279100367,
+                "excluded_cell_pixels": 139347,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 7,
+                "row": 2,
+                "column": 0,
+                "bounds_xyxy": [
+                  0,
+                  1362,
+                  682,
+                  2044
+                ],
+                "total_pixels": 465124,
+                "eligible_pixels": 357968,
+                "eligible_fraction": 0.7696184243341561,
+                "excluded_cell_pixels": 107156,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 8,
+                "row": 2,
+                "column": 1,
+                "bounds_xyxy": [
+                  682,
+                  1362,
+                  1365,
+                  2044
+                ],
+                "total_pixels": 465806,
+                "eligible_pixels": 308957,
+                "eligible_fraction": 0.663273981013555,
+                "excluded_cell_pixels": 156849,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 9,
+                "row": 2,
+                "column": 2,
+                "bounds_xyxy": [
+                  1365,
+                  1362,
+                  2048,
+                  2044
+                ],
+                "total_pixels": 465806,
+                "eligible_pixels": 339293,
+                "eligible_fraction": 0.7283998059277896,
+                "excluded_cell_pixels": 126513,
+                "nonfinite_background_pixels": 0
+              }
+            ],
+            "block_triangles": [
+              {
+                "threshold": 13538.540013313293,
+                "peak": 11231.930830955505,
+                "tail": 17988.063532829285,
+                "index": 370,
+                "peak_index": 215,
+                "tail_index": 669,
+                "grade": "uni-modal"
+              },
+              {
+                "threshold": 15175.488465309143,
+                "peak": 11842.06616306305,
+                "tail": 24595.382739067078,
+                "index": 480,
+                "peak_index": 256,
+                "tail_index": 1113,
+                "grade": "uni-modal"
+              },
+              {
+                "threshold": 15726.098399162292,
+                "peak": 13017.692778587341,
+                "tail": 23509.044220924377,
+                "index": 517,
+                "peak_index": 335,
+                "tail_index": 1040,
+                "grade": "bi-modal"
+              },
+              {
+                "threshold": 14178.438044548035,
+                "peak": 11708.134016990662,
+                "tail": 19773.82548046112,
+                "index": 413,
+                "peak_index": 247,
+                "tail_index": 789,
+                "grade": "uni-modal"
+              },
+              {
+                "threshold": 14386.776938438416,
+                "peak": 11961.116959571838,
+                "tail": 18895.8258562088,
+                "index": 427,
+                "peak_index": 264,
+                "tail_index": 730,
+                "grade": "uni-modal"
+              },
+              {
+                "threshold": 15324.30196094513,
+                "peak": 12615.896340370178,
+                "tail": 20324.43541431427,
+                "index": 490,
+                "peak_index": 308,
+                "tail_index": 826,
+                "grade": "uni-modal"
+              },
+              {
+                "threshold": 15934.437293052673,
+                "peak": 11946.23561000824,
+                "tail": 38494.5632314682,
+                "index": 531,
+                "peak_index": 263,
+                "tail_index": 2047,
+                "grade": "uni-modal"
+              },
+              {
+                "threshold": 14386.776938438416,
+                "peak": 11827.18481349945,
+                "tail": 19967.283024787903,
+                "index": 427,
+                "peak_index": 255,
+                "tail_index": 802,
+                "grade": "uni-modal"
+              },
+              {
+                "threshold": 15205.25116443634,
+                "peak": 12214.099902153015,
+                "tail": 20875.04534816742,
+                "index": 482,
+                "peak_index": 281,
+                "tail_index": 863,
+                "grade": "uni-modal"
+              }
+            ]
+          }
+        },
+        "composition": {
+          "cell": {
+            "total": 1670699,
+            "counts": [
+              0,
+              1009804,
+              660895,
+              0
+            ],
+            "categories": [
+              "live_only",
+              "dead_only",
+              "double_positive",
+              "neither"
+            ],
+            "percent": [
+              0.0,
+              60.44200660920968,
+              39.55799339079032,
+              0.0
+            ]
+          },
+          "whole_frame": {
+            "total": 4186112,
+            "counts": [
+              0,
+              1937446,
+              2248666,
+              0
+            ],
+            "categories": [
+              "live_only",
+              "dead_only",
+              "double_positive",
+              "neither"
+            ],
+            "percent": [
+              0.0,
+              46.28270815496575,
+              53.71729184503425,
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "time": 0,
+        "position": 1,
+        "settings": {
+          "hist_bins": 2048,
+          "peak_sigma_bins": 2.0,
+          "peak_prominence_fraction": 0.03,
+          "peak_distance_bins": 12,
+          "block_triangle": "rightmost significant peak, basin-restricted longer tail",
+          "cell_triangle": "tallest significant peak, forced left tail",
+          "selection": "lower arithmetic mean of nine midpoints; tie lower channel index",
+          "interpolation": "bilinear at actual block centers, constant edge extension",
+          "threshold_rule": "finite raw intensity > shared surface",
+          "background_sampling": "finite pixels where saved cell labels equal zero",
+          "background_margin_pixels": 0,
+          "background_bin_range": "eligible background pixels per channel/frame",
+          "cell_bin_range": "all finite original pixels per channel/frame",
+          "otsu_used": false,
+          "background_subtraction": false,
+          "smoothing_sigma": 0
+        },
+        "analysis_mode": "live_dead",
+        "shape": [
+          2044,
+          2048
+        ],
+        "selected_role": "live",
+        "selected_channel": 2,
+        "channel_indices": {
+          "live": 2,
+          "dead": 1
+        },
+        "shared_grid": [
+          [
+            1192.0522092580795,
+            1745.8559893369675,
+            1846.1135702133179
+          ],
+          [
+            2292.021096587181,
+            2229.9568798542023,
+            2142.1121423244476
+          ],
+          [
+            2089.5962666273117,
+            2079.0930914878845,
+            2172.666833639145
+          ]
+        ],
+        "channels": {
+          "live": {
+            "mean_midpoint": 1976.6075643698375,
+            "block_references": [
+              [
+                576.953406214714,
+                1684.56096637249,
+                1885.0761281251907
+              ],
+              [
+                2776.891180872917,
+                2652.7627474069595,
+                2477.0732723474503
+              ],
+              [
+                2372.0415209531784,
+                2351.035170674324,
+                2538.182654976845
+              ]
+            ],
+            "midpoints": [
+              [
+                1192.0522092580795,
+                1745.8559893369675,
+                1846.1135702133179
+              ],
+              [
+                2292.021096587181,
+                2229.9568798542023,
+                2142.1121423244476
+              ],
+              [
+                2089.5962666273117,
+                2079.0930914878845,
+                2172.666833639145
+              ]
+            ],
+            "cell_triangle": {
+              "threshold": 1807.151012301445,
+              "peak": 2101.9361943006516,
+              "tail": 311.38916289806366,
+              "index": 559,
+              "peak_index": 667,
+              "tail_index": 11,
+              "grade": "multi-modal"
+            },
+            "background_sampling": [
+              {
+                "block": 1,
+                "row": 0,
+                "column": 0,
+                "bounds_xyxy": [
+                  0,
+                  0,
+                  682,
+                  681
+                ],
+                "total_pixels": 464442,
+                "eligible_pixels": 458110,
+                "eligible_fraction": 0.9863664354214304,
+                "excluded_cell_pixels": 6332,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 2,
+                "row": 0,
+                "column": 1,
+                "bounds_xyxy": [
+                  682,
+                  0,
+                  1365,
+                  681
+                ],
+                "total_pixels": 465123,
+                "eligible_pixels": 202690,
+                "eligible_fraction": 0.43577720301941636,
+                "excluded_cell_pixels": 262433,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 3,
+                "row": 0,
+                "column": 2,
+                "bounds_xyxy": [
+                  1365,
+                  0,
+                  2048,
+                  681
+                ],
+                "total_pixels": 465123,
+                "eligible_pixels": 158911,
+                "eligible_fraction": 0.3416537131038456,
+                "excluded_cell_pixels": 306212,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 4,
+                "row": 1,
+                "column": 0,
+                "bounds_xyxy": [
+                  0,
+                  681,
+                  682,
+                  1362
+                ],
+                "total_pixels": 464442,
+                "eligible_pixels": 274372,
+                "eligible_fraction": 0.5907562192911063,
+                "excluded_cell_pixels": 190070,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 5,
+                "row": 1,
+                "column": 1,
+                "bounds_xyxy": [
+                  682,
+                  681,
+                  1365,
+                  1362
+                ],
+                "total_pixels": 465123,
+                "eligible_pixels": 101223,
+                "eligible_fraction": 0.2176263052998884,
+                "excluded_cell_pixels": 363900,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 6,
+                "row": 1,
+                "column": 2,
+                "bounds_xyxy": [
+                  1365,
+                  681,
+                  2048,
+                  1362
+                ],
+                "total_pixels": 465123,
+                "eligible_pixels": 89663,
+                "eligible_fraction": 0.1927726644349989,
+                "excluded_cell_pixels": 375460,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 7,
+                "row": 2,
+                "column": 0,
+                "bounds_xyxy": [
+                  0,
+                  1362,
+                  682,
+                  2044
+                ],
+                "total_pixels": 465124,
+                "eligible_pixels": 54360,
+                "eligible_fraction": 0.11687205992380527,
+                "excluded_cell_pixels": 410764,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 8,
+                "row": 2,
+                "column": 1,
+                "bounds_xyxy": [
+                  682,
+                  1362,
+                  1365,
+                  2044
+                ],
+                "total_pixels": 465806,
+                "eligible_pixels": 50608,
+                "eligible_fraction": 0.10864608871504446,
+                "excluded_cell_pixels": 415198,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 9,
+                "row": 2,
+                "column": 2,
+                "bounds_xyxy": [
+                  1365,
+                  1362,
+                  2048,
+                  2044
+                ],
+                "total_pixels": 465806,
+                "eligible_pixels": 75973,
+                "eligible_fraction": 0.16310008887820251,
+                "excluded_cell_pixels": 389833,
+                "nonfinite_background_pixels": 0
+              }
+            ],
+            "block_triangles": [
+              {
+                "threshold": 576.953406214714,
+                "peak": 439.45729529857635,
+                "tail": 811.8425956964493,
+                "index": 155,
+                "peak_index": 83,
+                "tail_index": 278,
+                "grade": "uni-modal"
+              },
+              {
+                "threshold": 1684.56096637249,
+                "peak": 1266.343629002571,
+                "tail": 1900.3534737825394,
+                "index": 735,
+                "peak_index": 516,
+                "tail_index": 848,
+                "grade": "multi-modal"
+              },
+              {
+                "threshold": 1885.0761281251907,
+                "peak": 1684.56096637249,
+                "tail": 2509.537631869316,
+                "index": 840,
+                "peak_index": 735,
+                "tail_index": 1167,
+                "grade": "multi-modal"
+              },
+              {
+                "threshold": 2776.891180872917,
+                "peak": 2507.6279636621475,
+                "tail": 3622.8741966485977,
+                "index": 1307,
+                "peak_index": 1166,
+                "tail_index": 1750,
+                "grade": "multi-modal"
+              },
+              {
+                "threshold": 2652.7627474069595,
+                "peak": 2490.4409497976303,
+                "tail": 4190.045654177666,
+                "index": 1242,
+                "peak_index": 1157,
+                "tail_index": 2047,
+                "grade": "multi-modal"
+              },
+              {
+                "threshold": 2477.0732723474503,
+                "peak": 2295.6547926664352,
+                "tail": 3187.4698454141617,
+                "index": 1150,
+                "peak_index": 1055,
+                "tail_index": 1522,
+                "grade": "multi-modal"
+              },
+              {
+                "threshold": 2372.0415209531784,
+                "peak": 2106.597640156746,
+                "tail": 3861.58272254467,
+                "index": 1095,
+                "peak_index": 956,
+                "tail_index": 1875,
+                "grade": "multi-modal"
+              },
+              {
+                "threshold": 2351.035170674324,
+                "peak": 2213.5390597581863,
+                "tail": 2755.884830594063,
+                "index": 1084,
+                "peak_index": 1012,
+                "tail_index": 1296,
+                "grade": "multi-modal"
+              },
+              {
+                "threshold": 2538.182654976845,
+                "peak": 2278.467778801918,
+                "tail": 3861.58272254467,
+                "index": 1182,
+                "peak_index": 1046,
+                "tail_index": 1875,
+                "grade": "multi-modal"
+              }
+            ]
+          },
+          "dead": {
+            "mean_midpoint": 13783.078210989634,
+            "block_references": [
+              [
+                12940.297535419464,
+                16990.7354722023,
+                19033.641942501068
+              ],
+              [
+                14629.453967571259,
+                20324.82958173752,
+                19661.548260211945
+              ],
+              [
+                21536.4234623909,
+                20820.07963514328,
+                21085.39216375351
+              ]
+            ],
+            "midpoints": [
+              [
+                10974.204644203186,
+                12999.423612594604,
+                14020.876847743988
+              ],
+              [
+                11818.782860279083,
+                14666.470667362213,
+                14334.830006599426
+              ],
+              [
+                15272.267607688904,
+                14914.095694065094,
+                15046.751958370209
+              ]
+            ],
+            "cell_triangle": {
+              "threshold": 9008.111752986908,
+              "peak": 10824.267664432526,
+              "tail": 7990.139012813568,
+              "index": 189,
+              "peak_index": 346,
+              "tail_index": 101,
+              "grade": "uni-modal"
+            },
+            "background_sampling": [
+              {
+                "block": 1,
+                "row": 0,
+                "column": 0,
+                "bounds_xyxy": [
+                  0,
+                  0,
+                  682,
+                  681
+                ],
+                "total_pixels": 464442,
+                "eligible_pixels": 458110,
+                "eligible_fraction": 0.9863664354214304,
+                "excluded_cell_pixels": 6332,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 2,
+                "row": 0,
+                "column": 1,
+                "bounds_xyxy": [
+                  682,
+                  0,
+                  1365,
+                  681
+                ],
+                "total_pixels": 465123,
+                "eligible_pixels": 202690,
+                "eligible_fraction": 0.43577720301941636,
+                "excluded_cell_pixels": 262433,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 3,
+                "row": 0,
+                "column": 2,
+                "bounds_xyxy": [
+                  1365,
+                  0,
+                  2048,
+                  681
+                ],
+                "total_pixels": 465123,
+                "eligible_pixels": 158911,
+                "eligible_fraction": 0.3416537131038456,
+                "excluded_cell_pixels": 306212,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 4,
+                "row": 1,
+                "column": 0,
+                "bounds_xyxy": [
+                  0,
+                  681,
+                  682,
+                  1362
+                ],
+                "total_pixels": 464442,
+                "eligible_pixels": 274372,
+                "eligible_fraction": 0.5907562192911063,
+                "excluded_cell_pixels": 190070,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 5,
+                "row": 1,
+                "column": 1,
+                "bounds_xyxy": [
+                  682,
+                  681,
+                  1365,
+                  1362
+                ],
+                "total_pixels": 465123,
+                "eligible_pixels": 101223,
+                "eligible_fraction": 0.2176263052998884,
+                "excluded_cell_pixels": 363900,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 6,
+                "row": 1,
+                "column": 2,
+                "bounds_xyxy": [
+                  1365,
+                  681,
+                  2048,
+                  1362
+                ],
+                "total_pixels": 465123,
+                "eligible_pixels": 89663,
+                "eligible_fraction": 0.1927726644349989,
+                "excluded_cell_pixels": 375460,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 7,
+                "row": 2,
+                "column": 0,
+                "bounds_xyxy": [
+                  0,
+                  1362,
+                  682,
+                  2044
+                ],
+                "total_pixels": 465124,
+                "eligible_pixels": 54360,
+                "eligible_fraction": 0.11687205992380527,
+                "excluded_cell_pixels": 410764,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 8,
+                "row": 2,
+                "column": 1,
+                "bounds_xyxy": [
+                  682,
+                  1362,
+                  1365,
+                  2044
+                ],
+                "total_pixels": 465806,
+                "eligible_pixels": 50608,
+                "eligible_fraction": 0.10864608871504446,
+                "excluded_cell_pixels": 415198,
+                "nonfinite_background_pixels": 0
+              },
+              {
+                "block": 9,
+                "row": 2,
+                "column": 2,
+                "bounds_xyxy": [
+                  1365,
+                  1362,
+                  2048,
+                  2044
+                ],
+                "total_pixels": 465806,
+                "eligible_pixels": 75973,
+                "eligible_fraction": 0.16310008887820251,
+                "excluded_cell_pixels": 389833,
+                "nonfinite_background_pixels": 0
+              }
+            ],
+            "block_triangles": [
+              {
+                "threshold": 12940.297535419464,
+                "peak": 10357.922256946564,
+                "tail": 17450.610521793365,
+                "index": 692,
+                "peak_index": 400,
+                "tail_index": 1202,
+                "grade": "bi-modal"
+              },
+              {
+                "threshold": 16990.7354722023,
+                "peak": 13302.891324520111,
+                "tail": 23039.861124515533,
+                "index": 1150,
+                "peak_index": 733,
+                "tail_index": 1834,
+                "grade": "multi-modal"
+              },
+              {
+                "threshold": 19033.641942501068,
+                "peak": 17521.36052942276,
+                "tail": 23906.548717975616,
+                "index": 1381,
+                "peak_index": 1210,
+                "tail_index": 1932,
+                "grade": "multi-modal"
+              },
+              {
+                "threshold": 14629.453967571259,
+                "peak": 11083.109835147858,
+                "tail": 24923.580077648163,
+                "index": 883,
+                "peak_index": 482,
+                "tail_index": 2047,
+                "grade": "multi-modal"
+              },
+              {
+                "threshold": 20324.82958173752,
+                "peak": 18688.73565530777,
+                "tail": 24163.01749563217,
+                "index": 1527,
+                "peak_index": 1342,
+                "tail_index": 1961,
+                "grade": "multi-modal"
+              },
+              {
+                "threshold": 19661.548260211945,
+                "peak": 17901.641820430756,
+                "tail": 23650.07994031906,
+                "index": 1452,
+                "peak_index": 1253,
+                "tail_index": 1903,
+                "grade": "multi-modal"
+              },
+              {
+                "threshold": 21536.4234623909,
+                "peak": 20537.079604625702,
+                "tail": 23986.142476558685,
+                "index": 1664,
+                "peak_index": 1551,
+                "tail_index": 1941,
+                "grade": "multi-modal"
+              },
+              {
+                "threshold": 20820.07963514328,
+                "peak": 19918.0170378685,
+                "tail": 22473.861063480377,
+                "index": 1583,
+                "peak_index": 1481,
+                "tail_index": 1770,
+                "grade": "multi-modal"
+              },
+              {
+                "threshold": 21085.39216375351,
+                "peak": 20510.54835176468,
+                "tail": 24145.329993724823,
+                "index": 1613,
+                "peak_index": 1548,
+                "tail_index": 1959,
+                "grade": "multi-modal"
+              }
+            ]
+          }
+        },
+        "composition": {
+          "cell": {
+            "total": 2720202,
+            "counts": [
+              0,
+              1933620,
+              786582,
+              0
+            ],
+            "categories": [
+              "live_only",
+              "dead_only",
+              "double_positive",
+              "neither"
+            ],
+            "percent": [
+              0.0,
+              71.08369157878717,
+              28.916308421212836,
+              0.0
+            ]
+          },
+          "whole_frame": {
+            "total": 4186112,
+            "counts": [
+              0,
+              3233872,
+              952240,
+              0
+            ],
+            "categories": [
+              "live_only",
+              "dead_only",
+              "double_positive",
+              "neither"
+            ],
+            "percent": [
+              0.0,
+              77.25240031800391,
+              22.747599681996086,
+              0.0
+            ]
+          }
+        }
+      }
+    ],
+    "triangle_report_directory": "triangle_midpoint/ba44b359-5cdf-4c5d-9d44-475280a98c5a"
+  },
+  "scope": {
+    "positions": [
+      0,
+      1
+    ],
+    "time_start": 0,
+    "time_end": 0,
+    "skipped_times": [],
+    "frame_zero_dropped": false,
+    "capture_interval_value": 24.0,
+    "capture_interval_unit": "hr",
+    "requested_frames": [
+      {
+        "time": 0,
+        "position": 0
+      },
+      {
+        "time": 0,
+        "position": 1
+      }
+    ]
+  },
+  "measurements": {
+    "raw_intensity": "ImageData.get() after crop/registration, before background correction, smoothing or uint8 conversion",
+    "corrected_intensity": "Raw minus per-frame/channel pooled manual-sample mean (or legacy cell-free median); negative values retained",
+    "whole_cell": "All finite fluorescence pixels in each cell footprint, independently of fluorescence threshold",
+    "positive_region": "Cell label intersected with the final fluorescence-positive mask",
+    "nonfinite_values": "Excluded; valid pixel counts and intensity statuses are exported",
+    "empty_positive_region": "Mean and sum are zero to match existing overlap-based metrics; status explicitly marks empty regions",
+    "ratio": "dead whole-cell mean divided by live whole-cell mean; nonpositive denominator or unavailable intensities yield null",
+    "overlap_fraction": "Intersection divided by its named denominator; zero denominators yield null"
+  },
+  "save_fluorescence_positive_masks": true,
+  "mask_format": {
+    "version": 1,
+    "bitorder": "little",
+    "flatten_order": "C",
+    "cell_labels": "integer label array, zero background; IDs preserved"
+  },
+  "csv_columns": [
+    "run_id",
+    "dataset_id",
+    "sample_id",
+    "treatment",
+    "analysis_mode",
+    "position",
+    "time",
+    "time_hours",
+    "cell_id",
+    "cell_channel",
+    "cell_area_pixels",
+    "cell_area_um2",
+    "centroid_x",
+    "centroid_y",
+    "bbox_x_min",
+    "bbox_y_min",
+    "bbox_x_max",
+    "bbox_y_max",
+    "live_channel",
+    "live_whole_cell_mean_intensity",
+    "live_whole_cell_integrated_intensity",
+    "live_whole_cell_valid_pixels",
+    "live_whole_cell_intensity_status",
+    "live_positive_area_pixels",
+    "live_positive_area_fraction",
+    "live_positive_valid_pixels",
+    "live_positive_mean_intensity",
+    "live_positive_integrated_intensity",
+    "live_positive_intensity_status",
+    "live_corrected_whole_cell_mean_intensity",
+    "live_corrected_whole_cell_integrated_intensity",
+    "live_corrected_whole_cell_valid_pixels",
+    "live_corrected_whole_cell_intensity_status",
+    "live_corrected_positive_mean_intensity",
+    "live_corrected_positive_integrated_intensity",
+    "live_corrected_positive_valid_pixels",
+    "live_corrected_positive_intensity_status",
+    "live_background_median",
+    "live_background_eligible_pixels",
+    "live_background_eligible_fraction",
+    "live_background_mad",
+    "live_background_status",
+    "live_background_mean",
+    "live_background_sd",
+    "live_background_method",
+    "dead_channel",
+    "dead_whole_cell_mean_intensity",
+    "dead_whole_cell_integrated_intensity",
+    "dead_whole_cell_valid_pixels",
+    "dead_whole_cell_intensity_status",
+    "dead_positive_area_pixels",
+    "dead_positive_area_fraction",
+    "dead_positive_valid_pixels",
+    "dead_positive_mean_intensity",
+    "dead_positive_integrated_intensity",
+    "dead_positive_intensity_status",
+    "dead_corrected_whole_cell_mean_intensity",
+    "dead_corrected_whole_cell_integrated_intensity",
+    "dead_corrected_whole_cell_valid_pixels",
+    "dead_corrected_whole_cell_intensity_status",
+    "dead_corrected_positive_mean_intensity",
+    "dead_corrected_positive_integrated_intensity",
+    "dead_corrected_positive_valid_pixels",
+    "dead_corrected_positive_intensity_status",
+    "dead_background_median",
+    "dead_background_eligible_pixels",
+    "dead_background_eligible_fraction",
+    "dead_background_mad",
+    "dead_background_status",
+    "dead_background_mean",
+    "dead_background_sd",
+    "dead_background_method",
+    "live_dead_intersection_pixels",
+    "live_dead_union_pixels",
+    "live_dead_intersection_over_union",
+    "live_positive_also_dead_fraction",
+    "dead_positive_also_live_fraction",
+    "dead_to_live_whole_cell_mean_ratio",
+    "ratio_status",
+    "corrected_dead_to_live_whole_cell_mean_ratio",
+    "corrected_ratio_status"
+  ],
+  "completed_frames": [
+    {
+      "time": 0,
+      "position": 0
+    },
+    {
+      "time": 0,
+      "position": 1
+    }
+  ],
+  "failed_frames": [],
+  "individual_cell_count": 42025,
+  "analysis_source_sha256": "d4ba722eded7cea02d4cf601cf75e4cce021b1f508a5e6e23af4c31390162029",
+  "mask_directory": "fluorescence_masks/ba44b359-5cdf-4c5d-9d44-475280a98c5a",
+  "finished_at_utc": "2026-11-05T23:42:25.363442+00:00",
+  "export_error": null,
+  "unfinished_frames": []
+}
