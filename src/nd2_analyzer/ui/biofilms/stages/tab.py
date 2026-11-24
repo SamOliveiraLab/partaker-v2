@@ -1,9 +1,9 @@
-"""The biofilm stages: four stage pages in the story's order, one cursor shared by all. In the main window the pages
-are tabs of the main bar (move_pages_to), right after Segmentation: biofilm mode is already the biofilm layer, so no
-"Biofilm Stages" tab sits around them. This object keeps their controllers and the shared cursor.
+"""The biofilm stages: four stage pages in the story's order. In the main window the pages are tabs of the main bar
+(move_pages_to), right after Segmentation: biofilm mode is already the biofilm layer, so no "Biofilm Stages" tab sits
+around them. This object keeps their controllers and the cursor.
 
-The Seeding, Microcolonies and Maturation pages are live: each measures the loaded recording through its controller
-(Track or Measure, the film, the exports). The Dispersion page still reads a study JSON until it is rebuilt the same way."""
+All four pages measure the loaded recording through their controllers. Seeding, Microcolonies and Maturation share one
+cursor that follows the view's T slider; Dispersion keeps its own cursor and moves the view to the frames it shows."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -15,7 +15,8 @@ from .microcolony_controller import MicrocolonyController
 from .microcolony_page import MicrocolonyPage
 from .growth_controller import GrowthController
 from .growth_page import GrowthPage
-from .pages import DispersionPage
+from .dispersion_controller import DispersionController
+from .dispersion_page import DispersionPage
 from .seeding_controller import SeedingController
 from .seeding_page import SeedingPage
 
@@ -50,9 +51,13 @@ class BiofilmStagesTab(QWidget):
         self.growth_controller.measured_changed.connect(self._share_th1)                      # one Th1 in the tool: the Maturation tab's
         self.microcolony_controller.metrics_changed.connect(self._share_microcolonies)        # Figure 5 b: cells in microcolonies, on the Maturation plot
         self.live_pages = (self.seeding_page, self.microcolony_page, self.growth_page)
-        self.pages = [self.seeding_page, self.microcolony_page, self.growth_page, DispersionPage()]
+        self.dispersion_page = DispersionPage()
+        self.dispersion = DispersionController(self.dispersion_page, self)
+        self.pages = [self.seeding_page, self.microcolony_page, self.growth_page, self.dispersion_page]
         for p in self.pages:
-            self.tabs.addTab(p, getattr(p, "name", "Seeding")); p.hour_changed.connect(self._on_hour)
+            self.tabs.addTab(p, getattr(p, "name", "Seeding"))
+            if p in self.live_pages:                    # the Dispersion page keeps its own cursor
+                p.hour_changed.connect(self._on_hour)
         self.tabs.currentChanged.connect(self._on_tab_shown)
         lay.addWidget(self.tabs, 1)
         self.setLayout(lay)
@@ -81,16 +86,24 @@ class BiofilmStagesTab(QWidget):
         tabs.currentChanged.connect(self._on_tab_shown)
         self.hide()
 
-    def connect_main_window(self, set_frame=None, tracking_widget=None, set_position=None):
-        """The main window gives two callbacks: set_frame(frame) moves the view area's T slider, tracking_widget() returns
-        the tracking widget (its tracks are used when the Seeding page has not tracked the position itself)."""
+    def connect_main_window(self, set_frame=None, tracking_widget=None, set_position=None, open_experiment=None, set_view=None):
+        """The main window's callbacks: set_frame(frame) moves the view area's T slider, tracking_widget() returns the
+        tracking widget (its tracks are used when the Seeding page has not tracked the position itself), set_position
+        moves the P slider, open_experiment opens the experiment dialog for dispersion, set_view(position, frame,
+        channel) shows the frame the Dispersion page asks for."""
         self.controller.connect_main_window(set_frame=set_frame, tracking_widget=tracking_widget)
         self.microcolony_controller.connect_main_window(set_frame=set_frame)
         self.growth_controller.connect_main_window(set_frame=set_frame, set_position=set_position)     # a position picked in its list moves the P slider
+        self.dispersion.open_experiment = open_experiment
+        self.dispersion.set_view = set_view
 
     def follow_frame(self, frame: int):
-        """The view area's T slider moved: the cursor follows it, on the Seeding strip now and on the other pages when
-        they are shown. The strip does not call back, so a move that came from the strip ends here."""
+        """The view area's T slider moved: the shared cursor follows it, on the Seeding strip now and on the
+        Microcolonies and Maturation pages when they are shown. While the Dispersion page is shown it drives the view
+        to its own frames, so the shared cursor stays where it was. The strip does not call back, so a move that came
+        from the strip ends here."""
+        if self.tabs.currentWidget() is self.dispersion_page:
+            return
         info = self.seeding_page.info
         if info is None or not info.dt_s:
             return
@@ -147,17 +160,18 @@ class BiofilmStagesTab(QWidget):
         if path: self.load_study(path)
 
     def _on_hour(self, h):
-        """One cursor for all four pages. Only the page on screen is redrawn now; the others take the hour when they are
-        shown, so Play on the Seeding strip does not redraw three hidden study pages eight times a second."""
+        """One cursor for the Seeding, Microcolonies and Maturation pages (Dispersion keeps its own). Only the page on
+        screen is redrawn now; the others take the hour when they are shown."""
         self.shared_hour = float(h)
         shown = self.tabs.currentWidget()
-        if shown is not self.sender() and shown in self.pages:
+        if shown is not self.sender() and shown in self.live_pages:
             shown.set_hour(h)
 
     def _on_tab_shown(self, _index):
         shown = self.tabs.currentWidget()
+        self.dispersion.refresh()                      # the view drops or shows the Dispersion overlay
         if shown not in self.pages:
             return                                      # another tab of the main bar (Segmentation, Live-Dead Analysis)
-        self.study_row.setVisible(shown not in self.live_pages)
-        if self.shared_hour is not None and getattr(shown, "hour", None) != self.shared_hour:
+        self.study_row.setVisible(False)                # every stage page measures the loaded recording
+        if shown in self.live_pages and self.shared_hour is not None and getattr(shown, "hour", None) != self.shared_hour:
             shown.set_hour(self.shared_hour)

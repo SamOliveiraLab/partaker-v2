@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
     QLabel,
     QComboBox,
+    QCheckBox,
     QTableWidget,
     QTableWidgetItem,
     QHeaderView,
@@ -35,7 +36,7 @@ class ExperimentDialog(QDialog):
     experimentCreated = Signal(object)
 
     def __init__(self, parent=None, experiment: Experiment = None,
-                 initial_files=None, initial_directory=None):
+                 initial_files=None, initial_directory=None, *, dispersion=False):
         """
         Initialize the experiment dialog.
 
@@ -47,6 +48,7 @@ class ExperimentDialog(QDialog):
         """
         super().__init__(parent)
         self.experiment = experiment
+        self.dispersion = dispersion
         self.setWindowTitle("Create / Edit Experiment" if experiment is None else f"Edit Experiment: {experiment.name}")
         self.setMinimumWidth(700)
         self.setMinimumHeight(600)
@@ -532,6 +534,15 @@ class ExperimentDialog(QDialog):
                 else:
                     unmatched_paths.append(full_path)
 
+        if not (detected_batch or detected_stacked) and unmatched_paths:
+            self.file_paths = unmatched_paths
+            if self._set_hour_named_range():
+                for path in self.file_paths:
+                    self.file_list_widget.addItem(os.path.basename(path))
+                self._refresh_biofilm_channels()
+                return
+            self.file_paths = []
+
         # Determine mode
         if detected_batch and detected_stacked:
             QMessageBox.critical(self, "Import Error", "Mixed TIFF formats detected (batch + stacked).")
@@ -739,10 +750,27 @@ class ExperimentDialog(QDialog):
         """The analysis range covers the whole recording unless the user narrows it."""
         if not self.file_paths:
             return
+        if self._set_hour_named_range():
+            return
         n = self._frames_in_file(self.file_paths[0])
         if n:
             self.time_start_spinbox.setValue(0)
             self.time_end_spinbox.setValue(max(0, n - 1))
+
+    def _hour_named_recording(self):
+        from nd2_analyzer.analysis.dispersion.hours import hour_named_file_map
+
+        return hour_named_file_map(self.file_paths)
+
+    def _set_hour_named_range(self):
+        recording = self._hour_named_recording()
+        if recording is None:
+            return False
+        _, hours = recording
+        self.time_start_spinbox.setValue(0)
+        self.time_end_spinbox.setValue(len(hours) - 1)
+        self.positions_edit.setText("0")
+        return True
 
     @staticmethod
     def _is_ome(path) -> bool:
@@ -785,7 +813,7 @@ class ExperimentDialog(QDialog):
 
         self._set_time_range_from_files()
         self._refresh_biofilm_channels()
-        if self._apply_ome_defaults():
+        if self._set_hour_named_range() or self._apply_ome_defaults():
             return
 
         if all(f.lower().endswith((".tif", ".tiff")) for f in self.file_paths):
@@ -862,8 +890,8 @@ class ExperimentDialog(QDialog):
             self._set_time_range_from_files()
             self._refresh_biofilm_channels()
             # Try to detect TPC from filenames first (same as drag-drop path)
-            if self._apply_ome_defaults():
-                pass
+            if self._set_hour_named_range() or self._apply_ome_defaults():
+                return
             elif all(f.lower().endswith((".tif", ".tiff")) for f in self.file_paths):
                 from nd2_analyzer.ui.app import App
                 file_map = App.reconstruct_file_map_from_paths(self.file_paths)
@@ -908,6 +936,10 @@ class ExperimentDialog(QDialog):
                     row = self.file_list_widget.row(item)
                     self.file_list_widget.takeItem(row)
                     break
+
+        if self.dispersion:
+            self.file_map = {key: path for key, path in self.file_map.items() if path in self.file_paths}
+            self._set_hour_named_range()
 
     def add_component_interval(self):
         """Add a component activation interval"""
@@ -1154,10 +1186,31 @@ class ExperimentDialog(QDialog):
                 file_map=self.file_map,
                 import_mode=self.import_mode,
                 biofilm=self.biofilm_settings(),
+                dispersion_timing=(
+                    getattr(self.experiment, "dispersion_timing", None)
+                    if self.experiment is not None and self.file_paths == self.experiment.image_files else None
+                ),
             )
 
             from nd2_analyzer.data.image_data import ImageData
             from nd2_analyzer.ui.app import App
+
+            recording = self._hour_named_recording()
+            if recording is not None:
+                self.file_map, hours = recording
+                if any(self.is_stacked_tiff(path) for path in self.file_map.values()):
+                    raise ValueError("Hour-named recordings require one TIFF per frame.")
+                self.import_mode = "batch_tiff"
+                experiment.file_map = self.file_map
+                experiment.import_mode = self.import_mode
+                experiment.dispersion_timing = {"mode": "TIFF filename hours", "hours": hours}
+                from nd2_analyzer.analysis.dispersion.hours import interval_s
+                experiment.phc_interval = interval_s(hours)
+                experiment.fluorescence_factor = 1.0
+                experiment.selected_positions = [0]
+                start, end = experiment.time_range
+                last = len(hours) - 1
+                experiment.time_range = (min(start, last), min(end, last))
 
             # For plain TIFFs without a file_map, try to detect or let user assign TPC
             if self.import_mode not in ["Directory", "batch_tiff", "stacked_tiff"]:

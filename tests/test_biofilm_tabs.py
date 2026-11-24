@@ -35,12 +35,14 @@ def test_the_stage_tabs_still_share_one_cursor_and_other_tabs_are_left_alone():
     assert stages.shared_hour == 30.0
 
 
-def test_the_pages_that_still_read_a_study_file_carry_their_own_open_button():
+def test_no_stage_page_reads_a_study_file_any_more():
     from nd2_analyzer.ui.biofilms.stages.tab import BiofilmStagesTab
     main = QTabWidget()
     stages = BiofilmStagesTab(); stages.move_pages_to(main)
-    for k, wanted in ((0, False), (1, False), (2, False), (3, True)):       # only Dispersion still reads a study file
-        assert (main.widget(k).findChild(QPushButton, "open_study") is not None) is wanted
+    assert [main.tabText(k) for k in range(4)] == ["Seeding", "Microcolonies", "Maturation", "Dispersion"]
+    assert main.widget(3) is stages.dispersion_page                          # Jianna's live Dispersion page
+    for k in range(4):                                                       # every page measures the loaded recording
+        assert main.widget(k).findChild(QPushButton, "open_study") is None
 
 
 def test_biofilm_mode_shows_segmentation_the_four_stages_and_live_dead(monkeypatch):
@@ -78,3 +80,18 @@ def test_every_stage_controller_listens_with_the_shape_the_tools_messages_have()
         assert {topic for topic, _method in controller.LISTENS} >= {"experiment_loaded", "image_data_loaded", "batch_segmentation_completed"}
         for topic, method in controller.LISTENS:
             assert shape(getattr(controller, method)) == shape(seeding[topic]), (controller.__name__, topic)
+
+
+def test_the_shared_cursor_follows_the_view_except_while_dispersion_drives_it():
+    from types import SimpleNamespace
+    from nd2_analyzer.ui.biofilms.stages.tab import BiofilmStagesTab
+    tab = BiofilmStagesTab()
+    tab.seeding_page.info = SimpleNamespace(start_hour=24.0, dt_s=1800.0)
+    tab.seeding_page.set_hour = lambda h: setattr(tab, "_seeding_h", h)
+    tab.seeding_page.strip.cursor_h = None
+    tab.tabs.setCurrentIndex(1)                        # Microcolonies: follows the T slider
+    tab.follow_frame(4)
+    assert tab.shared_hour == 26.0 and tab._seeding_h == 26.0
+    tab.tabs.setCurrentIndex(3)                        # Dispersion moves the view to its own frames
+    tab.follow_frame(10)
+    assert tab.shared_hour == 26.0                     # the shared cursor stays where it was

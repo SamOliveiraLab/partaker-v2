@@ -151,7 +151,8 @@ def test_the_biofilm_stages_tab_holds_the_live_microcolonies_page():
     tab.tabs.setCurrentIndex(2)
     assert tab.study_row.isHidden()                    # Maturation is live too
     tab.tabs.setCurrentIndex(3)
-    assert not tab.study_row.isHidden()                # Dispersion still reads a study file
+    assert tab.tabs.widget(3) is tab.dispersion_page   # Dispersion is live as well (Jianna's page)
+    assert tab.study_row.isHidden()
 
 
 def test_the_film_of_a_microcolony_that_merges_stops_at_its_last_frame_as_itself(film):
