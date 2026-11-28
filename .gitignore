@@ -39,3 +39,6 @@ digital_twin_vivamunk/
 # Isolated PIV runtime and generated motion exports
 .venv-piv/
 analysis_results/microcolony_piv/
+
+# local assistant files, never tracked
+.claude/
